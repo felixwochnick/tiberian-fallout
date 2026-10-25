@@ -3,15 +3,20 @@ import * as THREE from 'three'
 /** Cruising speed (cells per second) */
 const SPEED = 2.6
 /** Distance (cells) over which it slows down before landing */
-const BRAKE = 2.2
+const BRAKE = 3
 /** Seconds it stays on the ground after unloading */
 const WAIT = 1.2
 /** Seconds the wreck burns before it is taken away */
 const WRECK_SECONDS = 8
 /** How fast it turns towards where it flies (radians per second) */
-const TURN_SPEED = 2.5
+const TURN_SPEED = 1.8
+/** Seconds into the Crash clip when the ship hits the ground (frame 62 at 30 fps) */
+const IMPACT = 62 / 30
 
 type State = 'arriving' | 'landing' | 'unloading' | 'waiting' | 'takingOff' | 'leaving' | 'crashing' | 'gone'
+
+/** Moments that have a sound: it starts to land or to take off, its wreck hits the ground */
+export type DropshipSound = 'land' | 'takeOff' | 'impact'
 
 export interface DropshipFlight {
   /** Where it lands (world, on the ground) */
@@ -37,6 +42,8 @@ export class Dropship {
   private timer = 0
   /** Called when the ship has left the map or its wreck has burnt out */
   onGone?: () => void
+  /** Called when something happens that makes a sound */
+  onSound?: (sound: DropshipSound) => void
 
   constructor(readonly object: THREE.Object3D, clips: THREE.AnimationClip[], private readonly flight: DropshipFlight) {
     this.mixer = new THREE.AnimationMixer(object)
@@ -106,6 +113,7 @@ export class Dropship {
       }
       case 'crashing':
         // the clip spins it down and lets it slide; the wreck burns a while
+        if (this.timer < IMPACT && this.timer + seconds >= IMPACT) this.onSound?.('impact')
         this.timer += seconds
         if (this.timer > WRECK_SECONDS) this.gone()
         break
@@ -142,6 +150,8 @@ export class Dropship {
     action.reset().play()
     this.current = action
     if (name === 'Crash') this.timer = 0
+    else if (name === 'Land') this.onSound?.('land')
+    else if (name === 'TakeOff') this.onSound?.('takeOff')
   }
 
   /** Turns the nose (+Z) towards a point. */

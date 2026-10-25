@@ -1,16 +1,28 @@
 """
 Tiberian Fallout – GDI dropship (DSHP), after Tiberian Sun.
 
-A long armoured fuselage with the cockpit at the nose, a cargo bay underneath with a
-ramp at the back, and four tilting engine nacelles on stub wings. Desert camouflage
-(baked), the GDI emblem and "CP 034" on the sides of the cargo bay, navigation
-lights (red left, green right), a white strobe on the tail and a red beacon below.
+Two parts, after help/buildings/GDI/DSHP/img_1-3.png: the aircraft and the cargo
+container clamped under it.
+
+The aircraft: a slim fuselage with a deep rounded nose (canopy slits, headlight, the
+GDI emblem on the cheeks), a ridge along the top and a tail boom; four engine pods
+hang at the ends of long thin pylon arms, far out from the fuselage, a front and a
+back pair with a wide gap between them. The pods are rounded boxes with dark intakes
+at the front, nozzles at the back, lift vents below and red chevrons.
+
+The container (img_3): a long box whose lower side panels slope inwards, a recessed
+slatted section in the middle of each side, the GDI emblem and "CP 034" on the
+panels, the door with the ramp at the back. Landed it stands on the ground and the
+cargo (up to an MCV) drives out over the ramp.
+
+Desert camouflage (baked), navigation lights on the pods (red left, green right), a
+white strobe on the tail and a red beacon under the nose.
 
 The origin is on the ground under the middle of the ship. The clips carry the height:
 flying at FLY_HEIGHT, landed on the ground. The game moves the ship over the map.
 
 Animations (glTF clips, merged from the NLA tracks of the same name)
-    Fly      loop, 1 s: cruising, engines forward, a gentle sway
+    Fly      loop, 1 s: cruising steadily, engines forward
     Land     once, 3 s: from Fly: flares, tilts the engines down, sinks onto its
              legs and opens the ramp
     Landed   loop, 2 s: on the ground, engines idling, ramp open
@@ -21,7 +33,7 @@ Animations (glTF clips, merged from the NLA tracks of the same name)
              burning wreck
     Lights   loop, 2 s: strobe and beacon blink (plays all the time)
 
-Nodes for the game: CargoExit (where unloaded units come out, at the ramp's end).
+Nodes for the game: CargoExit (where unloaded units come out, past the ramp's end).
 
 Run headless:
 
@@ -49,13 +61,20 @@ BLEND = os.path.join(HERE, 'DSHP.blend')
 
 FLY_HEIGHT = 1.6
 HIDDEN = kit.HIDDEN
-GEAR_TOP = 0.14         # underside of the cargo bay; the legs reach from there to the ground
-ENGINES = (             # pivot of each nacelle: front/back, left/right
-    Vector((-0.74, -0.32, 0.48)), Vector((0.74, -0.32, 0.48)),
-    Vector((-0.72, 0.6, 0.46)), Vector((0.72, 0.6, 0.46)),
+GEAR_TOP = 0.06         # underside of the container (its floor); the feet reach from there to the ground
+BOX = (0.72, 1.35, 0.85)  # container: half width at the belt, half length, height (the top, where the aircraft sits)
+BOX_BOTTOM = (0.6, 1.15)  # half width and front of the bottom (the panels slope in below the belt)
+BOX_TOP = 0.6          # half width of the top (the panels slope in above the belt)
+BOX_BELT = 0.4          # the widest line of the flat hexagonal cross-section
+ENGINES = (             # pivot (middle) of each pod: front/back, left/right
+    Vector((-1.05, -1.0, 1.22)), Vector((1.05, -1.0, 1.22)),
+    Vector((-1.05, 1.1, 1.22)), Vector((1.05, 1.1, 1.22)),
 )
-TILT_FLY = -5           # engine tilt in degrees (negative: the nozzle swings down)
-TILT_HOVER = -90
+POD = (0.42, 0.9, 0.55)  # width, length, height of a pod
+ARM_Z = 1.32            # height of the pylon arms
+TILT_FLY = -2           # pod tilt in degrees (negative: the nozzle swings down)
+TILT_HOVER = -12        # hovering, the thrust goes out of the lift vents below
+TAIL_JOINT = Vector((0, 1.25, 1.15))
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -129,13 +148,14 @@ def decal_material():
     return mat
 
 
-def on_side(obj, side, centre):
+def on_side(obj, side, centre, lean=0.0):
     """Lays a flat object (made in the XY plane, facing +Z) onto a side of the hull:
     its x along the ship (reading towards the tail on the right side), its y up, its
-    z out of the side."""
-    up = Vector((0, 0, 1))
+    z out of the side; `lean` (radians) tilts it back for a side sloping inwards."""
     along = Vector((0, side, 0))
-    out = along.cross(up)
+    out = along.cross(Vector((0, 0, 1)))
+    up = Vector((0, 0, 1)) * math.cos(lean) - out * math.sin(lean)
+    out = out * math.cos(lean) + Vector((0, 0, 1)) * math.sin(lean)
     rot = Matrix((along, up, out)).transposed().to_4x4()
     obj.data.transform(rot)
     obj.location = centre + out * 0.004
@@ -175,11 +195,11 @@ def quad(name, mat, w, h):
 
 # --------------------------------------------------------------------------- model parts
 
-HULL = (  # y, half width, bottom, top
-    (-1.08, 0.05, 0.36, 0.42), (-1.0, 0.14, 0.3, 0.48), (-0.85, 0.2, 0.26, 0.56), (-0.6, 0.25, 0.24, 0.6),
-    (-0.3, 0.27, 0.24, 0.61), (0.2, 0.27, 0.26, 0.59), (0.6, 0.22, 0.3, 0.55),
+HULL = (  # y, half width, bottom, top: the deep rounded nose, then the slim fuselage on the container
+    (-2.3, 0.1, 0.9, 1.08), (-2.22, 0.3, 0.7, 1.25), (-2.05, 0.43, 0.56, 1.37), (-1.8, 0.48, 0.52, 1.43),
+    (-1.55, 0.46, 0.6, 1.45), (-1.38, 0.36, BOX[2] - 0.02, 1.43), (-1.15, 0.31, BOX[2] - 0.02, 1.42), (1.25, 0.3, BOX[2] - 0.02, 1.38),
 )
-TAIL = ((0.6, 0.22, 0.3, 0.55), (0.95, 0.14, 0.36, 0.5), (1.14, 0.08, 0.4, 0.47))
+TAIL = ((1.25, 0.3, BOX[2] - 0.02, 1.38), (1.9, 0.18, 1.05, 1.34), (2.45, 0.09, 1.13, 1.3))  # the tail boom
 
 
 def materials():
@@ -198,91 +218,158 @@ def materials():
 
 
 def hull(m, root):
-    body = camo(loft('Hull', m['sand'], HULL), root)
-    tail = camo(loft('Tail', m['sand'], TAIL), root)
-    bay = kit.hexahedron('CargoBay', m['sand'], (
-        (0.24, -0.45, GEAR_TOP), (-0.24, -0.45, GEAR_TOP), (-0.24, 0.45, GEAR_TOP), (0.24, 0.45, GEAR_TOP),
-        (0.3, -0.62, 0.27), (-0.3, -0.62, 0.27), (-0.3, 0.62, 0.27), (0.3, 0.62, 0.27)), bevel=0.01)
-    bay = camo(kit.merge('CargoBay', [bay]), root)
+    """The aircraft's fuselage with its details and the pylon arms (on the ship), and
+    the tail boom (on the tail joint, it breaks off in Crash)."""
+    body = camo(loft('Hull', m['sand'], HULL, chamfer=0.45), root)
+    tail = camo(loft('Tail', m['sand'], TAIL, chamfer=0.4), root)
 
     parts = [
-        loft('Canopy', m['glass'], ((-0.95, 0.07, 0.47, 0.5), (-0.86, 0.12, 0.535, 0.572), (-0.74, 0.14, 0.582, 0.612), (-0.68, 0.12, 0.598, 0.616))),
-        box('Spine', m['sand_light'], (0.16, 1.0, 0.05), (0, 0.15, 0.625), bevel=0.012),
-        box('BayStrake', m['concrete_dark'], (0.62, 1.1, 0.025), (0, 0.0, 0.265), bevel=0.004),
-        box('BayInside', m['dark'], (0.34, 0.02, 0.1), (0, 0.6, 0.2), bevel=0),
+        loft('Canopy', m['glass'], ((-2.17, 0.1, 1.17, 1.22), (-2.03, 0.22, 1.29, 1.37), (-1.86, 0.26, 1.37, 1.44), (-1.74, 0.2, 1.41, 1.455))),
+        sphere('Headlight', m['lamp_white'], 0.035, (0, -2.3, 1.0), 10),
+        sphere('HeadlightHalo', m['glow_white'], 0.09, (0, -2.3, 1.0), 10),
+        box('Ridge', m['sand_light'], (0.14, 2.6, 0.06), (0, -0.1, 1.43), bevel=0.02),
+        box('Clamp', m['concrete_dark'], (0.66, 2.5, 0.05), (0, 0, BOX[2] + 0.005), bevel=0.01),
+        box('Stabiliser', m['sand_light'], (0.8, 0.22, 0.03), (0, 2.3, 1.25), bevel=0.01),
     ]
-    for i in range(4):  # vents on the spine
-        parts.append(box(f'Vent{i}', m['dark'], (0.1, 0.05, 0.012), (0, -0.2 + i * 0.16, 0.652), bevel=0.003))
+    for k in range(4):  # vents along the ridge
+        parts.append(box(f'Vent{k}', m['dark'], (0.08, 0.05, 0.012), (0, -1.2 + 0.25 * k, 1.462), bevel=0.003))
     for s in (-1, 1):
-        parts.append(beam(f'Antenna{s}', m['steel'], (s * 0.05, -0.55, 0.6), (s * 0.06, -0.52, 0.76), 0.008))
-        parts.append(box(f'NoseStripe{s}', m['red'], (0.01, 0.12, 0.03), (s * 0.205, -0.86, 0.36), bevel=0.002))
-        # stub wings to the nacelles
-        for k, pivot in enumerate(e for e in ENGINES if (e.x > 0) == (s > 0)):
-            parts.append(box(f'Wing{s}{k}', m['sand_light'], (abs(pivot.x) - 0.36, 0.12, 0.035),
-                             (s * (abs(pivot.x) + 0.2) / 2, pivot.y, pivot.z), bevel=0.01))
-        # twin tail fins
-        parts.append(kit.hexahedron(f'Fin{s}', m['sand_light'], (
-            (s * 0.06, 0.9, 0.48), (s * 0.1, 0.9, 0.48), (s * 0.1, 1.08, 0.46), (s * 0.06, 1.08, 0.46),
-            (s * 0.08, 1.02, 0.64), (s * 0.11, 1.02, 0.64), (s * 0.11, 1.1, 0.63), (s * 0.08, 1.1, 0.63)), bevel=0.004))
+        parts.append(beam(f'Antenna{s}', m['steel'], (s * 0.06, -1.55, 1.42), (s * 0.07, -1.5, 1.62), 0.012))
+        parts.append(box(f'NoseStripe{s}', m['red'], (0.012, 0.14, 0.035), (s * 0.39, -2.15, 0.78), bevel=0.003))
+        for k in range(3):  # slits along the sides of the fuselage
+            parts.append(box(f'SideSlit{s}{k}', m['dark'], (0.012, 0.18, 0.025), (s * 0.31, -0.9 + 0.5 * k, 1.27), bevel=0.003))
+        # the pylon arms out to the pods, with a fairing at the root
+        for pivot in (e for e in ENGINES if (e.x > 0) == (s > 0)):
+            inner = abs(pivot.x) - POD[0] / 2 + 0.02
+            parts.append(cylinder(f'Arm{s}{pivot.y}', m['sand_light'], 0.05, inner - 0.25, (s * (inner + 0.25) / 2, pivot.y, ARM_Z),
+                                  rotation=(0, math.pi / 2, 0), segments=12, bevel=0))
+            parts.append(box(f'ArmRoot{s}{pivot.y}', m['sand_light'], (0.16, 0.3, 0.14), (s * 0.34, pivot.y, ARM_Z - 0.01), bevel=0.03))
     details = kit.merge('HullDetails', parts)
 
-    # emblem and "CP 034" on both sides of the hull (seen from above, unlike the bay's)
+    decals = []
+    emblem = decal_material()
+    for s in (-1, 1):  # the emblem on the nose's cheeks
+        decals.append(on_side(quad(f'NoseEmblem{s}', emblem, 0.28, 0.28), s, Vector((s * 0.48, -1.8, 0.98))))
+    return body, details, decals, tail
+
+
+def container(m, root):
+    """The cargo container under the aircraft, after img_2/img_3: a flat hexagonal
+    cross-section (its panels slope in above and below the belt, the lower ones also at
+    the front), a slatted recess in the middle of each side, the emblem and "CP 034",
+    the door at the back (the ramp closes it)."""
+    hw, hl, top = BOX
+    bw, bf = BOX_BOTTOM
+    tw = BOX_TOP
+    lower = kit.hexahedron('BoxLower', m['sand'], (
+        (-bw, -bf, GEAR_TOP), (bw, -bf, GEAR_TOP), (bw, hl, GEAR_TOP), (-bw, hl, GEAR_TOP),
+        (-hw, -hl, BOX_BELT), (hw, -hl, BOX_BELT), (hw, hl, BOX_BELT), (-hw, hl, BOX_BELT)), bevel=0.02)
+    upper = kit.hexahedron('BoxUpper', m['sand'], (
+        (-hw, -hl, BOX_BELT), (hw, -hl, BOX_BELT), (hw, hl, BOX_BELT), (-hw, hl, BOX_BELT),
+        (-tw, -hl, top), (tw, -hl, top), (tw, hl, top), (-tw, hl, top)), bevel=0.02)
+    shell = camo(kit.merge('Container', [lower, upper]), root)
+
+    lean = math.atan2(hw - tw, top - BOX_BELT)  # of the upper panels
+
+    def upper_x(z):  # the upper panel's distance from the middle at height z
+        return hw - (z - BOX_BELT) * math.tan(lean)
+
+    parts = [
+        box('BoxBelt', m['concrete_dark'], (2 * hw + 0.01, 2 * hl + 0.01, 0.03), (0, 0, BOX_BELT), bevel=0.006),
+        box('BoxTopRim', m['sand_light'], (2 * tw - 0.1, 2 * hl - 0.1, 0.025), (0, 0, top), bevel=0.008),
+        box('BayDoor', m['dark'], (1.12, 0.012, 0.7), (0, hl + 0.002, GEAR_TOP + 0.35), bevel=0),
+    ]
+    mid = (top + BOX_BELT) / 2
+    for s in (-1, 1):
+        tilt = (0, -s * lean, 0)
+        parts.append(box(f'Recess{s}', m['dark'], (0.02, 0.7, 0.36), (s * upper_x(mid), 0, mid), bevel=0.004, rotation=tilt))
+        for k in range(3):
+            z = BOX_BELT + 0.1 + k * 0.12
+            parts.append(box(f'Slat{s}{k}', m['steel'], (0.05, 0.72, 0.03), (s * (upper_x(z) + 0.005), 0, z), bevel=0.004, rotation=tilt))
+        for y in (-0.36, 0.36):  # frames left and right of the recess
+            parts.append(box(f'RecessFrame{s}{y}', m['sand_light'], (0.04, 0.05, 0.42), (s * (upper_x(mid) + 0.01), y, mid), bevel=0.006, rotation=tilt))
+        parts.append(box(f'BeltStripe{s}', m['remap'], (0.02, 0.5, 0.032), (s * (hw + 0.004), 0.85, BOX_BELT), bevel=0.003))
+    details = kit.merge('ContainerDetails', parts)
+
     decals = []
     emblem = decal_material()
     for s in (-1, 1):
-        decals.append(on_side(quad(f'Emblem{s}', emblem, 0.17, 0.17), s, Vector((s * 0.27, -0.38, 0.43))))
-        decals.append(on_side(text_mesh(f'Serial{s}', 'CP 034', m['stencil'], 0.08), s, Vector((s * 0.27, 0.05, 0.43))))
-    return body, tail, bay, details, decals
+        decals.append(on_side(quad(f'Emblem{s}', emblem, 0.28, 0.28), s, Vector((s * upper_x(0.62), -0.85, 0.62)), lean))
+        decals.append(on_side(text_mesh(f'Serial{s}', 'CP 034', m['stencil'], 0.15), s, Vector((s * upper_x(0.6), 0.85, 0.6)), lean))
+    return shell, details, decals
 
 
 def nacelle(m, root, i, pivot):
-    """Engine nacelle around its pivot: camouflaged pod, dark intake and nozzle, a red
-    warning stripe on the inner side, a navigation light outside, the exhaust plume."""
+    """Engine pod around its pivot: a big rounded box in camouflage, the front leaning
+    back towards the bottom with a dark intake, the nozzle at the back, a lift vent
+    below, a red chevron and a navigation light outside, panels and an antenna on top,
+    and the two exhaust plumes (back and down)."""
     side = 1 if pivot.x > 0 else -1
-    pod = camo(kit.merge(f'Nacelle{i}', [box(f'Nacelle{i}', m['sand'], (0.24, 0.46, 0.25), pivot, bevel=0.06)], pivot), root)
+    w, l, h = POD[0] / 2, POD[1] / 2, POD[2] / 2
+    shell = kit.hexahedron(f'Pod{i}', m['sand'], [pivot + Vector(v) for v in (
+        (-w, -l + 0.1, -h), (w, -l + 0.1, -h), (w, l - 0.04, -h), (-w, l - 0.04, -h),
+        (-w, -l, h), (w, -l, h), (w, l, h), (-w, l, h))], bevel=0.12)
+    pod = camo(kit.merge(f'Pod{i}', [shell], pivot), root)
+    lean = math.atan2(0.1, POD[2])
     parts = [
-        box(f'Intake{i}', m['dark'], (0.17, 0.03, 0.17), pivot + Vector((0, -0.225, 0)), bevel=0.01),
-        box(f'Nozzle{i}', m['dark'], (0.18, 0.03, 0.18), pivot + Vector((0, 0.225, 0)), bevel=0.01),
-        box(f'NozzleRim{i}', m['steel'], (0.22, 0.02, 0.22), pivot + Vector((0, 0.215, 0)), bevel=0.01),
-        box(f'Stripe{i}', m['red'], (0.01, 0.2, 0.03), pivot + Vector((-side * 0.121, -0.04, 0.06)), bevel=0.002),
-        box(f'Band{i}', m['remap'], (0.245, 0.03, 0.255), pivot + Vector((0, -0.12, 0)), bevel=0.01),
+        box(f'Intake{i}', m['dark'], (2 * w - 0.16, 0.04, 2 * h - 0.2), pivot + Vector((0, -l + 0.06, 0)), bevel=0.015, rotation=(lean, 0, 0)),
+        box(f'IntakeRim{i}', m['steel'], (2 * w - 0.12, 0.03, 2 * h - 0.16), pivot + Vector((0, -l + 0.075, 0)), bevel=0.015, rotation=(lean, 0, 0)),
+        box(f'Nozzle{i}', m['dark'], (2 * w - 0.16, 0.04, 2 * h - 0.2), pivot + Vector((0, l - 0.015, 0)), bevel=0.015),
+        box(f'NozzleRim{i}', m['steel'], (2 * w - 0.12, 0.03, 2 * h - 0.16), pivot + Vector((0, l - 0.03, 0)), bevel=0.015),
+        box(f'LiftVent{i}', m['dark'], (2 * w - 0.12, 0.34, 0.025), pivot + Vector((0, 0.07, -h)), bevel=0.005),
+        box(f'Band{i}', m['remap'], (2 * w + 0.008, 0.05, 2 * h - 0.1), pivot + Vector((0, 0.18, 0)), bevel=0.012),
+        box(f'ArmMount{i}', m['steel'], (0.04, 0.2, 0.14), pivot + Vector((-side * (w + 0.01), 0, ARM_Z - pivot.z)), bevel=0.01),
+        beam(f'Antenna{i}', m['steel'], pivot + Vector((side * 0.1, 0.26, h)), pivot + Vector((side * 0.11, 0.31, h + 0.13)), 0.012),
     ]
-    details = kit.merge(f'NacelleDetails{i}', parts, pivot)
+    for k in range(2):  # panels on top
+        parts.append(box(f'Panel{i}{k}', m['dark'], (0.08, 0.05, 0.015), pivot + Vector((0.11 * (k - 0.5), -l + 0.2, h)), bevel=0.004))
+    for k, angle in enumerate((35, -35)):  # red chevron at the front, outside
+        parts.append(box(f'Chevron{i}{k}', m['red'], (0.015, 0.15, 0.032), pivot + Vector((side * (w + 0.002), -l + 0.18, 0.07 - 0.12 * k)),
+                         bevel=0, rotation=(math.radians(angle), 0, 0)))
+    details = kit.merge(f'PodDetails{i}', parts, pivot)
     nav = 'green' if side > 0 else 'red'
+    light = pivot + Vector((side * (w + 0.015), -l + 0.3, h - 0.06))
     bulb = kit.merge(f'NavLight{i}', [
-        sphere(f'NavBulb{i}', m[f'lamp_{nav}'], 0.016, pivot + Vector((side * 0.13, -0.15, 0.08)), 10),
-        sphere(f'NavHalo{i}', m[f'glow_{nav}'], 0.035, pivot + Vector((side * 0.13, -0.15, 0.08)), 10),
+        sphere(f'NavBulb{i}', m[f'lamp_{nav}'], 0.022, light, 10),
+        sphere(f'NavHalo{i}', m[f'glow_{nav}'], 0.05, light, 10),
     ], pivot)
-    plume = cylinder(f'Plume{i}', m['plume'], 0.075, 0.3, pivot + Vector((0, 0.39, 0)), rotation=(math.pi / 2, 0, 0),
-                     segments=16, bevel=0, radius2=0.02)
-    plume = kit.merge(f'Plume{i}', [plume], pivot + Vector((0, 0.24, 0)))
-    return pod, details, bulb, plume
+    plume = cylinder(f'Plume{i}', m['plume'], 0.03, 0.45, pivot + Vector((0, l + 0.24, 0)), rotation=(math.pi / 2, 0, 0),
+                     segments=16, bevel=0, radius2=0.14)
+    plume = kit.merge(f'Plume{i}', [plume], pivot + Vector((0, l + 0.01, 0)))
+    lift = cylinder(f'Lift{i}', m['plume'], 0.04, 0.4, pivot + Vector((0, 0.07, -h - 0.21)), segments=16, bevel=0, radius2=0.13)
+    lift = kit.merge(f'Lift{i}', [lift], pivot + Vector((0, 0.07, -h - 0.01)))
+    return pod, details, bulb, plume, lift
 
 
 def gear(m):
-    """Four legs under the cargo bay; their object's origin is at the bay's underside,
-    so scaling it in z pulls them in."""
+    """Four feet under the container; their object's origin is at its underside, so
+    scaling it in z pulls them in."""
     parts = []
-    for x in (-0.18, 0.18):
-        for y in (-0.36, 0.36):
-            parts.append(cylinder(f'Leg{x}{y}', m['steel_light'], 0.018, GEAR_TOP, (x, y, GEAR_TOP / 2), segments=8, bevel=0))
-            parts.append(beam(f'Strut{x}{y}', m['steel'], (x, y, 0.04), (x * 0.6, y * 0.8, GEAR_TOP), 0.012))
-            parts.append(cylinder(f'Pad{x}{y}', m['pod_dark'], 0.045, 0.02, (x, y, 0.01), segments=12, bevel=0.003))
+    for x in (-0.45, 0.45):
+        for y in (-0.85, 1.0):
+            parts.append(cylinder(f'Foot{x}{y}', m['steel_light'], 0.035, GEAR_TOP, (x, y, GEAR_TOP / 2), segments=8, bevel=0))
+            parts.append(cylinder(f'Pad{x}{y}', m['pod_dark'], 0.08, 0.02, (x, y, 0.01), segments=12, bevel=0.003))
     return kit.merge('Gear', parts, (0, 0, GEAR_TOP))
 
 
-RAMP_HINGE = Vector((0, 0.45, GEAR_TOP))
-RAMP_CLOSED = math.degrees(math.atan2(0.27 - GEAR_TOP, 0.62 - 0.45))   # up along the bay's back
-RAMP_OPEN = -math.degrees(math.asin(GEAR_TOP / math.hypot(0.17, 0.27 - GEAR_TOP)))
+RAMP_HINGE = Vector((0, BOX[1] + 0.03, GEAR_TOP))  # just behind the door, so the closed ramp covers it
+RAMP_LENGTH = 0.78
+RAMP_CLOSED = 90                                   # up against the door
+RAMP_OPEN = -math.degrees(math.asin(GEAR_TOP / RAMP_LENGTH))
 
 
 def ramp(m):
-    """Ramp in the back of the cargo bay, made lying flat behind its hinge; rotated about
-    x it closes the bay (RAMP_CLOSED) or reaches the ground (RAMP_OPEN)."""
-    length = math.hypot(0.17, 0.27 - GEAR_TOP)
-    parts = [box('RampPlate', m['steel'], (0.4, length, 0.02), RAMP_HINGE + Vector((0, length / 2, 0)), bevel=0.004)]
-    for i in range(4):
-        parts.append(box(f'RampGrip{i}', m['steel_light'], (0.36, 0.008, 0.006), RAMP_HINGE + Vector((0, 0.04 + i * 0.045, 0.012)), bevel=0))
+    """Ramp at the back of the container, made lying flat behind its hinge; rotated about
+    x it closes the door (RAMP_CLOSED) or reaches the ground (RAMP_OPEN)."""
+    parts = [
+        box('RampPlate', m['steel'], (1.16, RAMP_LENGTH, 0.03), RAMP_HINGE + Vector((0, RAMP_LENGTH / 2, 0.015)), bevel=0.005),
+        # armour outside: the back of the container while the ramp is closed
+        box('RampArmour', m['sand_light'], (1.12, RAMP_LENGTH - 0.03, 0.008), RAMP_HINGE + Vector((0, RAMP_LENGTH / 2, -0.003)), bevel=0.002),
+    ]
+    for i in range(8):
+        parts.append(box(f'RampGrip{i}', m['steel_light'], (1.08, 0.012, 0.008), RAMP_HINGE + Vector((0, 0.06 + i * 0.09, 0.033)), bevel=0))
+    for s in (-1, 1):
+        parts.append(box(f'RampEdge{s}', m['remap'], (0.03, RAMP_LENGTH, 0.035), RAMP_HINGE + Vector((s * 0.56, RAMP_LENGTH / 2, 0.017)), bevel=0))
     return kit.merge('Ramp', parts, RAMP_HINGE)
 
 
@@ -342,62 +429,68 @@ def build():
     m = materials()
     root = kit.empty('GDIDropship')
     ship = kit.parent(kit.empty('Ship'), root)          # all flight motion
-    body, tail_part, bay, details, decals = hull(m, root)
-    for obj in (body, bay, details, *decals):
+    body, details, decals, tail_part = hull(m, root)
+    box_parts = container(m, root)
+    for obj in (body, details, *decals, box_parts[0], box_parts[1], *box_parts[2]):
         kit.parent(obj, ship)
-    tail = kit.parent(kit.empty('TailJoint', (0, 0.6, 0.42)), ship)   # breaks off in Crash
+    tail = kit.parent(kit.empty('TailJoint', TAIL_JOINT), ship)   # breaks off in Crash
     kit.parent(tail_part, tail)
 
-    engines, plumes = [], []
+    engines, plumes, lifts = [], [], []
     for i, pivot in enumerate(ENGINES):
         joint = kit.parent(kit.empty(f'Engine{i}', pivot), ship)
-        *parts, plume = nacelle(m, root, i, pivot)
-        for obj in (*parts, plume):
+        *parts, plume, lift = nacelle(m, root, i, pivot)
+        for obj in (*parts, plume, lift):
             kit.parent(obj, joint)
         engines.append(joint)
         plumes.append(plume)
+        lifts.append(lift)
 
     legs = kit.parent(gear(m), ship)
     hatch = kit.parent(ramp(m), ship)
-    exit_node = kit.parent(kit.empty('CargoExit', (0, 0.85, 0)), root)
+    exit_node = kit.parent(kit.empty('CargoExit', (0, RAMP_HINGE.y + RAMP_LENGTH + 0.4, 0)), root)
     exit_node.empty_display_size = 0.1
 
-    # lights: strobe on the tail, beacon under the belly
-    strobe = kit.merge('Strobe', [sphere('StrobeBulb', m['lamp_white'], 0.018, (0, 1.06, 0.66), 10),
-                                  sphere('StrobeHalo', m['glow_white'], 0.05, (0, 1.06, 0.66), 10)], (0, 1.06, 0.66))
+    # lights: strobe at the end of the tail boom, beacon under the nose
+    strobe = kit.merge('Strobe', [sphere('StrobeBulb', m['lamp_white'], 0.025, (0, 2.42, 1.33), 10),
+                                  sphere('StrobeHalo', m['glow_white'], 0.07, (0, 2.42, 1.33), 10)], (0, 2.42, 1.33))
     kit.parent(strobe, tail)
-    beacon = kit.merge('Beacon', [sphere('BeaconBulb', m['lamp_red'], 0.02, (0, -0.2, 0.235), 10),
-                                  sphere('BeaconHalo', m['glow_red'], 0.05, (0, -0.2, 0.235), 10)], (0, -0.2, 0.235))
+    beacon = kit.merge('Beacon', [sphere('BeaconBulb', m['lamp_red'], 0.03, (0, -1.8, 0.51), 10),
+                                  sphere('BeaconHalo', m['glow_red'], 0.07, (0, -1.8, 0.51), 10)], (0, -1.8, 0.51))
     kit.parent(beacon, ship)
 
-    burning = kit.parent(fire(m, 'EngineFire', ENGINES[1] + Vector((0, 0.05, 0.12)), 0.08), ship)
-    wreck_fire = kit.parent(fire(m, 'WreckFire', Vector((0.05, 0.1, 0.5)), 0.13), ship)
-    blast = kit.parent(kit.merge('Blast', [sphere('BlastBall', m['blast'], 0.6, (0, 0, 0.3), 20)], (0, 0, 0.3)), ship)
+    burning = kit.parent(fire(m, 'EngineFire', ENGINES[1] + Vector((0, 0.05, 0.3)), 0.13), ship)
+    wreck_fire = kit.parent(fire(m, 'WreckFire', Vector((0.05, 0, 1.0)), 0.22), ship)
+    blast = kit.parent(kit.merge('Blast', [sphere('BlastBall', m['blast'], 1.3, (0, 0, 0.7), 20)], (0, 0, 0.7)), ship)
 
     CHANNELS[:] = [(ship, 'location'), (ship, 'rotation_euler'), (legs, 'scale'), (hatch, 'rotation_euler'),
                    (tail, 'location'), (tail, 'rotation_euler'), (burning, 'scale'), (wreck_fire, 'scale'), (blast, 'scale')]
-    for joint, plume in zip(engines, plumes):
-        CHANNELS.extend([(joint, 'location'), (joint, 'rotation_euler'), (plume, 'scale')])
+    for joint, plume, lift in zip(engines, plumes, lifts):
+        CHANNELS.extend([(joint, 'location'), (joint, 'rotation_euler'), (plume, 'scale'), (lift, 'scale')])
 
     rad = math.radians
     hidden = Vector((HIDDEN,) * 3)
 
     def base(height, tilt, thrust, gear_out, ramp_angle, pitch=0.0, roll=0.0, yaw=0.0, y=0.0):
+        # the thrust goes out of the nozzles in flight and out of the lift vents hovering
+        hover = min(1.0, max(0.0, (tilt - TILT_FLY) / (TILT_HOVER - TILT_FLY)))
+        back, down = thrust * (1 - hover), thrust * hover
         values = {
             ('Ship', 'location'): Vector((0, y, height)),
             ('Ship', 'rotation_euler'): Vector((rad(pitch), rad(roll), rad(yaw))),
             ('Gear', 'scale'): Vector((1, 1, mix(0.05, 1, gear_out))),
             ('Ramp', 'rotation_euler'): Vector((rad(ramp_angle), 0, 0)),
-            ('TailJoint', 'location'): Vector((0, 0.6, 0.42)),
+            ('TailJoint', 'location'): TAIL_JOINT.copy(),
             ('TailJoint', 'rotation_euler'): Vector((0, 0, 0)),
             ('EngineFire', 'scale'): hidden,
             ('WreckFire', 'scale'): hidden,
             ('Blast', 'scale'): hidden,
         }
-        for i, (joint, plume) in enumerate(zip(engines, plumes)):
+        for i, (joint, plume, lift) in enumerate(zip(engines, plumes, lifts)):
             values[(joint.name, 'location')] = ENGINES[i].copy()
             values[(joint.name, 'rotation_euler')] = Vector((rad(tilt), 0, 0))
-            values[(plume.name, 'scale')] = Vector((1, max(thrust, HIDDEN), 1)) if thrust > 0 else hidden
+            values[(plume.name, 'scale')] = Vector((1, back, 1)) if back > 0.02 else hidden
+            values[(lift.name, 'scale')] = Vector((1, 1, down)) if down > 0.02 else hidden
         return values
 
     def flicker(f, amount=0.12):
@@ -405,8 +498,7 @@ def build():
 
     # ---- Fly (1 s loop)
     def fly(f):
-        t = 2 * math.pi * f / 30
-        return base(FLY_HEIGHT + 0.03 * math.sin(t), TILT_FLY, flicker(f), 0, RAMP_CLOSED, pitch=3, roll=2 * math.sin(t))
+        return base(FLY_HEIGHT, TILT_FLY, flicker(f), 0, RAMP_CLOSED, pitch=3)
 
     flight_clip('Fly', 30, fly)
 
@@ -416,10 +508,10 @@ def build():
         height = FLY_HEIGHT * (1 - descent) ** 1.6 if f < 80 else 0.0
         if 80 <= f < 88:  # settles onto its legs
             height = -0.018 * math.sin(math.pi * (f - 80) / 8)
-        pitch = mix(3, -8, span(f, 0, 18)) if f < 18 else mix(-8, 0, span(f, 18, 55))
+        pitch = mix(3, -2, span(f, 0, 18)) if f < 18 else mix(-2, 0, span(f, 18, 55))
         thrust = mix(1.0, 1.35, span(f, 10, 35)) if f < 70 else mix(1.35, 0.35, span(f, 70, 86))
         return base(height, mix(TILT_FLY, TILT_HOVER, span(f, 5, 38)), thrust * flicker(f), span(f, 48, 62),
-                    mix(RAMP_CLOSED, RAMP_OPEN, span(f, 82, 90)), pitch=pitch, roll=2 * math.sin(f * 0.21) * (1 - descent))
+                    mix(RAMP_CLOSED, RAMP_OPEN, span(f, 82, 90)), pitch=pitch)
 
     flight_clip('Land', 90, land)
 
@@ -430,7 +522,7 @@ def build():
     def take_off(f):
         climb = span(f, 20, 78)
         height = FLY_HEIGHT * climb ** 1.3
-        pitch = mix(0, 6, span(f, 50, 70)) if f < 70 else mix(6, 3, span(f, 70, 90))
+        pitch = mix(0, 3, span(f, 50, 90))
         thrust = mix(0.35, 1.35, span(f, 6, 24)) if f < 75 else mix(1.35, 1.0, span(f, 75, 90))
         return base(height, mix(TILT_HOVER, TILT_FLY, span(f, 46, 82)), thrust * flicker(f), 1 - span(f, 28, 42),
                     mix(RAMP_OPEN, RAMP_CLOSED, span(f, 0, 12)), pitch=pitch)
@@ -452,13 +544,13 @@ def build():
         t = span(f, 62, 90)
         v = base(0.02 * math.sin(math.pi * span(f, 62, 72)), TILT_FLY, 0, 0, RAMP_CLOSED,
                  pitch=mix(22, -3, span(f, 62, 70)), roll=mix(28, 9, t), yaw=200 + 25 * t, y=-0.9 - 0.45 * t)
-        v[('Ship', 'location')].z -= 0.13  # on its belly, legs up
+        v[('Ship', 'location')].z -= GEAR_TOP - 0.01  # on the container's belly, feet up
         v[('Blast', 'scale')] = Vector((1, 1, 1)) * (math.sin(math.pi * span(f, 62, 78)) if f < 78 else HIDDEN) + Vector((HIDDEN,) * 3)
         v[('EngineFire', 'scale')] = Vector((1, 1, 1)) * 1.4 * flicker(f, 0.3)
         v[('WreckFire', 'scale')] = Vector((1, 1, 1)) * span(f, 64, 74) * flicker(f + 7, 0.3)
         # the tail breaks and droops, the front right engine tears off and lies askew
         v[('TailJoint', 'rotation_euler')] = Vector((rad(18 * t), rad(-8 * t), rad(16 * t)))
-        v[('TailJoint', 'location')] = Vector((0.03 * t, 0.6 + 0.08 * t, 0.42 - 0.06 * t))
+        v[('TailJoint', 'location')] = TAIL_JOINT + Vector((0.03, 0.08, -0.06)) * t
         v[('Engine1', 'location')] = ENGINES[1] + Vector((0.22, -0.12, -0.08)) * t
         v[('Engine1', 'rotation_euler')] = Vector((rad(TILT_FLY - 35 * t), rad(50 * t), rad(30 * t)))
         v[('Engine0', 'rotation_euler')] = Vector((rad(TILT_FLY + 20 * t), 0, 0))
@@ -479,7 +571,7 @@ def main():
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     print('objects', build(), flush=True)
-    kit.bake_camo(512)
+    kit.bake_camo(1024)
     bpy.context.scene.frame_set(0)
     print('export', kit.export_glb(OUT), flush=True)
     bpy.ops.wm.save_as_mainfile(filepath=BLEND, compress=True)

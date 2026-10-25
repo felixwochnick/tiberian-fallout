@@ -15,7 +15,7 @@ const settings = useSettings()
 const music = useMusicPlayer()
 
 function start(chosen: Mission) {
-  navigateTo({ path: '/skirmish', query: { mission: chosen.id } })
+  navigateTo({ path: '/mission', query: { mission: chosen.id } })
 }
 
 function leave() {
@@ -24,12 +24,18 @@ function leave() {
   navigateTo('/menu')
 }
 
-// the soundtrack goes on under the briefing
+// the map selection has its own music ("Map Selection", MAPS in THEME.INI), over and over
+let left = false
 onMounted(async () => {
   music.volume.value = settings.music / 100
-  if (music.playing.value) return
   if (!music.tracks.value.length) await music.loadTracks()
-  music.playRandom()
+  if (left) return
+  if (!music.playTheme('MAPS', true) && !music.playing.value) music.playRandom()
+})
+// the battlefield and the menu bring their own music
+onBeforeUnmount(() => {
+  left = true
+  music.stop()
 })
 </script>
 

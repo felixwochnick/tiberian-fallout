@@ -3,28 +3,32 @@ import * as THREE from 'three'
 import { Battlefield } from '~/lib/game/battlefield'
 import { Combat } from '~/lib/game/combat'
 import { MODELS, UNIT_FALLBACK } from '~/lib/game/models'
-import { readMovie } from '~/lib/game/movies'
-import { getAssetStore } from '~/lib/storage/asset-store'
 import type { BuildInfo, UnitVoice } from '~/lib/game/cameos'
 import type { Unit } from '~/lib/game/unit'
-import type { Mission, MissionResult } from '~/lib/game/campaigns'
+import type { Field } from '~/lib/game/field'
+import type { DropshipSound } from '~/lib/game/dropship'
 import type { CursorKind } from '~/lib/input/cursor'
 import { needsResume, pointer, setCursor } from '~/lib/input/mouse-capture'
 
-/** First playable view: plain ground, scrolled by pushing the cursor against the screen edges. */
+/**
+ * The battlefield: plain ground, scrolled by pushing the cursor against the screen edges.
+ * It knows nothing about the game mode: what stands on the map at the start and what
+ * happens on it is up to the skirmish or the mission, which get the `Field` on `start`.
+ */
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   paused?: boolean
-  /** Campaign mission to play; without it a skirmish against the players of the dialog */
-  mission?: Mission
-  /** The mission's reinforcements fly in (after the briefing), then `landed` */
-  landing?: boolean
   /** No cursor: battle control is not established yet */
   cursorHidden?: boolean
-}>()
+  /** House colour of the human player */
+  colour?: number
+}>(), { colour: 0xd8b43a }) // GDI gold
 const skirmish = useSkirmish()
-/** Hands the battlefield to the HUD (radar) */
-const emit = defineEmits<{ ready: [battlefield: Battlefield], result: [result: 'won' | 'lost'], landed: [] }>()
+/**
+ * `ready` hands the battlefield to the HUD (radar), `start` the field to the game mode;
+ * `tick` gives the game seconds of each frame the game runs.
+ */
+const emit = defineEmits<{ ready: [battlefield: Battlefield], start: [field: Field], tick: [seconds: number] }>()
 const settings = useSettings()
 /** Edge scroll speed for each step of the setting (Sehr langsam … Maximal) */
 const SCROLL_FACTORS = [0.35, 0.5, 0.7, 1, 1.3, 1.7, 2.2]
@@ -41,13 +45,7 @@ function frame(now: number) {
   const active = !props.paused && !needsResume()
   if (active) combat?.update(seconds, SPEED_FACTORS[settings.speed] ?? 1)
   if (active && skirmish) tickMissionDisplay(skirmish, seconds * (SPEED_FACTORS[settings.speed] ?? 1))
-  if (active && checkMission && !finished) {
-    const result = checkMission(seconds * (SPEED_FACTORS[settings.speed] ?? 1))
-    if (result) {
-      finished = true
-      emit('result', result)
-    }
-  }
+  if (active) emit('tick', seconds * (SPEED_FACTORS[settings.speed] ?? 1))
   if (active && skirmish) {
     skirmish.production.tick(seconds, (SPEED_FACTORS[settings.speed] ?? 1) * powerFactor(skirmish), skirmish.credits)
     // out of money: EVA says so, at most every few seconds
@@ -61,6 +59,7 @@ function frame(now: number) {
     for (const info of skirmish.arrivals.splice(0)) deliver(info)
   }
   syncPlacement()
+  updatePowerLabel()
   if (skirmish?.placing) battlefield.updatePlacement(pointer().x, pointer().y)
   let cursor: CursorKind = 'default'
   if (active) {
@@ -201,7 +200,9 @@ function onKeyDown(event: KeyboardEvent) {
     if (battlefield.selectAllUnits()) respond('select')
   }
   else if (keys.matches(event, 'home')) {
+    // the construction yard (or barracks), else the MCV that is still to deploy
     const yard = battlefield.structuresOf('GACNST').find(Battlefield.own) ?? battlefield.structuresOf('GAPILE').find(Battlefield.own)
+      ?? battlefield.units.map(u => u.object).find(o => o.userData.id === 'MCV' && Battlefield.own(o) && !o.userData.dead)
     if (yard) battlefield.lookAt(yard.position)
   }
 }
@@ -225,11 +226,11 @@ async function buildStructure(id: string, x: number, z: number, built = true) {
   const [w, h] = skirmish?.rules?.info.get(id)?.foundation ?? FOUNDATIONS[id] ?? [2, 2]
   skirmish?.buildings.push(id)
   try {
-    const object = await battlefield.addStructure(id, x, z, w, h, MODELS[id], houseColour(human.value))
+    const object = await battlefield.addStructure(id, x, z, w, h, MODELS[id], props.colour)
     // factories can send what they produce to a rally point
     if (FACTORY_IDS.has(id)) object.userData.abilities = ['rally']
-    if (id === 'GAPOWR') await addTurbine(object, houseColour(human.value))
-    if (built) sounds.play('click')
+    if (id === 'GAPOWR') await addTurbine(object, props.colour)
+    if (built) buildSound()
     return object
   }
   catch (error) {
@@ -237,6 +238,19 @@ async function buildStructure(id: string, x: number, z: number, built = true) {
   }
 }
 const FACTORY_IDS = new Set(Object.values(FACTORY))
+/** A structure set down on the map, also the MCV unfolding (SOUNDS.MIX; BuildSounds and TransformSounds in OpenRA's Tiberian Sun) */
+const PLACE_SOUND = ['PLACE2']
+
+/** A structure starts to build up where it was placed */
+function buildSound() {
+  sounds.effect(PLACE_SOUND)
+}
+/** The dropship's sounds (SOUNDS.MIX), as in OpenRA's Tiberian Sun: landing, taking off, and its wreck exploding */
+const DROPSHIP_SOUNDS: Record<DropshipSound, string[]> = {
+  land: ['DROPDWN1'],
+  takeOff: ['DROPUP1'],
+  impact: ['EXPNEW09', 'EXPNEW10', 'EXPNEW12'],
+}
 
 /**
  * A power plant comes with its first turbine, on its right place (TurbineSlot1), like in
@@ -262,107 +276,6 @@ function respond(voice: UnitVoice) {
   if (files?.length) sounds.respond(files)
 }
 
-/**
- * The first enemy: a light infantry soldier of Nod a little away from the base. The
- * infantry model is the same for all sides, only its house colour differs.
- */
-/** The players of the skirmish dialog: the human player and the computer players */
-const human = computed(() => settings.players.find(p => p.ai === null) ?? settings.players[0])
-const houseColour = (player?: SkirmishPlayer) => HOUSE_COLOURS[player?.colour ?? 0]?.[1] ?? 0xd8b43a
-/**
- * Where the computer players' bases lie, as fractions of the map along the screen
- * axes: the corners first, then the middles of the edges (the player is in the middle).
- */
-const ENEMY_BASES: [number, number][] = [
-  [0.2, 0.2], [0.8, 0.8], [0.8, 0.2], [0.2, 0.8], [0.5, 0.15], [0.5, 0.85], [0.15, 0.5],
-]
-
-/**
- * Each computer player gets a base with a power plant and a barracks in its house
- * colour, and a soldier in front of the barracks (all against the player for now).
- */
-async function spawnEnemies() {
-  if (!battlefield) return
-  const [mapW, mapH] = battlefield.mapSize
-  const computers = settings.players.filter(p => p.ai !== null)
-  await Promise.all(computers.map(async (player, i) => {
-    const [fu, fv] = ENEMY_BASES[i % ENEMY_BASES.length]!
-    const spot = battlefield!.mapPoint(fu * mapW, fv * mapH)
-    const [x, z] = [Math.round(spot.x), Math.round(spot.z)]
-    const colour = houseColour(player)
-    const [power, barracks] = await Promise.all([
-      battlefield!.addStructure('GAPOWR', x - 1, z - 3, 2, 2, MODELS.GAPOWR, colour, 'enemy'),
-      battlefield!.addStructure('GAPILE', x - 1, z, 2, 2, MODELS.GAPILE, colour, 'enemy'),
-    ])
-    for (const building of [power, barracks]) building.userData.player = player.name
-    addTurbine(power, colour)
-    const door = barracks.position.clone().add(new THREE.Vector3(0.46, 0, 1.0))
-    const enemy = await battlefield!.addUnit(UNIT_MODEL, door, colour, 'enemy')
-    enemy.object.userData.id = 'E1'
-    enemy.object.userData.player = player.name
-    battlefield!.walk(enemy, door.clone().add(new THREE.Vector3(0.8, 0, 2.6)))
-  }))
-}
-
-/** The running mission's check (won, lost or still going) */
-let checkMission: ((seconds: number) => MissionResult) | undefined
-let finished = false
-const NOD_RED = HOUSE_COLOURS[1][1]
-
-function startMission(mission: Mission) {
-  if (!battlefield) return
-  const base = battlefield.centre.clone()
-  const alive = (object: THREE.Object3D) => !object.userData.dead
-  checkMission = mission.start({
-    base,
-    async spawnEnemy(id, dx, dz) {
-      const at = base.clone().add(new THREE.Vector3(dx, 0, dz))
-      const unit = await battlefield!.addUnit(UNIT_MODEL, at, NOD_RED, 'enemy')
-      unit.object.userData.id = id
-      const towards = base.clone().sub(at)
-      unit.object.rotation.y = Math.atan2(towards.x, towards.z)
-      return unit.object
-    },
-    attackMove(objects, dx, dz) {
-      combat?.attackMove(objects.filter(alive), base.clone().add(new THREE.Vector3(dx, 0, dz)))
-    },
-    speak: message => sounds.speak(message),
-    units() {
-      const all = battlefield!.units.map(u => u.object).filter(alive)
-      return { own: all.filter(Battlefield.own), enemy: all.filter(o => !Battlefield.own(o)) }
-    },
-    hint(text, seconds) {
-      if (!skirmish) return
-      showHint(skirmish, text, seconds)
-      sounds.play('message')
-    },
-    startTimer(seconds, onEnd) {
-      if (!skirmish) return
-      skirmish.timer = { remaining: seconds, running: true, onEnd }
-      sounds.speak('evaTimerStarted')
-    },
-    async playRadar(name) {
-      const bytes = await getAssetStore().then(store => readMovie(store, name)).catch(() => undefined)
-      if (!bytes || !skirmish) return
-      // one transmission at a time: a new one waits for the last
-      while (skirmish.radarMovie) await new Promise(resolve => setTimeout(resolve, 250))
-      await new Promise<void>((resolve) => {
-        skirmish.radarMovie = markRaw({ bytes, done: resolve })
-      })
-    },
-    stopTimer() {
-      if (!skirmish?.timer) return
-      skirmish.timer = undefined
-      sounds.speak('evaTimerStopped')
-    },
-    canReinforce() {
-      if (!skirmish) return false
-      const cheapest = Math.min(...['E1', 'E2'].map(id => skirmish.rules?.info.get(id)?.cost ?? 120))
-      return skirmish.production.units.length > 0 || skirmish.arrivals.length > 0 || skirmish.credits.value >= cheapest
-    },
-  })
-}
-
 let delivered = 0
 
 /** The selected MCV of the player: a click on it unfolds it */
@@ -379,9 +292,11 @@ function deployMcv(object: THREE.Object3D) {
     return
   }
   sounds.play('click')
-  battlefield.deploy(unit, MODELS.GACNST!, houseColour(human.value))
+  battlefield.deploy(unit, MODELS.GACNST!, props.colour)
     .then((yard) => {
-      if (yard) skirmish?.buildings.push('GACNST')
+      if (!yard) return
+      skirmish?.buildings.push('GACNST')
+      buildSound() // it unfolds now
     })
     .catch(error => console.error('Bauhof konnte nicht aufgebaut werden', error))
 }
@@ -393,18 +308,19 @@ function deployMcv(object: THREE.Object3D) {
  */
 async function dropship(ids: string[], at: THREE.Vector3) {
   if (!battlefield) return
-  const colour = houseColour(human.value)
+  const colour = props.colour
   const from = at.clone().add(new THREE.Vector3(-10, 0, -10))
   const leave = at.clone().add(new THREE.Vector3(12, 0, -12))
   let unloaded!: () => void
   const out = new Promise<void>((resolve) => {
     unloaded = resolve
   })
-  await battlefield.addDropship(MODELS.DSHP!, from, {
+  const ship = await battlefield.addDropship(MODELS.DSHP!, from, {
     to: at,
     leave,
     unload: exit => unloadSoldiers(exit).finally(unloaded),
   }, colour)
+  ship.onSound = sound => sounds.effect(DROPSHIP_SOUNDS[sound])
   return out
 
   async function unloadSoldiers(exit: THREE.Vector3) {
@@ -420,19 +336,6 @@ async function dropship(ids: string[], at: THREE.Vector3) {
   }
 }
 
-/** Where reinforcements land: a bit in front of the base */
-const landingSpot = () => battlefield!.centre.clone().round().add(new THREE.Vector3(5.5, 0, 4.5))
-
-/** After the briefing: the mission's reinforcements fly in; then battle control */
-watch(() => props.landing, async (landing) => {
-  if (!landing) return
-  const ids = props.mission?.reinforcements ?? []
-  if (battlefield && ids.length) {
-    await dropship(ids, landingSpot())
-      ?.catch(error => console.error('Dropship konnte nicht geladen werden', error))
-  }
-  emit('landed')
-})
 let lastFundsWarning = -Infinity
 /** A finished unit comes out of its factory and walks to the rally point (or a bit out). */
 async function deliver(info: BuildInfo) {
@@ -440,7 +343,7 @@ async function deliver(info: BuildInfo) {
   const factory = battlefield.structuresOf(FACTORY[info.id] ?? '').filter(Battlefield.own).at(-1)
   if (!factory) return
   const door = factory.position.clone().add(new THREE.Vector3(0.46, 0, 1.0))
-  const unit = await battlefield.addUnit(UNIT_MODEL, door, houseColour(human.value))
+  const unit = await battlefield.addUnit(UNIT_MODEL, door, props.colour)
   unit.object.userData.id = info.id
   const rally = factory.userData.rallyPoint as THREE.Vector3 | undefined
   // each one stands a bit apart from the last, round the rally point
@@ -481,6 +384,24 @@ function place() {
 
 let combat: Combat | undefined
 
+/**
+ * A selected power plant of the player shows in its middle how much power the whole
+ * base produces and how much it uses.
+ */
+const powerLabel = ref<{ x: number, y: number, output: number, drain: number }>()
+function updatePowerLabel() {
+  const plant = battlefield?.selected
+  const isPlant = !!plant && !plant.userData.unit && Battlefield.own(plant) && (skirmish?.rules?.info.get(plant.userData.id)?.power ?? 0) > 0
+  if (!isPlant || !skirmish) {
+    powerLabel.value = undefined
+    return
+  }
+  const { x, y } = battlefield!.frameCentre(plant)
+  const { output, drain } = basePower(skirmish)
+  const now = powerLabel.value
+  if (now?.x !== x || now.y !== y || now.output !== output || now.drain !== drain) powerLabel.value = { x, y, output, drain }
+}
+
 onMounted(() => {
   battlefield = markRaw(new Battlefield(stage.value!, 128, 128))
   // dev only: reachable from the browser console (and automated tests)
@@ -501,24 +422,20 @@ onMounted(() => {
     },
   ))
   emit('ready', battlefield)
-  // the starting base around the middle of the map: construction yard, power plant,
-  // refinery and barracks; then a first soldier walks out of the barracks
-  const [cx, cz] = [Math.round(battlefield.centre.x), Math.round(battlefield.centre.z)]
-  const base = [['GACNST', cx - 3, cz - 3], ['GAPOWR', cx, cz - 3], ['PROC', cx - 5, cz], ['GAPILE', cx, cz]] as const
-  const built = base.map(([id, x, z]) => buildStructure(id, x, z, false))
-  // a skirmish: the soldier comes once the barracks stands (its model may take a moment
-  // to load), two more by dropship; a mission brings its own after the briefing
-  if (!props.mission) {
-    built.at(-1)!.then(() => setTimeout(() => deliver({ id: 'E1' } as BuildInfo), 2500))
-    setTimeout(() => dropship(['E1', 'E1'], landingSpot())
-      ?.catch(error => console.error('Dropship konnte nicht geladen werden', error)), 1500)
-    // a mobile construction vehicle beside the base: select it and click it again to deploy
-    battlefield.addUnit(MODELS.MCV!, new THREE.Vector3(cx + 5.5, 0, cz - 2.5), houseColour(human.value))
-      .then((mcv) => { mcv.object.userData.id = 'MCV' })
-      .catch(error => console.error('MCV konnte nicht geladen werden', error))
-  }
-  if (props.mission) startMission(props.mission)
-  else spawnEnemies()
+  emit('start', markRaw({
+    battlefield,
+    combat: combat!,
+    colour: props.colour,
+    buildStructure,
+    async addUnit(id, at, colour = props.colour, owner = 'player') {
+      const unit = await battlefield!.addUnit(MODELS[id] ?? UNIT_MODEL, at, colour, owner)
+      unit.object.userData.id = id
+      return unit.object
+    },
+    async dropship(ids, at) {
+      await dropship(ids, at)
+    },
+  }))
   window.addEventListener('resize', onResize)
   window.addEventListener('contextmenu', onRightClick)
   window.addEventListener('keydown', onKeyDown)
@@ -544,7 +461,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="stage" class="battlefield" @mousedown="onMouseDown" @click="onClick" @wheel="onWheel" />
+  <div ref="stage" class="battlefield" @mousedown="onMouseDown" @click="onClick" @wheel="onWheel">
+    <div v-if="powerLabel" class="power-label" :class="{ low: powerLabel.drain > powerLabel.output }" :style="{ left: `${powerLabel.x}px`, top: `${powerLabel.y}px` }">
+      <span>Erzeugt: {{ powerLabel.output }}</span>
+      <span>Verbraucht: {{ powerLabel.drain }}</span>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -556,6 +478,27 @@ onBeforeUnmount(() => {
   right: var(--hud-right, 0);
   overflow: hidden;
   background: #000;
+}
+/* a selected power plant: power produced and used by the base, in its middle */
+.power-label {
+  position: absolute;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+  pointer-events: none;
+  font: 400 clamp(12px, 1.25vh, 18px) / 1.25 Arial, Helvetica, sans-serif;
+  letter-spacing: 0.14em;
+  color: #e9e3b8;
+  text-shadow:
+    1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000,
+    1px 1px 1px rgba(0, 0, 0, 0.9);
+}
+/* more used than produced */
+.power-label.low span:last-child {
+  color: #ff6a4a;
 }
 .battlefield :deep(canvas) {
   display: block;

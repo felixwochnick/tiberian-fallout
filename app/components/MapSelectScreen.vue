@@ -7,9 +7,12 @@ import { pointer } from '~/lib/input/mouse-capture'
  * The map selection before a mission, rebuilt after the original: the map of the region
  * above (zooming down from the globe, then the territories of GDI and Nod and the
  * targets), the metal plate with the brass rail below, the turning GDI coin and globe,
- * and the briefing typed out next to the coin. Clicking a target starts its mission;
- * a click elsewhere (or Space) skips ahead, Enter starts the only target, Esc goes back
- * to the main menu.
+ * and next to the coin the briefing of the target under the cursor: the targets may lead
+ * to quite different missions, so there is no text until one is pointed at; it stays
+ * until another target is pointed at. The targets can be pointed at and clicked once
+ * the map is complete (the crosshairs have flown in). Clicking a target starts its
+ * mission; a click elsewhere (or Space) skips ahead, Enter starts the only target, Esc
+ * goes back to the main menu.
  */
 const props = defineProps<{ mission: Mission }>()
 const emit = defineEmits<{ start: [mission: Mission], leave: [] }>()
@@ -26,16 +29,24 @@ let frame = 0
 const TEXT_RECT = [122, 262, 390, 117] as const
 const CHARS_PER_SECOND = 32
 
-/** One flowing text like in the original, the objectives after it */
-const briefing = computed(() => [
-  props.mission.briefing.join(' '),
-  ...props.mission.objectives.map(o => `▸ ${o}`),
-].join('\n'))
-/** What is being typed: the briefing, or the target under the cursor */
+/**
+ * A mission's briefing as one flowing text like in the original: the target's name and
+ * the mission first, the objectives after it.
+ */
+function briefingOf(mission: Mission, heading?: string) {
+  return [
+    ...(heading ? [heading] : []),
+    mission.briefing.join(' '),
+    ...mission.objectives.map(o => `▸ ${o}`),
+  ].join('\n')
+}
+/** The briefing being typed: of the target pointed at last */
 const text = ref('')
 const typed = ref(0)
 let typeClock = 0
 const hovered = ref<number>()
+/** The target whose briefing is shown */
+let shown: number | undefined
 let leaving = false
 /** Which sounds of the intro have played: the territories fading up, the crosshairs flying in */
 const played = { overlay: false, target: false }
@@ -65,20 +76,17 @@ onBeforeUnmount(() => {
 function tick(now: number) {
   frame = requestAnimationFrame(tick)
   const world = scene?.world
-  // the briefing begins once the zoom has reached the region
   // the original's sounds: a sweep as the territories come up, then the crosshairs fly in
   if (world?.overlayStarted && !played.overlay) {
     played.overlay = true
     if (!world.settled) sounds.play('mapOverlay', 0.6)
   }
-  if (world?.settled && !played.target) {
+  if (world?.targetsStarted && !played.target) {
     played.target = true
     sounds.play('mapTarget', 0.75)
   }
-  if (!text.value && (!world || world.overlayStarted)) {
-    text.value = briefing.value
-    typeClock = now
-  }
+  // without a map there is only this mission: its briefing once the screen is there
+  if (!world && !text.value) show(props.mission)
   // typing
   if (typed.value < text.value.length) {
     const chars = Math.floor((now - typeClock) / 1000 * CHARS_PER_SECOND)
@@ -93,34 +101,48 @@ function tick(now: number) {
   else {
     typeClock = now
   }
-  // the target under the cursor: highlighted, its name typed instead of the briefing
+  // the target under the cursor: highlighted, and its mission's briefing typed out
   const target = leaving ? undefined : targetAtPointer()
   if (target !== hovered.value) {
     hovered.value = target
     if (world) world.hovered = target
     if (target !== undefined && world) {
       sounds.play('mapEnter', 0.4)
-      text.value = `Einsatz: ${world.target(target).name} – ${missionOf(target).title}`
-      typed.value = 0
-    }
-    else if (text.value) {
-      text.value = briefing.value
-      typed.value = text.value.length
+      if (target !== shown) {
+        shown = target
+        show(missionOf(target), `Einsatz: ${world.target(target).name} – ${missionOf(target).title}`)
+      }
     }
   }
 }
 
+/** Types out a mission's briefing */
+function show(mission: Mission, heading?: string) {
+  text.value = briefingOf(mission, heading)
+  typed.value = 0
+}
+
+/**
+ * Where the pointer stood when the targets came up: it may already rest on one (the
+ * click that opened the screen), which only counts once the mouse has moved.
+ */
+let restingAt: { x: number, y: number } | undefined
+/** How far (CSS pixels) the mouse has to move before a target under it counts */
+const MOVED = 4
+
 function targetAtPointer() {
   const at = pointer()
   const rect = stage.value?.getBoundingClientRect()
-  if (!at.inside || !rect || !scene?.world) return undefined
+  if (!at.inside || !rect || !scene?.world?.settled) return undefined
+  restingAt ??= { x: at.x, y: at.y }
+  if (Math.hypot(at.x - restingAt.x, at.y - restingAt.y) < MOVED) return undefined
+  restingAt = { x: -Infinity, y: -Infinity } // moved: from now on wherever it is
   return scene.world.targetAt((at.x - rect.left) / rect.width, (at.y - rect.top) / rect.height)
 }
 
 /** Skips the zoom and the typing */
 function skip() {
   scene?.world?.skip()
-  if (!text.value) text.value = briefing.value
   typed.value = text.value.length
 }
 

@@ -95,6 +95,28 @@ export function useSkirmish() {
   return inject(KEY)
 }
 
+/**
+ * "Battle control online": until EVA has said it, the game waits and the player has
+ * no cursor and cannot scroll or click anything (Esc still opens the menu).
+ */
+export function useBattleControl(skirmish: Skirmish) {
+  const sounds = useUiSounds()
+  let round = 0
+  return {
+    async establish() {
+      const mine = ++round
+      skirmish.control = false
+      await sounds.speakNow('evaStartGame')
+      if (mine === round) skirmish.control = true
+    },
+    /** Takes control away (and stops one that is being established) */
+    drop() {
+      round++
+      skirmish.control = false
+    },
+  }
+}
+
 /** Power output and drain of the buildings */
 export function basePower(skirmish: Skirmish) {
   let output = 0

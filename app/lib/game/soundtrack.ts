@@ -28,6 +28,7 @@ const KNOWN_THEMES: Record<string, string> = {
   IONSTORM: 'Ion Storm Ambient',
   LONETROP: 'Lone Troop',
   MADRAP: 'Mad Rap',
+  MAPS: 'Map Selection',
   MUTANTS: 'Mutants',
   NODCRUSH: 'Nod Crush',
   PHAROTEK: 'Pharotek',

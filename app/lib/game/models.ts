@@ -11,6 +11,8 @@ export const MODELS: Record<string, string> = {
   E1: '/models/E1.glb',
   MCV: '/models/MCV.glb',
   DSHP: '/models/DSHP.glb',
+  /** Tiberium on one cell: nodes Stage1A … Stage3C (growth stage 1–3, variant A–C), show one */
+  TIB: '/models/TIB.glb',
 }
 
 /** Units without a model of their own yet use the light infantry's */

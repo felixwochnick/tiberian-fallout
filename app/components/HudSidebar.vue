@@ -113,6 +113,18 @@ watch(columns, () => {
   scrollColumn('units', 0)
 })
 
+/**
+ * EVA says "New construction options" when something can be built that could not
+ * before (a building that unlocks it, the MCV unfolding); not when the rules first load.
+ */
+let known: Set<string> | undefined
+watch(columns, (now) => {
+  const ids = [...now.structures, ...now.units].map(o => o.id)
+  if (!rules.value) return
+  if (known && ids.some(id => !known!.has(id))) sounds.speak('evaNewOptions')
+  known = new Set(ids)
+}, { immediate: true })
+
 /** The options of a column visible at its scroll position, padded with empty slots */
 function slots(column: 'structures' | 'units') {
   const list: (BuildOption | undefined)[] = columns.value[column].slice(scroll[column], scroll[column] + rows.value)

@@ -38,7 +38,8 @@ export function useMusicPlayer() {
     playing.value = false
   }
 
-  async function play(track: Track) {
+  /** Plays a track; `loop` repeats it endlessly instead of going on to the next */
+  async function play(track: Track, loop = false) {
     stop()
     error.value = null
     loading.value = true
@@ -63,7 +64,8 @@ export function useMusicPlayer() {
       source = ctx.createBufferSource()
       source.buffer = buffer
       source.connect(gain)
-      source.onended = () => next()
+      source.loop = loop
+      if (!loop) source.onended = () => next()
       source.start()
       playing.value = true
     }
@@ -90,9 +92,17 @@ export function useMusicPlayer() {
     if (pick) return play(pick)
   }
 
+  /** Plays one of the game's themes (THEME.INI id, e.g. 'MAPS'); false if it is not there */
+  function playTheme(id: string, loop = false) {
+    const track = tracks.value.find(t => t.filename === `${id.toUpperCase()}.AUD`)
+    if (!track) return false
+    if (current.value !== track.id || !playing.value) play(track, loop)
+    return true
+  }
+
   watch(volume, (v) => {
     if (gain) gain.gain.value = v
   })
 
-  return { tracks, current, playing, loading, volume, error, shuffle, loadTracks, play, stop, next, playRandom }
+  return { tracks, current, playing, loading, volume, error, shuffle, loadTracks, play, playTheme, stop, next, playRandom }
 }

@@ -323,8 +323,13 @@ export class WorldMap {
     this.time = Math.max(this.time, MAP_TIMES.zoom + MAP_TIMES.overlay + MAP_TIMES.target)
   }
 
-  /** The intro is over: the map can be clicked */
+  /** The intro is over (the crosshairs have flown in): the targets can be pointed at and clicked */
   get settled() {
+    return this.time >= MAP_TIMES.zoom + MAP_TIMES.overlay + MAP_TIMES.target
+  }
+
+  /** The territories are up and the crosshairs begin to fly in */
+  get targetsStarted() {
     return this.time >= MAP_TIMES.zoom + MAP_TIMES.overlay
   }
 

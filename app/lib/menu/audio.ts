@@ -46,6 +46,8 @@ const UI_SOUNDS: Record<string, readonly [mix: string | number, file: number | s
   evaConstructionComplete: ['SPEECH01.MIX', '00-I018.AUD'],
   /** "Unit ready" */
   evaUnitReady: ['SPEECH01.MIX', '00-I076.AUD'],
+  /** "New construction options" – something new can be built */
+  evaNewOptions: ['SPEECH01.MIX', '00-I032.AUD'],
   /** "On hold" */
   evaOnHold: ['SPEECH01.MIX', '00-I218.AUD'],
   /** "Cancelled" */
@@ -81,7 +83,7 @@ const UI_SOUNDS: Record<string, readonly [mix: string | number, file: number | s
   mapClick: ['SIDENC01.MIX', 'CLKTARG.AUD'],
 }
 
-export type EvaSound = 'evaBuilding' | 'evaTraining' | 'evaConstructionComplete' | 'evaUnitReady' | 'evaOnHold'
+export type EvaSound = 'evaBuilding' | 'evaTraining' | 'evaConstructionComplete' | 'evaUnitReady' | 'evaNewOptions' | 'evaOnHold'
   | 'evaCancelled' | 'evaInsufficientFunds' | 'evaCannotPlace' | 'evaBuildingInProgress'
   | 'evaStartGame' | 'evaBaseAttack' | 'evaMissionAccomplished' | 'evaMissionFailed'
   | 'evaTimerStarted' | 'evaTimerStopped'

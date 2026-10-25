@@ -47,6 +47,8 @@ export interface Mission {
   radar?: boolean
   /** The briefing is shown on the map of the region (its own page, /briefing): who holds what, and the targets to click */
   map?: MissionMap
+  /** The player's base at the start: structures (RULES.INI id) and their corner in cells from the middle of the map */
+  base: [id: string, dx: number, dz: number][]
   /** Units a dropship brings in after the briefing; battle control comes once they are out */
   reinforcements?: string[]
   /** Builds the mission's map; returns the per-frame check */
@@ -86,6 +88,8 @@ const demoMission: Mission = {
     'Mindestens eine Einheit muss überleben',
   ],
   credits: 5000,
+  // construction yard, power plant, refinery and barracks
+  base: [['GACNST', -3, -3], ['GAPOWR', 0, -3], ['PROC', -5, 0], ['GAPILE', 0, 0]],
   reinforcements: ['E1', 'E1', 'E1'],
   // the south-west of the USA: GDI holds the country, Nod has taken the south-west and
   // Mexico; the target is Nevada

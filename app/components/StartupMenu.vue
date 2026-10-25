@@ -143,7 +143,7 @@ function startCampaign() {
   const first = campaign?.missions[0]
   if (!first) return
   sound('click')
-  navigateTo({ path: first.map ? '/briefing' : '/skirmish', query: { mission: first.id } })
+  navigateTo({ path: first.map ? '/briefing' : '/mission', query: { mission: first.id } })
 }
 
 function startSkirmish() {

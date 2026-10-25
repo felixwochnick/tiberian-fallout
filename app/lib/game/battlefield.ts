@@ -5,6 +5,7 @@ import { SCROLL_DIRECTIONS, type CursorKind, type ScrollDirection } from '../inp
 import { findPath, type NavMap } from './pathfinding'
 import { Unit } from './unit'
 import { Dropship, type DropshipFlight } from './dropship'
+import { TIBERIUM_RIPE, type TiberiumCell } from './tiberium'
 
 /**
  * The battlefield in Tiberian Sun's view: a 3D scene seen through an orthographic
@@ -29,6 +30,11 @@ const PIXELS_PER_CELL = 48 / Math.SQRT2
 /** Seconds a placeholder building takes to rise out of the ground */
 const RISE_SECONDS = 1.2
 
+/** Seconds between two growth steps of the Tiberium: one cell grows a stage */
+const TIBERIUM_GROWTH = 15
+/** How far (cells) the green shine of Tiberium reaches over the ground round a field */
+const TIBERIUM_SHINE = 4
+
 /** Height (cells) of the placeholder buildings until they have models */
 const PLACEHOLDER_HEIGHT: Record<string, number> = {
   GACNST: 0.55, GAPOWR: 0.6, PROC: 0.45, GASILO: 0.35, GACTWR: 0.5, GAWEAP: 0.6, GAVULC: 0.4, GARADR: 0.7,
@@ -47,10 +53,34 @@ const DEPLOY_HEADING = 0
 
 export const ZOOM = { min: 0.75, max: 2.5, step: 1.15 }
 
+/**
+ * Towards the sun: in front of the map on the left of the screen, high up (55°), so the
+ * shadows fall backwards to the right. Along the ground, the screen's right is
+ * (cos, 0, -sin) of the azimuth and its down (towards the viewer) (sin, 0, cos).
+ */
+const SUN_DIRECTION = new THREE.Vector3(Math.sin(AZIMUTH) - Math.cos(AZIMUTH), 0, Math.cos(AZIMUTH) + Math.sin(AZIMUTH))
+  .normalize()
+  .setY(Math.tan(THREE.MathUtils.degToRad(55)))
+  .normalize()
+/** How far the sun's shadow camera stands from the ground it looks at */
+const SUN_DISTANCE = 60
+/** Texels of the shadow map along each side */
+const SHADOW_MAP_SIZE = 2048
+
 /** How close (CSS pixels) the cursor has to get to the screen edge to scroll */
 const EDGE = 12
 /** Scroll speed in screen pixels per second at zoom 1 */
 const SCROLL_SPEED = 1100
+
+/**
+ * The light of the map: gloomy like in Tiberian Sun, a pale, weak sun and little light
+ * from the sky. The ground is not lit (its shader writes display colours), so it is
+ * darkened and greyed by GROUND_LIGHT and GROUND_GREY to match.
+ */
+const SUN_LIGHT = { colour: 0xffeccc, intensity: 1.6 }
+const SKY_LIGHT = { sky: 0x9aa6b8, ground: 0x3a342a, intensity: 0.55 }
+const GROUND_LIGHT = 0.68
+const GROUND_GREY = 0.25
 
 const NOISE = /* glsl */ `
   float hash(vec2 p) {
@@ -65,7 +95,17 @@ const NOISE = /* glsl */ `
     return noise(p) * 0.5 + noise(p * 2.03) * 0.3 + noise(p * 4.1) * 0.2;
   }`
 
-/** Plain temperate ground: dry ochre earth like in Tiberian Sun (no cell grid, like the original). */
+/**
+/**
+ * Plain temperate ground: dry ochre earth like in Tiberian Sun (no cell grid, like the
+ * original). Tiberium colours it, like in help/tiberium/: `tibMap` holds one texel per
+ * cell over the rectangle `tibRect` (x, z of its corner, its size in cells), red = the
+ * cell's growth stage / 3, green = the shine of the Tiberium round it (TIBERIUM_SHINE
+ * cells far, see Battlefield.shineTiberium). Filtered between the cells and frayed by
+ * noise, the shine colours the ground olive green far round a field (keeping its grain,
+ * so it does not look like fog), greener under the crystals, where it also glows a
+ * little, pulsing slowly (`time` in seconds).
+ */
 const GroundShader = {
   vertexShader: /* glsl */ `
     varying vec2 vCell;
@@ -76,6 +116,9 @@ const GroundShader = {
     }`,
   fragmentShader: /* glsl */ `
     varying vec2 vCell;
+    uniform sampler2D tibMap;
+    uniform vec4 tibRect;
+    uniform float time;
     ${NOISE}
     void main() {
       vec2 c = vCell;
@@ -95,6 +138,25 @@ const GroundShader = {
       earth = mix(earth, vec3(0.3, 0.23, 0.15), pebble * 0.7);
       float glint = smoothstep(0.9, 0.93, noise(c * 9.0 + 17.3));
       earth += vec3(0.08, 0.07, 0.05) * glint;
+      // Tiberium: olive green far round a field, greener under the crystals
+      vec2 warp = vec2(fbm(c * 0.9 + 3.1), fbm(c * 0.9 + 8.7)) - 0.5;
+      vec4 tibCell = texture2D(tibMap, (c + warp * 0.9 - tibRect.xy) / tibRect.zw);
+      float tib = tibCell.r;
+      float shine = tibCell.g;
+      // colour the earth, not cover it: its grain, patches and pebbles stay as they are
+      float tint = smoothstep(0.04, 0.55, shine + (fbm(c * 1.1 + 2.0) - 0.5) * 0.18);
+      float lum = dot(earth, vec3(0.3, 0.55, 0.15));
+      earth = mix(earth, lum * vec3(0.92, 1.12, 0.42), tint * 0.85);
+      float cover = smoothstep(0.12, 0.3, tib + (fbm(c * 2.3 + 5.0) - 0.5) * 0.2);
+      earth = mix(earth, lum * vec3(0.7, 1.05, 0.36), cover * 0.6);
+      // green grit of broken crystals
+      float speck = smoothstep(0.87, 0.91, noise(c * 13.0 + 29.0)) * cover;
+      earth = mix(earth, vec3(0.3, 0.72, 0.24), speck * 0.8);
+      // the gloomy light of the map: darker and greyer
+      earth = mix(earth, vec3(dot(earth, vec3(0.3, 0.55, 0.15))), ${GROUND_GREY.toFixed(2)}) * ${GROUND_LIGHT.toFixed(2)};
+      // under the crystals the ground glows a little, pulsing slowly out of step
+      float pulse = 0.5 + 0.5 * sin(time * 3.14159 + fbm(c * 0.5) * 6.0);
+      earth *= 1.0 + vec3(0.02, 0.12, 0.02) * cover * pulse;
       gl_FragColor = vec4(earth, 1.0);
     }`,
 }
@@ -140,6 +202,13 @@ export class Battlefield {
   private readonly structures = new Map<string, THREE.Object3D[]>()
   /** Placeholder buildings still rising out of the ground */
   private readonly rising: { object: THREE.Object3D, time: number }[] = []
+  /** Tiberium on the map by cell ("x,z"): its stage and its model (TIB.glb, one variant) */
+  private readonly tiberium = new Map<string, TiberiumCell & { object: THREE.Object3D }>()
+  private tiberiumTimer = 0
+  /** Seconds for the pulsing shine of the Tiberium on the ground (see GroundShader) */
+  private readonly groundTime: THREE.IUniform<number>
+  /** The cells' Tiberium stages for the ground shader (see GroundShader) */
+  private readonly tiberiumGround: { texture: THREE.DataTexture, x: number, z: number, w: number, h: number }
   /** Preview of a structure being placed: its cells, green where it may go, red otherwise */
   private placement?: { w: number, h: number, adjacent: number, preview: THREE.Group, cell?: [number, number], valid: boolean }
 
@@ -153,6 +222,8 @@ export class Battlefield {
   /** Rubber band while dragging a selection box (client pixels) */
   private band?: { x0: number, y0: number, x1: number, y1: number }
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  /** The sun: lights the models and casts their shadows, round the part of the map in view */
+  private readonly sun = new THREE.DirectionalLight(SUN_LIGHT.colour, SUN_LIGHT.intensity)
 
   constructor(private readonly container: HTMLElement, readonly width: number, readonly height: number) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -160,6 +231,8 @@ export class Battlefield {
     this.renderer.setClearColor(0x000000)
     // the ground shader writes display colours itself; the models are lit PBR in sRGB
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
+    this.renderer.shadowMap.enabled = true
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     container.appendChild(this.renderer.domElement)
 
     // the ground: a rectangle along the screen axes (u right, v down), turned by the
@@ -169,15 +242,38 @@ export class Battlefield {
     geometry.rotateX(-Math.PI / 2)
     geometry.translate(width / 2, 0, height / 2)
     geometry.rotateY(AZIMUTH)
-    const material = new THREE.ShaderMaterial(GroundShader)
-    this.disposables.push(geometry, material)
+    // one texel per cell over the cells the ground covers (and a free cell round them)
+    const corners = [[0, 0], [width, 0], [0, height], [width, height]].map(([u, v]) => this.mapPoint(u!, v!))
+    const x0 = Math.floor(Math.min(...corners.map(p => p.x))) - 1
+    const z0 = Math.floor(Math.min(...corners.map(p => p.z))) - 1
+    const w = Math.ceil(Math.max(...corners.map(p => p.x))) + 1 - x0
+    const h = Math.ceil(Math.max(...corners.map(p => p.z))) + 1 - z0
+    const texture = new THREE.DataTexture(new Uint8Array(w * h * 4), w, h)
+    texture.magFilter = texture.minFilter = THREE.LinearFilter
+    texture.needsUpdate = true
+    this.tiberiumGround = { texture, x: x0, z: z0, w, h }
+    const material = new THREE.ShaderMaterial({
+      ...GroundShader,
+      uniforms: { tibMap: { value: texture }, tibRect: { value: new THREE.Vector4(x0, z0, w, h) }, time: { value: 0 } },
+    })
+    this.groundTime = material.uniforms.time!
+    this.disposables.push(geometry, material, texture)
     this.scene.add(new THREE.Mesh(geometry, material))
+    // the ground shader knows no light: the shadows lie on a see-through layer over it
+    const shadowMaterial = new THREE.ShadowMaterial({ opacity: 0.38, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
+    this.disposables.push(shadowMaterial)
+    const shadowLayer = new THREE.Mesh(geometry, shadowMaterial)
+    shadowLayer.receiveShadow = true
+    this.scene.add(shadowLayer)
 
-    // light for the models: sun from the top left of the screen like the original's art,
-    // a sky fill and soft shadows on the ground
-    const sun = new THREE.DirectionalLight(0xfff4e0, 2.6)
-    sun.position.set(-6, 9, -2)
-    this.scene.add(sun, sun.target, new THREE.HemisphereLight(0xdfe8ff, 0x5a5040, 1.1))
+    // light for the models: the sun from the front left, a sky fill and shadows on the ground
+    const sun = this.sun
+    sun.castShadow = true
+    sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+    sun.shadow.bias = -0.0004
+    sun.shadow.normalBias = 0.02
+    sun.shadow.radius = 3
+    this.scene.add(sun, sun.target, new THREE.HemisphereLight(SKY_LIGHT.sky, SKY_LIGHT.ground, SKY_LIGHT.intensity))
     this.overlayScene.add(this.selectionFrame)
     this.disposables.push(this.selectionFrame.geometry, this.selectionFrame.material as THREE.Material)
     this.u = (this.bounds.u[0] + this.bounds.u[1]) / 2
@@ -227,6 +323,47 @@ export class Battlefield {
     this.camera.updateProjectionMatrix()
     this.camera.position.copy(this.target).add(this.offset)
     this.camera.lookAt(this.target)
+    this.updateSun()
+  }
+
+  /**
+   * The sun's shadows cover the ground in view, with room round it for tall buildings
+   * and dropships just outside. Its middle moves in whole texels of the shadow map, so
+   * shadow edges do not shimmer while scrolling.
+   */
+  private updateSun() {
+    const [halfU, halfV] = this.halfView()
+    const radius = Math.hypot(halfU, halfV) + 4
+    const shadow = this.sun.shadow.camera
+    shadow.left = -radius
+    shadow.right = radius
+    shadow.top = radius
+    shadow.bottom = -radius
+    shadow.near = 1
+    shadow.far = SUN_DISTANCE + 40
+    shadow.updateProjectionMatrix()
+    // the view's middle in the light's own axes, rounded to texels
+    const texel = 2 * radius / SHADOW_MAP_SIZE
+    const right = new THREE.Vector3().crossVectors(SUN_DIRECTION, new THREE.Vector3(0, 1, 0)).normalize()
+    const up = new THREE.Vector3().crossVectors(right, SUN_DIRECTION)
+    const centre = new THREE.Vector3()
+      .addScaledVector(right, Math.round(this.target.dot(right) / texel) * texel)
+      .addScaledVector(up, Math.round(this.target.dot(up) / texel) * texel)
+      .addScaledVector(SUN_DIRECTION, this.target.dot(SUN_DIRECTION))
+    this.sun.target.position.copy(centre)
+    this.sun.position.copy(centre).addScaledVector(SUN_DIRECTION, SUN_DISTANCE)
+    this.sun.target.updateMatrixWorld()
+  }
+
+  /** Meshes of a model cast shadows and take them, except glowing halos */
+  private castShadows(object: THREE.Object3D) {
+    object.traverse((node) => {
+      const mesh = node as THREE.Mesh
+      if (!mesh.isMesh) return
+      const glows = ([mesh.material].flat() as THREE.Material[]).some(m => m.name.startsWith('Glow') || m.blending === THREE.AdditiveBlending)
+      mesh.castShadow = !glows
+      mesh.receiveShadow = !glows
+    })
   }
 
   /** Zooms in (positive steps) or out, within the limits. */
@@ -281,6 +418,8 @@ export class Battlefield {
     for (const unit of this.units) unit.update(seconds)
     for (const ship of [...this.aircraft]) ship.update(seconds)
     this.updateDeploying(seconds)
+    this.growTiberium(seconds)
+    this.groundTime.value = (this.groundTime.value + seconds) % 1000
     this.renderer.render(this.scene, this.camera)
     this.drawSelection()
     if (this.selectionFrame.visible) {
@@ -482,6 +621,35 @@ export class Battlefield {
    * it the health bar like in the original: a row of small cells, green while healthy,
    * yellow when damaged and red when badly damaged (object.userData.health, 0 … 1).
    */
+  /**
+   * The box a building's frame is drawn round: its foundation, from the ground up to the
+   * top of its model, like in the original. While its Build clip runs, parts still lie
+   * under the ground or swing out beyond the foundation, so only the height is taken
+   * from the model; once it stands, the box is kept (a waving flag would make it twitch).
+   */
+  private buildingBounds(object: THREE.Object3D): THREE.Box3 {
+    if (object.userData.bounds) return object.userData.bounds
+    const box = new THREE.Box3().setFromObject(object)
+    box.min.y = object.position.y
+    const footprint = object.userData.footprint as Footprint | undefined
+    if (footprint) {
+      box.min.x = footprint.x
+      box.max.x = footprint.x + footprint.w
+      box.min.z = footprint.z
+      box.max.z = footprint.z + footprint.h
+    }
+    const mixer = object.userData.mixer as THREE.AnimationMixer | undefined
+    const build = (object.userData.clips as THREE.AnimationClip[] | undefined)?.find(c => c.name === 'Build')
+    if (!build || !mixer?.existingAction(build)?.isRunning()) object.userData.bounds = box
+    return box
+  }
+
+  /** Middle of a building's frame on screen, in pixels of the battlefield */
+  frameCentre(object: THREE.Object3D) {
+    const at = this.buildingBounds(object).getCenter(new THREE.Vector3()).project(this.camera)
+    return { x: (at.x + 1) / 2 * this.container.clientWidth, y: (1 - at.y) / 2 * this.container.clientHeight }
+  }
+
   /** Corner frame and health bar of one selected object, around its outline on screen. */
   private drawFrame(
     object: THREE.Object3D,
@@ -490,10 +658,7 @@ export class Battlefield {
     rect: (x0: number, y0: number, x1: number, y1: number, colour: [number, number, number]) => void,
     segment: (ax: number, ay: number, bx: number, by: number, width: number, colour: [number, number, number]) => void,
   ) {
-    // buildings stand still: their bounds are taken once (a waving flag would make the frame twitch)
-    const bounds: THREE.Box3 = object.userData.kind === 'unit'
-      ? new THREE.Box3().setFromObject(object)
-      : (object.userData.bounds ??= new THREE.Box3().setFromObject(object))
+    const bounds = object.userData.kind === 'unit' ? new THREE.Box3().setFromObject(object) : this.buildingBounds(object)
     let [left, top, right, bottom] = [Infinity, Infinity, -Infinity, -Infinity]
     for (let i = 0; i < 8; i++) {
       const corner = new THREE.Vector3(
@@ -524,12 +689,18 @@ export class Battlefield {
     }
     else {
       // buildings: a box in 3D round them, like in the original: at each of its eight
-      // corners short strokes along its three edges, a fifth of each edge long
+      // corners short strokes along its three edges, a fifth of each edge long; only at
+      // the six corners of its outline, not at the two inside it (the front one on top
+      // and the back one on the ground, behind the building)
       const size = bounds.getSize(new THREE.Vector3())
       const corner = new THREE.Vector3()
       const end = new THREE.Vector3()
+      const view = this.camera.getWorldDirection(new THREE.Vector3())
       for (let i = 0; i < 8; i++) {
         corner.set(i & 1 ? bounds.max.x : bounds.min.x, i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z)
+        // inside the outline: all three sides of the box at the corner face the camera, or none
+        const facing = [view.x, view.y, view.z].filter((d, a) => (i & (1 << a) ? 1 : -1) * d < 0).length
+        if (facing === 0 || facing === 3) continue
         const from = corner.clone().project(this.camera)
         const ax = (from.x + 1) / 2 * w
         const ay = (1 - from.y) / 2 * h
@@ -660,6 +831,12 @@ export class Battlefield {
     }
     const overlaps = (f: Footprint) => x < f.x + f.w && f.x < x + w && z < f.z + f.h && f.z < z + h
     if (this.footprints.some(overlaps)) return false
+    // not on Tiberium
+    for (let cx = x; cx < x + w; cx++) {
+      for (let cz = z; cz < z + h; cz++) {
+        if (this.tiberium.has(`${cx},${cz}`)) return false
+      }
+    }
     // gap in cells to the nearest building of the base
     const gap = (f: Footprint) => Math.max(f.x - (x + w), x - (f.x + f.w), f.z - (z + h), z - (f.z + f.h), 0)
     // only the player's own base counts
@@ -792,6 +969,7 @@ export class Battlefield {
     box(w * 0.5, 0.05, h * 0.5, 0.07 + height, 0x6f6a60)
     group.position.copy(centre)
     group.scale.y = 0.02
+    this.castShadows(group)
     this.scene.add(group)
     this.addSelectable(group)
     this.rising.push({ object: group, time: 0 })
@@ -907,9 +1085,92 @@ export class Battlefield {
       this.aircraft.splice(this.aircraft.indexOf(ship), 1)
       ship.dispose()
     }
+    this.castShadows(gltf.scene)
     this.scene.add(gltf.scene)
     this.aircraft.push(ship)
     return ship
+  }
+
+  /**
+   * Tiberium (TIB.glb) on the given cells: each cell gets one of the model's variants
+   * (A–C), turned by a random multiple of 90°, shows the node of its growth stage
+   * (Stage1A … Stage3C) and colours the ground round it. Cells that have Tiberium already keep it.
+   * The fields then grow on their own (see growTiberium).
+   */
+  async addTiberium(url: string, cells: TiberiumCell[]) {
+    const gltf = await this.loadModel(url, 0)
+    for (const { x, z, stage } of cells) {
+      const key = `${x},${z}`
+      if (this.tiberium.has(key)) continue
+      const variant = 'ABC'[Math.floor(Math.random() * 3)]!
+      const object = gltf.scene.clone()
+      // only the three stages of this variant
+      const others: THREE.Object3D[] = []
+      object.traverse((node) => {
+        if (/^Stage\d[ABC]$/.test(node.name) && !node.name.endsWith(variant)) others.push(node)
+      })
+      for (const node of others) node.removeFromParent()
+      object.position.set(x + 0.5, 0, z + 0.5)
+      object.rotation.y = Math.floor(Math.random() * 4) * Math.PI / 2
+      object.userData.variant = variant
+      this.castShadows(object)
+      this.scene.add(object)
+      const cell = { x, z, stage, object }
+      this.tiberium.set(key, cell)
+      this.showTiberiumStage(cell)
+    }
+  }
+
+  /** Shows the node of a Tiberium cell's stage, hides the others and stains the ground to match */
+  private showTiberiumStage(cell: TiberiumCell & { object: THREE.Object3D }) {
+    const shown = `Stage${cell.stage}${cell.object.userData.variant}`
+    cell.object.traverse((node) => {
+      if (/^Stage\d[ABC]$/.test(node.name)) node.visible = node.name === shown
+    })
+    const ground = this.tiberiumGround
+    const tx = cell.x - ground.x
+    const tz = cell.z - ground.z
+    if (tx < 0 || tz < 0 || tx >= ground.w || tz >= ground.h) return
+    ground.texture.image.data![(tz * ground.w + tx) * 4] = Math.round(cell.stage / TIBERIUM_RIPE * 255)
+    this.shineTiberium(cell.x, cell.z)
+  }
+
+  /**
+   * Works out the green shine on the ground round a Tiberium cell (green channel of the
+   * ground's Tiberium texels): at every cell up to TIBERIUM_SHINE cells away, the
+   * strongest of the Tiberium cells near it, fading with the distance, riper is brighter.
+   */
+  private shineTiberium(x: number, z: number) {
+    const ground = this.tiberiumGround
+    const data = ground.texture.image.data!
+    const reach = TIBERIUM_SHINE
+    for (let tz = Math.max(0, z - ground.z - reach); tz <= Math.min(ground.h - 1, z - ground.z + reach); tz++) {
+      for (let tx = Math.max(0, x - ground.x - reach); tx <= Math.min(ground.w - 1, x - ground.x + reach); tx++) {
+        let shine = 0
+        for (let dz = -reach; dz <= reach; dz++) {
+          for (let dx = -reach; dx <= reach; dx++) {
+            const source = this.tiberium.get(`${ground.x + tx + dx},${ground.z + tz + dz}`)
+            if (!source) continue
+            const near = Math.max(0, 1 - Math.hypot(dx, dz) / reach)
+            shine = Math.max(shine, (0.55 + 0.45 * source.stage / TIBERIUM_RIPE) * near * near * (3 - 2 * near))
+          }
+        }
+        data[(tz * ground.w + tx) * 4 + 1] = Math.round(shine * 255)
+      }
+    }
+    ground.texture.needsUpdate = true
+  }
+
+  /** Every TIBERIUM_GROWTH seconds a random cell that is not ripe yet grows a stage. */
+  private growTiberium(seconds: number) {
+    this.tiberiumTimer += seconds
+    if (this.tiberiumTimer < TIBERIUM_GROWTH) return
+    this.tiberiumTimer = 0
+    const growing = [...this.tiberium.values()].filter(cell => cell.stage < TIBERIUM_RIPE)
+    const cell = growing[Math.floor(Math.random() * growing.length)]
+    if (!cell) return
+    cell.stage++
+    this.showTiberiumStage(cell)
   }
 
   /**
@@ -956,6 +1217,7 @@ export class Battlefield {
       gltf.scene.userData.clips = gltf.animations
     }
     gltf.scene.position.copy(at)
+    this.castShadows(gltf.scene)
     this.scene.add(gltf.scene)
     this.addSelectable(gltf.scene)
     return gltf.scene
@@ -1014,6 +1276,7 @@ export class Battlefield {
     })
     object.position.copy(at)
     object.userData.kind = 'unit' // can be picked with the selection box
+    this.castShadows(object)
     object.userData.owner = owner
     this.scene.add(object)
     this.addSelectable(object)
