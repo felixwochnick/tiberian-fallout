@@ -109,12 +109,13 @@ let last = performance.now()
 /** Steps the opening or closing and the static; follows the camera with the white frame. */
 function frame(now: number) {
   if (!running) return
-  const dt = Math.min(0.1, (now - last) / 1000)
+  // the game is paused: the cover and the transmission wait
+  const dt = sounds.held.value ? 0 : Math.min(0.1, (now - last) / 1000)
   last = now
   const end = OPENING.map[1]
   if (open.value && opening.value < end) opening.value = Math.min(end, opening.value + dt)
   // the transmission starts once the static has gone dark
-  if (props.movie && !playback && opening.value >= OPENING.map[0]) startMovie(props.movie)
+  if (props.movie && !playback && !sounds.held.value && opening.value >= OPENING.map[0]) startMovie(props.movie)
   // closing: the halves slide back together, faster
   if (!open.value && opening.value > 0) opening.value = opening.value > OPENING.split[1] ? OPENING.split[1] : Math.max(0, opening.value - dt * 1.4)
   if (staticOpacity.value > 0) drawStatic(now)

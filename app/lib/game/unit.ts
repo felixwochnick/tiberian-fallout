@@ -10,10 +10,15 @@ const PRONE_SECONDS = 4
 const CRAWL_FACTOR = 0.5
 
 /**
- * standing: Idle / Walk; diving: GoProne; prone: Prone / Crawl; rising: GoProne backwards.
- * Units do not move while diving or rising.
+ * standing: Idle / Walk; diving: GoProne; prone: Prone / Crawl; rising: GoProne backwards;
+ * dead: a death clip, held on its last frame. Units do not move while diving or rising.
  */
-type Stance = 'standing' | 'diving' | 'prone' | 'rising'
+type Stance = 'standing' | 'diving' | 'prone' | 'rising' | 'dead'
+
+/** How a soldier dies (its clips): shot, blown up by an explosion; lying down it always goes limp (DieProne) */
+export type Death = 'Die1' | 'Die2'
+/** The fall into the death clip is quicker than the other cross-fades */
+const DEATH_FADE = 0.08
 
 /**
  * An infantry unit on the battlefield: a skinned model with the looped clips "Idle"
@@ -23,6 +28,16 @@ type Stance = 'standing' | 'diving' | 'prone' | 'rising'
  * Like in the original, infantry under fire throws itself down (clip "GoProne"),
  * lies ("Prone") and crawls ("Crawl") at half speed when it moves, and gets up again
  * a few seconds after the last shot at it. Models without these clips stay standing.
+ *
+ * Killed, it plays a death clip once and lies still (die()): "Die1" shot, "Die2"
+ * blown up, "DieProne" when it was lying down.
+ *
+ * Models with a clip "Fire" (the walkers: spinning barrels, recoil, their own muzzle
+ * flashes) play it once per shot, standing, and go back to Idle after it.
+ *
+ * Other clips of a model (the harvester's Harvest and Unload) are played on demand
+ * with perform(); drive() plays the Walk clip, also backwards, while something else
+ * moves the unit (the harvester backing into its refinery).
  */
 export class Unit {
   private readonly mixer: THREE.AnimationMixer
@@ -31,6 +46,7 @@ export class Unit {
   private readonly goProne?: THREE.AnimationAction
   private readonly lying?: THREE.AnimationAction
   private readonly crawl?: THREE.AnimationAction
+  private readonly shoot?: THREE.AnimationAction
   /** The looped animation playing now */
   private current?: THREE.AnimationAction
   private target?: THREE.Vector3
@@ -42,20 +58,27 @@ export class Unit {
   /** Ground speed in cells per second; the model's own (feet don't slide) unless given */
   readonly speed: number
 
-  constructor(readonly object: THREE.Object3D, clips: THREE.AnimationClip[], speed?: number) {
+  constructor(readonly object: THREE.Object3D, private readonly clips: THREE.AnimationClip[], speed?: number) {
     this.mixer = new THREE.AnimationMixer(object)
-    const action = (name: string) => {
-      const clip = clips.find(c => c.name === name)
-      return clip && this.mixer.clipAction(clip)
-    }
+    const action = (name: string) => this.action(name)
     this.idle = action('Idle')
     this.walk = action('Walk')
     this.lying = action('Prone')
     this.crawl = action('Crawl')
     this.goProne = action('GoProne')
+    this.shoot = action('Fire')
+    this.shoot?.setLoop(THREE.LoopOnce, 1)
     this.goProne?.setLoop(THREE.LoopOnce, 1)
     if (this.goProne) this.goProne.clampWhenFinished = true
     this.mixer.addEventListener('finished', (event) => {
+      if (this.stance === 'dead') return
+      if (event.action === this.shoot) {
+        if (this.current === this.shoot) {
+          this.current = undefined
+          this.fadeFrom(this.shoot, this.loop)
+        }
+        return
+      }
       if (event.action !== this.goProne) return
       this.stance = this.stance === 'diving' ? 'prone' : 'standing'
       this.play(this.loop)
@@ -74,6 +97,41 @@ export class Unit {
 
   get walking() {
     return !!this.target
+  }
+
+  private action(name: string) {
+    const clip = this.clips.find(c => c.name === name)
+    return clip && this.mixer.clipAction(clip)
+  }
+
+  /**
+   * Plays one of the model's clips instead of Idle (looped, or once and then holding
+   * its last pose); it lasts until the unit walks or rest() is called. Returns the
+   * clip's length in seconds, undefined if the model has no such clip.
+   */
+  perform(name: string, loop = true) {
+    const action = this.action(name)
+    if (!action) return undefined
+    if (action !== this.current) {
+      action.reset()
+      action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity)
+      action.clampWhenFinished = !loop
+      this.fadeTo(action)
+    }
+    return action.getClip().duration
+  }
+
+  /** Back to Idle (or what fits the stance) after perform() or drive(). */
+  rest() {
+    if (this.walk) this.walk.timeScale = Math.abs(this.walk.timeScale)
+    this.play(this.loop)
+  }
+
+  /** Plays the Walk clip, forwards or backwards, while the unit is moved from outside. */
+  drive(reverse = false) {
+    if (!this.walk) return
+    this.walk.timeScale = Math.abs(this.walk.timeScale) * (reverse ? -1 : 1)
+    this.play(this.walk)
   }
 
   /** Lying on the ground (or throwing itself down): harder to hit */
@@ -98,6 +156,7 @@ export class Unit {
       this.stop()
       return
     }
+    if (this.walk) this.walk.timeScale = Math.abs(this.walk.timeScale)
     this.target = first.clone().setY(this.object.position.y)
     this.route = rest.map(p => p.clone().setY(this.object.position.y))
     this.play(this.loop)
@@ -119,10 +178,43 @@ export class Unit {
     this.play(this.loop)
   }
 
+  /**
+   * A shot: plays the model's Fire clip from the start, when it has one and stands.
+   * Returns whether it did (the model then shows its own muzzle flash).
+   */
+  fire() {
+    const shoot = this.shoot
+    if (!shoot || this.stance !== 'standing' || this.target) return false
+    // straight in, no cross-fade: the flash is on the first frames
+    if (this.current && this.current !== shoot) this.current.stop()
+    shoot.reset().play()
+    this.current = shoot
+    return true
+  }
+
+  /**
+   * Killed: plays its death clip once (lying down: DieProne) and holds the last frame.
+   * Returns false if the model has no death clips (the caller tips it over instead).
+   */
+  die(death: Death) {
+    const action = (this.prone ? this.action('DieProne') : undefined) ?? this.action(death) ?? this.action('Die1')
+    if (!action) return false
+    this.target = undefined
+    this.route = []
+    this.stance = 'dead'
+    action.reset()
+    action.setLoop(THREE.LoopOnce, 1)
+    action.clampWhenFinished = true
+    action.play()
+    if (this.current && this.current !== action) action.crossFadeFrom(this.current, DEATH_FADE, false)
+    this.current = action
+    return true
+  }
+
   /** It is being shot at: down on the ground, and it stays down a while longer. */
   takeFire() {
     const dive = this.goProne
-    if (!dive || !this.lying) return
+    if (!dive || !this.lying || this.stance === 'dead') return
     this.proneTime = PRONE_SECONDS
     if (this.stance === 'standing') {
       this.stance = 'diving'
@@ -138,6 +230,10 @@ export class Unit {
   }
 
   update(seconds: number) {
+    if (this.stance === 'dead') {
+      this.mixer.update(seconds)
+      return
+    }
     if (this.stance === 'prone') {
       this.proneTime -= seconds
       if (this.proneTime <= 0) this.rise()
@@ -185,6 +281,14 @@ export class Unit {
     if (!action || action === this.current) return
     action.reset()
     this.fadeTo(action)
+  }
+
+  /** Fades from a finished one-off clip into `action` (the loop). */
+  private fadeFrom(from: THREE.AnimationAction, action?: THREE.AnimationAction) {
+    if (!action) return
+    action.reset().play()
+    action.crossFadeFrom(from, FADE, false)
+    this.current = action
   }
 
   private fadeTo(action: THREE.AnimationAction) {

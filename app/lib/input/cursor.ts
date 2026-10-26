@@ -30,7 +30,8 @@ export const SCROLL_DIRECTIONS = {
 } as const
 export type ScrollDirection = keyof typeof SCROLL_DIRECTIONS
 
-export type CursorKind = 'default' | 'hidden' | 'select' | 'move' | 'attack' | 'rally' | 'deploy' | 'deploy-blocked' | `scroll-${ScrollDirection}` | `blocked-${ScrollDirection}`
+export type CursorKind = 'default' | 'hidden' | 'select' | 'move' | 'attack' | 'enter' | 'rally' | 'deploy' | 'deploy-blocked'
+  | 'sell' | 'sell-blocked' | 'repair' | 'repair-blocked' | 'power' | 'power-blocked' | 'waypoint' | `scroll-${ScrollDirection}` | `blocked-${ScrollDirection}`
 
 /** Animated cursors: first frame and number of frames in MOUSE.SHP */
 const ANIMATED: Partial<Record<CursorKind, [first: number, count: number]>> = {
@@ -40,12 +41,26 @@ const ANIMATED: Partial<Record<CursorKind, [first: number, count: number]>> = {
   move: [31, 10],
   /** Own units selected, over an enemy: attack (red ellipse) */
   attack: [53, 5],
+  /** Own harvester selected, over an own refinery: drive in and unload (blue arrows down into it) */
+  enter: [89, 10],
   /** A factory is selected: click on the ground to set its rally point (a beacon flag) */
   rally: [191, 10],
   /** Over the selected MCV: click to unfold it into a construction yard (arrows spreading out) */
   'deploy': [110, 9],
   /** … but there is no room for it here (crossed out) */
   'deploy-blocked': [119, 1],
+  // the modes of the sidebar buttons, each with a crossed-out one where it cannot be used
+  /** Sell: over an own building, a turning gold dollar */
+  'sell': [129, 10],
+  'sell-blocked': [149, 1],
+  /** Repair: over an own damaged building, a turning wrench */
+  'repair': [170, 20],
+  'repair-blocked': [190, 1],
+  /** Power: over an own building that uses power, a flashing lightning bolt */
+  'power': [329, 16],
+  'power-blocked': [345, 1],
+  /** Waypoints: units selected, over the ground, a beacon on a diamond */
+  'waypoint': [219, 10],
 }
 
 /**
@@ -228,6 +243,21 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
     ctx.beginPath()
     ctx.ellipse(10, 7, 8, 5, 0, 0, Math.PI * 2)
     ctx.stroke()
+  }))
+  // enter: a blue arrow down into a green ring
+  cursors.enter = finish('enter', draw(24, 28, (ctx) => {
+    ctx.strokeStyle = '#7cff4a'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.ellipse(12, 21, 10, 6, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.fillStyle = '#3a8cff'
+    ctx.beginPath()
+    ctx.moveTo(5, 3)
+    ctx.lineTo(19, 3)
+    ctx.lineTo(12, 18)
+    ctx.closePath()
+    ctx.fill()
   }))
   cursors.rally = finish('rally', draw(24, 28, (ctx) => {
     ctx.fillStyle = '#ffd21a'

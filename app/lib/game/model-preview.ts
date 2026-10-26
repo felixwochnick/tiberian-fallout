@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { applyHouseColour } from './models'
 
 /**
  * Small turning previews of the 3D models, all drawn by one WebGL renderer (browsers
@@ -7,10 +8,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
  * The models stand in the game's light and are seen from the game's angle.
  */
 
+/** Default size of a preview in pixels */
 const SIZE = 160
 
 interface Preview {
   canvas: HTMLCanvasElement
+  /** Size in pixels (square) */
+  size: number
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
   model: THREE.Object3D
@@ -32,21 +36,21 @@ function loop(now: number) {
   for (const preview of previews) {
     preview.model.rotation.y += seconds * 0.6
     preview.mixer?.update(seconds)
+    if (renderer.domElement.width !== preview.size) renderer.setSize(preview.size, preview.size, false)
     renderer.render(preview.scene, preview.camera)
     const ctx = preview.canvas.getContext('2d')!
-    ctx.clearRect(0, 0, SIZE, SIZE)
+    ctx.clearRect(0, 0, preview.size, preview.size)
     ctx.drawImage(renderer.domElement, 0, 0)
   }
   requestAnimationFrame(loop)
 }
 
-/** Shows the model from `url` turning in `canvas`; returns a function that stops it. */
-export async function previewModel(canvas: HTMLCanvasElement, url: string, houseColour = 0xd8b43a) {
+/** Shows the model from `url` turning in `canvas` (`size` pixels square); returns a function that stops it. */
+export async function previewModel(canvas: HTMLCanvasElement, url: string, houseColour = 0xd8b43a, size = SIZE) {
   renderer ??= new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true })
-  renderer.setSize(SIZE, SIZE, false)
   renderer.outputColorSpace = THREE.SRGBColorSpace
-  canvas.width = SIZE
-  canvas.height = SIZE
+  canvas.width = size
+  canvas.height = size
 
   const gltf = await new GLTFLoader().loadAsync(url)
   const model = gltf.scene
@@ -54,7 +58,7 @@ export async function previewModel(canvas: HTMLCanvasElement, url: string, house
     const mesh = node as THREE.Mesh
     if (!mesh.isMesh) return
     for (const mat of [mesh.material].flat() as THREE.MeshStandardMaterial[]) {
-      if (mat.name === 'Remap') mat.color.set(houseColour)
+      applyHouseColour(mat, houseColour)
       if (mat.name.startsWith('Glow')) {
         mat.blending = THREE.AdditiveBlending
         mat.depthWrite = false
@@ -98,7 +102,7 @@ export async function previewModel(canvas: HTMLCanvasElement, url: string, house
   camera.position.set(0, Math.sin(elevation) * distance, Math.cos(elevation) * distance).add(lookAt)
   camera.lookAt(lookAt)
 
-  const preview: Preview = { canvas, scene, camera, model: pivot, mixer }
+  const preview: Preview = { canvas, size, scene, camera, model: pivot, mixer }
   previews.add(preview)
   if (!running) {
     running = true

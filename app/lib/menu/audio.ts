@@ -58,16 +58,30 @@ const UI_SOUNDS: Record<string, readonly [mix: string | number, file: number | s
   evaCannotPlace: ['SPEECH01.MIX', '00-I016.AUD'],
   /** "Unable to comply, building in progress" */
   evaBuildingInProgress: ['SPEECH01.MIX', '00-I064.AUD'],
-  /** "Battle control online" – a mission starts */
+  /** "Establishing battlefield control, stand by" – a mission starts, control comes (back) */
   evaStartGame: ['SPEECH01.MIX', '00-I200.AUD'],
-  /** "Our base is under attack" */
+  /** "Our base is under attack" – a building of the player is attacked */
   evaBaseAttack: ['SPEECH01.MIX', '00-I082.AUD'],
+  /** "Unit lost" */
+  evaUnitLost: ['SPEECH01.MIX', '00-I074.AUD'],
+  /** "Harvester under attack" */
+  evaHarvesterAttack: ['SPEECH01.MIX', '00-I090.AUD'],
+  /** "Repairing" – a building is being repaired */
+  evaRepairing: ['SPEECH01.MIX', '00-I040.AUD'],
+  /** "Structure sold" */
+  evaStructureSold: ['SPEECH01.MIX', '00-I228.AUD'],
+  /** "Building offline" – switched off with the power button */
+  evaBuildingOffline: ['SPEECH01.MIX', '00-I230.AUD'],
+  /** "Building online" – switched on again */
+  evaBuildingOnline: ['SPEECH01.MIX', '00-I232.AUD'],
+  /** "Low power" – the base uses more power than it produces */
+  evaLowPower: ['SPEECH01.MIX', '00-I024.AUD'],
+  /** "Incoming transmission" – before a transmission appears in the radar */
+  evaIncomingTransmission: ['SPEECH01.MIX', '00-I020.AUD'],
   /** "Mission accomplished" */
   evaMissionAccomplished: ['SPEECH01.MIX', '00-I026.AUD'],
   /** "Mission failed" */
   evaMissionFailed: ['SPEECH01.MIX', '00-I028.AUD'],
-  /** "Timer started" */
-  evaTimerStarted: ['SPEECH01.MIX', '00-I058.AUD'],
   /** "Timer stopped" */
   evaTimerStopped: ['SPEECH01.MIX', '00-I060.AUD'],
   /** Incoming message (IncomingMessage= in RULES.INI) */
@@ -86,7 +100,8 @@ const UI_SOUNDS: Record<string, readonly [mix: string | number, file: number | s
 export type EvaSound = 'evaBuilding' | 'evaTraining' | 'evaConstructionComplete' | 'evaUnitReady' | 'evaNewOptions' | 'evaOnHold'
   | 'evaCancelled' | 'evaInsufficientFunds' | 'evaCannotPlace' | 'evaBuildingInProgress'
   | 'evaStartGame' | 'evaBaseAttack' | 'evaMissionAccomplished' | 'evaMissionFailed'
-  | 'evaTimerStarted' | 'evaTimerStopped'
+  | 'evaTimerStopped' | 'evaUnitLost' | 'evaHarvesterAttack' | 'evaLowPower' | 'evaIncomingTransmission'
+  | 'evaRepairing' | 'evaStructureSold' | 'evaBuildingOffline' | 'evaBuildingOnline'
 export type UiSound = 'open' | 'click' | 'radarOn' | 'radarOff' | 'message' | 'mapOverlay' | 'mapTarget' | 'mapEnter' | 'mapClick' | EvaSound
 
 export async function loadUiSounds(ctx: BaseAudioContext, store: AssetStore) {

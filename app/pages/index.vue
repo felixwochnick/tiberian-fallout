@@ -46,6 +46,7 @@ onMounted(() => {
         <NuxtLink v-if="hasGame && deviceSupported" class="btn btn-play" to="/menu" @click="capture($event, { lock: settings.mouseCapture })">
           Spiel starten
         </NuxtLink>
+        <PwaInstall />
         <details v-if="isDev" class="dev-menu">
           <summary class="btn btn-play btn-secondary">
             Dev-Menü
@@ -53,6 +54,7 @@ onMounted(() => {
           <nav>
             <NuxtLink to="/dev/catalog">Katalog: alle Einheiten und Gebäude</NuxtLink>
             <NuxtLink to="/dev/videos">Katalog: alle Videos</NuxtLink>
+            <NuxtLink to="/dev/speech">Katalog: alle EVA/CABAL-Ansagen</NuxtLink>
           </nav>
         </details>
       </div>
@@ -105,6 +107,7 @@ onMounted(() => {
     </main>
 
     <BrowserNotice v-if="deviceSupported" :has-game="hasGame" />
+    <PwaUpdate />
 
     <footer class="footer">
       Inoffizielles Fanprojekt. Command &amp; Conquer ist eine Marke von Electronic Arts.
@@ -193,11 +196,6 @@ h1 span {
 }
 .dev-menu nav a:hover {
   background: var(--line);
-}
-.btn-play {
-  margin-top: 24px;
-  font-size: 1.1rem;
-  padding: 14px 36px;
 }
 .grid {
   display: grid;

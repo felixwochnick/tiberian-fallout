@@ -1,0 +1,10 @@
+# Run the game: `docker compose up -d`, then open http://localhost:3000
+# (put a TLS reverse proxy in front for https: the PWA and the browser storage need a secure origin)
+services:
+  app:
+    image: ghcr.io/felixwochnick/tiberian-fallout:latest
+    # or build it from the sources: `docker compose up -d --build`
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"

@@ -1,9 +1,9 @@
 import * as THREE from 'three'
 
-/** Cruising speed (cells per second) */
-const SPEED = 2.6
+/** Cruising speed (cells per second): it comes in from the map edge */
+const SPEED = 7
 /** Distance (cells) over which it slows down before landing */
-const BRAKE = 3
+const BRAKE = 6
 /** Seconds it stays on the ground after unloading */
 const WAIT = 1.2
 /** Seconds the wreck burns before it is taken away */
@@ -60,6 +60,11 @@ export class Dropship {
     this.play('Fly')
     this.face(flight.to, Infinity)
     this.mixer.update(0)
+  }
+
+  /** Still on its way in: not yet down on the ground */
+  get arriving() {
+    return this.state === 'arriving' || this.state === 'landing'
   }
 
   get flying() {

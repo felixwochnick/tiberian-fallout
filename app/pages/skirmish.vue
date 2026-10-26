@@ -33,19 +33,25 @@ const START_SPOTS: [number, number][] = [
 const TIBERIUM_OFFSET: [number, number] = [6, 5]
 /** Its size: cells from the middle to the edge */
 const TIBERIUM_RADIUS = 4
+/** A smaller field of blue Tiberium a little farther, on the other side (screen axes) */
+const BLUE_TIBERIUM_OFFSET: [number, number] = [-7, 8]
+const BLUE_TIBERIUM_RADIUS = 2.5
 
 /** A fresh map: a Tiberium field near the player, one MCV for each player, then battle control */
 function start({ battlefield, addUnit }: Field) {
   const [mapW, mapH] = battlefield.mapSize
   const field = battlefield.mapPoint(mapW / 2 + TIBERIUM_OFFSET[0], mapH / 2 + TIBERIUM_OFFSET[1])
-  battlefield.addTiberium(MODELS.TIB!, tiberiumField(Math.floor(field.x), Math.floor(field.z), TIBERIUM_RADIUS))
-    .catch(error => console.error('Tiberium konnte nicht geladen werden', error))
-  addUnit('MCV', battlefield.centre.clone().round(), houseColour(human.value))
+  const blueField = battlefield.mapPoint(mapW / 2 + BLUE_TIBERIUM_OFFSET[0], mapH / 2 + BLUE_TIBERIUM_OFFSET[1])
+  battlefield.addTiberium(MODELS.TIB!, [
+    ...tiberiumField(Math.floor(field.x), Math.floor(field.z), TIBERIUM_RADIUS),
+    ...tiberiumField(Math.floor(blueField.x), Math.floor(blueField.z), BLUE_TIBERIUM_RADIUS, 'blue'),
+  ]).catch(error => console.error('Tiberium konnte nicht geladen werden', error))
+  addUnit('MCV', battlefield.centre.clone().round(), houseColour(human.value), 'player', human.value?.side)
     .catch(error => console.error('MCV konnte nicht geladen werden', error))
   settings.players.filter(p => p.ai !== null).forEach((player, i) => {
     const [fu, fv] = START_SPOTS[i % START_SPOTS.length]!
     const spot = battlefield.mapPoint(fu * mapW, fv * mapH).round()
-    addUnit('MCV', spot, houseColour(player), 'enemy')
+    addUnit('MCV', spot, houseColour(player), 'enemy', player.side)
       .then((mcv) => { mcv.userData.player = player.name })
       .catch(error => console.error('MCV konnte nicht geladen werden', error))
   })
@@ -60,6 +66,7 @@ function start({ battlefield, addUnit }: Field) {
     :tech-level="settings.techLevel"
     :radar-always="settings.radarAlways"
     :colour="houseColour(human)"
+    :side="human?.side"
     @start="start"
     @restart="session?.restart()"
   />

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Battlefield } from '~/lib/game/battlefield'
+import type { BaseMode } from '~/composables/useSkirmish'
 import { type BuildInfo, canBuild, GDI_BUILD_OPTIONS, loadCameos, type BuildOption } from '~/lib/game/cameos'
 import { blackSteelCorner, brassFrameImage, type Corner, hudScale, PILLAR, pillarImage, plateImage, steelImage } from '~/lib/game/hud'
 import { getAssetStore } from '~/lib/storage/asset-store'
@@ -35,7 +36,6 @@ const lower = ref<HTMLDivElement>()
 /** At least this much stone (original pixels) below the scroll buttons */
 const FOOT_MIN = 5
 const cameos = ref(new Map<string, string>())
-const pressedButton = ref<string>()
 const scroll = reactive({ structures: 0, units: 0 })
 
 /** Production, money and the game's rules of the running game */
@@ -162,15 +162,49 @@ const buttons = [
   { id: 'waypoint', title: 'Wegpunkte' },
 ] as const
 
-function toggle(id: string) {
-  pressedButton.value = pressedButton.value === id ? undefined : id
+/** A button switches its mode on (and the others off), a second click switches it off */
+function toggle(id: BaseMode) {
+  if (!skirmish) return
+  sounds.play('click')
+  skirmish.mode = skirmish.mode === id ? undefined : id
 }
 
-/** Power bar: lit part and the drain mark, as fractions of the bar */
-const powerScale = computed(() => Math.max(200, props.power.output * 1.25, props.power.drain * 1.25))
-const powerFill = computed(() => props.power.output / powerScale.value)
-const powerDrain = computed(() => props.power.drain / powerScale.value)
+/** LEDs of the power bar in original pixels: margin at the ends, height of one, distance from one to the next */
+const LED = { inset: 1.5, height: 2.4, pitch: 3.2 }
+/** Power per LED at the start; when the bar is more than 3/4 full it goes up in steps */
+const POWER_UNIT = { start: 10, step: 5, full: 0.75 }
+const LED_RED: [number, number, number] = [216, 36, 28]
+const LED_ORANGE: [number, number, number] = [240, 138, 28]
+const LED_GREEN: [number, number, number] = [63, 210, 58]
+
+/**
+ * Power bar: one LED for every `unit` of power (only whole ones, rounded down). What
+ * the base uses is red, the rest above it goes from orange to green.
+ */
+const powerBar = computed(() => {
+  // the bar is as high as the build area
+  const height = rows.value * (SLOT.height + SIZE.gap) + SIZE.gap
+  const capacity = Math.max(1, Math.floor((height - 2 * LED.inset + LED.pitch - LED.height) / LED.pitch))
+  const { output, drain } = props.power
+  let unit = POWER_UNIT.start
+  while (Math.floor(Math.max(output, drain) / unit) > capacity * POWER_UNIT.full) unit += POWER_UNIT.step
+  const lit = Math.min(capacity, Math.floor(output / unit))
+  const used = Math.min(capacity, Math.floor(drain / unit))
+  const red = Math.min(lit, used)
+  const spare = lit - red
+  const leds = Array.from({ length: capacity }, (_, i) => {
+    if (i >= lit) return undefined
+    if (i < red) return `rgb(${LED_RED})`
+    const t = spare > 1 ? (i - red) / (spare - 1) : 0
+    return `rgb(${LED_ORANGE.map((c, k) => Math.round(c + (LED_GREEN[k]! - c) * t))})`
+  })
+  return { unit, leds }
+})
 const lowPower = computed(() => props.power.drain > props.power.output)
+// EVA says so when the base starts to use more power than it produces
+watch(lowPower, (low) => {
+  if (low) sounds.speak('evaLowPower')
+})
 
 const style = computed(() => ({
   '--u': `${scale.value}px`,
@@ -235,7 +269,7 @@ onBeforeUnmount(() => {
         v-for="button in buttons"
         :key="button.id"
         class="tool"
-        :class="{ on: pressedButton === button.id }"
+        :class="{ on: skirmish?.mode === button.id }"
         :title="button.title"
         @click="toggle(button.id)"
       >
@@ -272,9 +306,10 @@ onBeforeUnmount(() => {
 
     <div ref="lower" class="lower">
     <section class="build" :style="{ flexBasis: buildHeight }">
-      <div class="power" :class="{ low: lowPower }" :title="`Energie: ${power.output} / Verbrauch: ${power.drain}`">
-        <div class="lit" :style="{ clipPath: `inset(${(1 - powerFill) * 100}% 0 0 0)` }" />
-        <div class="drain" :style="{ bottom: `${powerDrain * 100}%` }" />
+      <div class="power" :class="{ low: lowPower }" :title="`Energie: ${power.output} / Verbrauch: ${power.drain} (${powerBar.unit} pro Strich)`">
+        <div class="leds">
+          <i v-for="(colour, i) in powerBar.leds" :key="i" :class="{ lit: colour }" :style="colour ? { background: colour } : undefined" />
+        </div>
       </div>
       <div class="columns">
         <div v-for="column in (['structures', 'units'] as const)" :key="column" class="column">
@@ -462,33 +497,24 @@ button {
   box-shadow: inset 0 0 0 calc(var(--u) * 0.8) #2a2a22;
   overflow: hidden;
 }
-/* LEDs: red at the bottom, through yellow to green at the top; lit up to the output */
-.lit {
+/* LEDs from the bottom up: red as far as the base uses power, above that orange to green */
+.leds {
   position: absolute;
   inset: calc(var(--u) * 1.5) calc(var(--u) * 2.5);
-  background:
-    repeating-linear-gradient(to top, transparent 0 calc(var(--u) * 2.4), #050605 calc(var(--u) * 2.4) calc(var(--u) * 3.2)),
-    linear-gradient(to top, #d8241c 0, #e8c22a 20%, #3fd23a 38%);
-  transition: clip-path 0.6s;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: calc(var(--u) * 0.8);
 }
-.low .lit {
+.leds i {
+  flex: 0 0 calc(var(--u) * 2.4);
+}
+.low .leds .lit {
   animation: blink 0.8s steps(2) infinite;
 }
 @keyframes blink {
   50% {
     opacity: 0.35;
   }
-}
-.drain {
-  position: absolute;
-  left: 0;
-  width: 0;
-  height: 0;
-  transform: translateY(50%);
-  border-top: calc(var(--u) * 3) solid transparent;
-  border-bottom: calc(var(--u) * 3) solid transparent;
-  border-left: calc(var(--u) * 5) solid #f4f1e0;
-  transition: bottom 0.6s;
 }
 .columns {
   flex: 1;

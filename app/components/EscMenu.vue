@@ -176,11 +176,11 @@ onBeforeUnmount(() => {
         </h2>
         <MetalSlider v-model="settings.music" label="Musik" :display="`${settings.music} %`" />
         <ul class="dialog-list tracks">
-          <li v-if="!music.tracks.value.length">
+          <li v-if="!music.playlist.value.length">
             Kein Soundtrack geladen
           </li>
           <li
-            v-for="track in music.tracks.value"
+            v-for="track in music.playlist.value"
             :key="track.id"
             :class="{ selected: track.id === music.current.value }"
             @click="playTrack(track)"

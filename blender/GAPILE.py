@@ -274,11 +274,32 @@ CAMO = {
     'brown': '#7a5f45',
     'olive': '#5e5c3c',
 }
+# The light camouflage follows the house colour: the pattern is baked in greys (the
+# sand 1.0, the darker blotches its share of the sand's brightness) and tinted with a
+# pale shade of the house colour. Its lightness and saturation factors (HLS) go into the
+# GLB as material extras like the infantry's camouflage (housecamo.py), the game makes
+# the same shade of the player's colour (applyHouseColour): the GDI gold gives back the
+# sand, red a light reddish pattern, blue a bluish one.
+HOUSE_COLOUR = '#d8b43a'
+CAMO_GREYS = {'khaki': 0.75, 'brown': 0.56, 'olive': 0.44}
+
+
+def _hls(hex_colour):
+    import colorsys
+    return colorsys.rgb_to_hls(*[int(hex_colour[i:i + 2], 16) / 255 for i in (1, 3, 5)])
+
+
+CAMO_LIGHTNESS = round(_hls(CAMO['sand'])[1] / _hls(HOUSE_COLOUR)[1], 3)
+CAMO_SATURATION = round(_hls(CAMO['sand'])[2] / _hls(HOUSE_COLOUR)[2], 3)
+# … and as bright as the sand in every colour (relative luminance, linear): red or blue
+# at the gold's lightness would look much darker
+CAMO_LUMINANCE = round(sum(w * c for w, c in zip((0.2126, 0.7152, 0.0722), srgb(CAMO['sand']))), 4)
 
 
 def camo_nodes(nt, reference):
-    """Procedural desert camouflage; returns the colour socket. The pattern is laid out in
-    the space of `reference` (the building's root), so it runs on across all parts."""
+    """Procedural desert camouflage in greys (the house tint comes on top, see
+    camo_material); returns the colour socket. The pattern is laid out in the space of
+    `reference` (the building's root), so it runs on across all parts."""
     nodes, links = nt.nodes, nt.links
     coords = nodes.new('ShaderNodeTexCoord')
     coords.object = reference
@@ -313,10 +334,13 @@ def camo_nodes(nt, reference):
         links.new(factor, node.inputs['Factor'])
         return node.outputs['Result']
 
-    colour = srgb(CAMO['sand'])
-    colour = mix(colour, srgb(CAMO['khaki']), blotches(3.0, 1.3, 0.52))
-    colour = mix(colour, srgb(CAMO['brown']), blotches(3.6, 7.1, 0.57))
-    colour = mix(colour, srgb(CAMO['olive']), blotches(4.2, 13.7, 0.62))
+    def grey(name):
+        return srgb('#' + f'{round(CAMO_GREYS[name] * 255):02x}' * 3)
+
+    colour = (1.0, 1.0, 1.0)
+    colour = mix(colour, grey('khaki'), blotches(3.0, 1.3, 0.52))
+    colour = mix(colour, grey('brown'), blotches(3.6, 7.1, 0.57))
+    colour = mix(colour, grey('olive'), blotches(4.2, 13.7, 0.62))
 
     # grime: fine speckles and vertical streaks, darker in the corners
     def grime(scale, low):
@@ -373,8 +397,19 @@ def camo_material(name, reference):
     out = nt.nodes.new('ShaderNodeOutputMaterial')
     bsdf = nt.nodes.new('ShaderNodeBsdfPrincipled')
     bsdf.inputs['Roughness'].default_value = 0.85
-    nt.links.new(camo_nodes(nt, reference), bsdf.inputs['Base Color'])
+    # the grey pattern times the pale house shade (glTF: base colour texture and factor)
+    tint = nt.nodes.new('ShaderNodeMix')
+    tint.name = 'HouseTint'
+    tint.data_type = 'RGBA'
+    tint.blend_type = 'MULTIPLY'
+    tint.inputs['Factor'].default_value = 1.0
+    tint.inputs['B'].default_value = (*srgb(CAMO['sand']), 1)
+    nt.links.new(camo_nodes(nt, reference), tint.inputs['A'])
+    nt.links.new(tint.outputs['Result'], bsdf.inputs['Base Color'])
     nt.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
+    mat['remapLightness'] = CAMO_LIGHTNESS
+    mat['remapSaturation'] = CAMO_SATURATION
+    mat['remapLuminance'] = CAMO_LUMINANCE
     return mat
 
 
@@ -394,7 +429,8 @@ def logo_polygons():
 
 
 def flag_image(width=512, height=320):
-    """Gold cloth with the black GDI emblem, a darker hem and a little weave."""
+    """White cloth with the black GDI emblem, a darker hem and a little weave; the
+    material tints it with the house colour (flag_material)."""
     ys, xs = np.mgrid[0:height, 0:width].astype(np.float32)
     # emblem space: centred, radius 0.36 of the flag height; image rows run bottom-up, svg y down
     radius = height * 0.36
@@ -412,11 +448,11 @@ def flag_image(width=512, height=320):
             inside ^= crosses & (ex < x_at)
 
     # the image is sRGB: display colours, not linear ones
-    gold = np.array((0xd6, 0xb0, 0x45), np.float32) / 255
+    cloth = np.ones(3, np.float32)
     black = np.array((0x16, 0x15, 0x10), np.float32) / 255
-    rgb = np.where(inside[..., None], black, gold)
+    rgb = np.where(inside[..., None], black, cloth)
     hem = (xs < 10) | (xs > width - 7) | (ys < 7) | (ys > height - 7)
-    rgb = np.where(hem[..., None], gold * 0.55, rgb)
+    rgb = np.where(hem[..., None], cloth * 0.55, rgb)
     rng = np.random.default_rng(7)
     weave = 0.93 + 0.07 * (np.sin(xs * 1.7) * np.sin(ys * 1.7) * 0.5 + 0.5)
     rgb *= (weave * (0.97 + 0.03 * rng.random((height, width))))[..., None]
@@ -431,6 +467,8 @@ def flag_image(width=512, height=320):
 
 
 def flag_material():
+    """The flag in the house colour (the accent colour): the white cloth times the
+    colour, which the game sets to the player's (extras remapLightness/Saturation 1)."""
     mat = bpy.data.materials.get('Flag') or bpy.data.materials.new('Flag')
     mat.use_nodes = True
     mat.use_backface_culling = False
@@ -440,7 +478,16 @@ def flag_material():
     tex = nt.nodes.get('FlagTexture') or nt.nodes.new('ShaderNodeTexImage')
     tex.name = 'FlagTexture'
     tex.image = flag_image()
-    nt.links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
+    tint = nt.nodes.get('HouseTint') or nt.nodes.new('ShaderNodeMix')
+    tint.name = 'HouseTint'
+    tint.data_type = 'RGBA'
+    tint.blend_type = 'MULTIPLY'
+    tint.inputs['Factor'].default_value = 1.0
+    tint.inputs['B'].default_value = (*srgb(HOUSE_COLOUR), 1)
+    nt.links.new(tex.outputs['Color'], tint.inputs['A'])
+    nt.links.new(tint.outputs['Result'], bsdf.inputs['Base Color'])
+    mat['remapLightness'] = 1.0
+    mat['remapSaturation'] = 1.0
     return mat
 
 
@@ -909,7 +956,10 @@ def bake_camo(size=1024):
         # bake the camouflage colour as emission (no lighting)
         out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
         bsdf = next(n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED')
-        colour = bsdf.inputs['Base Color'].links[0].from_socket
+        tint = nt.nodes.get('HouseTint')
+        # bake the grey pattern under the house tint (older materials: the colour itself)
+        into = tint.inputs['A'] if tint else bsdf.inputs['Base Color']
+        colour = into.links[0].from_socket
         emit = nt.nodes.new('ShaderNodeEmission')
         nt.links.new(colour, emit.inputs['Color'])
         nt.links.new(emit.outputs['Emission'], out.inputs['Surface'])
@@ -922,7 +972,7 @@ def bake_camo(size=1024):
 
         # final material: the baked texture; the procedural nodes stay for a rebake
         nt.nodes.remove(emit)
-        nt.links.new(target.outputs['Color'], bsdf.inputs['Base Color'])
+        nt.links.new(target.outputs['Color'], into)
         nt.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
         print('baked', obj.name, flush=True)
 

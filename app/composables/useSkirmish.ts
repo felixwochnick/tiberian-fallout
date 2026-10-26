@@ -11,6 +11,10 @@ export interface Skirmish {
   rules?: BuildRules
   /** Buildings on the map (RULES.INI ids) */
   buildings: string[]
+  /** Buildings switched off with the power button (one id per building): they use no power and do not work */
+  offline: string[]
+  /** Mode of the sidebar buttons: clicks on the battlefield repair, sell, switch off or set waypoints */
+  mode?: BaseMode
   production: Production
   /** A finished structure is being placed on the map */
   placing?: BuildInfo
@@ -28,6 +32,8 @@ export interface Skirmish {
   /** Mission countdown shown in the top bar ("Zeit: 09:34"), in game seconds */
   timer?: { remaining: number, running: boolean, onEnd?: () => void }
 }
+
+export type BaseMode = 'repair' | 'sell' | 'power' | 'waypoint'
 
 export interface Hint {
   id: number
@@ -73,6 +79,8 @@ export function createSkirmish(startCredits: number) {
     credits: { value: startCredits },
     rules: undefined,
     buildings: [],
+    offline: [],
+    mode: undefined,
     production: new Production(
       (info) => {
         skirmish.arrivals.push(info)
@@ -96,32 +104,51 @@ export function useSkirmish() {
 }
 
 /**
- * "Battle control online": until EVA has said it, the game waits and the player has
- * no cursor and cannot scroll or click anything (Esc still opens the menu).
+ * "Establishing battlefield control, stand by": EVA says it when control is taken away
+ * (a mission starts); until then and until she has said it, the game waits and the
+ * player has no cursor and cannot scroll or click anything (Esc still opens the menu).
  */
 export function useBattleControl(skirmish: Skirmish) {
   const sounds = useUiSounds()
   let round = 0
+  /** What EVA says since control was taken away, if she has said it already */
+  let announcement: Promise<void> | undefined
   return {
+    /** Gives control (back), once EVA has said it (said now if not when it was taken) */
     async establish() {
       const mine = ++round
       skirmish.control = false
-      await sounds.speakNow('evaStartGame')
+      await (announcement ?? sounds.speakNow('evaStartGame'))
+      announcement = undefined
       if (mine === round) skirmish.control = true
     },
-    /** Takes control away (and stops one that is being established) */
-    drop() {
+    /**
+     * Takes control away (and stops one that is being established); with `announce`
+     * EVA says right away that it is being handed over.
+     */
+    drop(announce = false) {
       round++
       skirmish.control = false
+      announcement = announce ? sounds.speakNow('evaStartGame') : undefined
     },
   }
 }
 
-/** Power output and drain of the buildings */
+/** The buildings that work: those on the map, less those switched off */
+export function onlineBuildings(skirmish: Skirmish) {
+  const online = [...skirmish.buildings]
+  for (const id of skirmish.offline) {
+    const i = online.indexOf(id)
+    if (i >= 0) online.splice(i, 1)
+  }
+  return online
+}
+
+/** Power output and drain of the buildings (switched off ones use none) */
 export function basePower(skirmish: Skirmish) {
   let output = 0
   let drain = 0
-  for (const id of skirmish.buildings) {
+  for (const id of onlineBuildings(skirmish)) {
     const power = skirmish.rules?.info.get(id)?.power ?? 0
     if (power > 0) output += power
     else drain -= power

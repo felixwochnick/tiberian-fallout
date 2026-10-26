@@ -68,6 +68,13 @@ code {
   color: var(--tib);
 }
 
+/* the big buttons of the start page (also in components: Spiel installieren) */
+.btn-play {
+  margin-top: 24px;
+  font-size: 1.1rem;
+  padding: 14px 36px;
+}
+
 .btn-small {
   padding: 6px 12px;
   font-size: 0.8rem;

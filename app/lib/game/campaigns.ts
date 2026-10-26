@@ -18,8 +18,10 @@ export interface MissionContext {
   speak: (message: 'evaBaseAttack') => void
   /** Units on the map: the player's and the enemy's, not counting the fallen */
   units: () => { own: THREE.Object3D[], enemy: THREE.Object3D[] }
-  /** Whether the player can still get new soldiers (in production, or the money for one) */
+  /** Whether the player can still get new soldiers (in production, a barracks and the money for one, or a construction yard) */
   canReinforce: () => boolean
+  /** Whether the player has a structure (RULES.INI id) standing */
+  owns: (id: string) => boolean
   /** A hint under the top bar, with the incoming message sound */
   hint: (text: string, seconds?: number) => void
   /** Starts the countdown in the top bar ("Timer started"); `onEnd` runs when it reaches 0 */
@@ -49,8 +51,16 @@ export interface Mission {
   map?: MissionMap
   /** The player's base at the start: structures (RULES.INI id) and their corner in cells from the middle of the map */
   base: [id: string, dx: number, dz: number][]
-  /** Units a dropship brings in after the briefing; battle control comes once they are out */
-  reinforcements?: string[]
+  /**
+   * Dropships that bring units in after the briefing, one after the other: what each
+   * carries and where it lands (cells from the middle of the base); battle control comes
+   * once all are out
+   */
+  reinforcements?: { units: string[], at: [number, number] }[]
+  /** The dropships fly in together, side by side, instead of one after the other */
+  dropshipsTogether?: boolean
+  /** Tiberium fields at the start: middle (cells from the middle of the base) and size (cells from the middle to the edge) */
+  tiberium?: { at: [number, number], radius: number }[]
   /** Builds the mission's map; returns the per-frame check */
   start: (context: MissionContext) => (seconds: number) => MissionResult
 }
@@ -62,99 +72,189 @@ export interface Campaign {
   missions: Mission[]
 }
 
-/** A wave of Nod soldiers: appears at `at`, waits `delay` seconds, then attacks the base */
+/** A wave of Nod soldiers: appears at `at` (cells from the base), waits `delay` seconds, then attacks the base */
 interface Wave {
   delay: number
   at: [number, number]
   soldiers: number
 }
 
-const DEMO_WAVES: Wave[] = [
-  { delay: 40, at: [16, 13], soldiers: 3 },
-  { delay: 110, at: [-14, 15], soldiers: 4 },
-  { delay: 180, at: [17, -12], soldiers: 5 },
-]
+/** Nod soldiers that stand about on the map (cells from the base) until they are found */
+type Garrison = [dx: number, dz: number, soldiers: number]
 
-const demoMission: Mission = {
+interface NodForces {
+  garrisons: Garrison[]
+  waves: Wave[]
+  /** Once the mission runs (after the briefing): hints, transmissions … */
+  begin?: (context: MissionContext) => void
+  /** Hints at a given second of the mission */
+  hints?: [seconds: number, text: string][]
+  /** What else has to be done to win (besides wiping out Nod) */
+  done?: (context: MissionContext) => boolean
+}
+
+/** Every third soldier of a squad carries a rocket launcher (E3), the others rifles (E1) */
+const ROCKET_EVERY = 3
+
+/** A few soldiers close together, in rows of three */
+function squad(context: MissionContext, [x, z]: [number, number], soldiers: number) {
+  return Promise.all(Array.from({ length: soldiers }, (_, i) =>
+    context.spawnEnemy(i % ROCKET_EVERY === ROCKET_EVERY - 1 ? 'E3' : 'E1', x + (i % 3) * 0.7, z + Math.floor(i / 3) * 0.7)))
+}
+
+/**
+ * Nod in a demo mission: soldiers standing about on the map and small groups that
+ * attack the base now and then. Won when all of them are gone (and `done`), lost when
+ * the player has no units left and cannot get new ones.
+ */
+function fightNod(context: MissionContext, { garrisons, waves, begin, hints = [], done }: NodForces) {
+  let time = 0
+  let next = 0
+  let arrived = 0
+  for (const [x, z, soldiers] of garrisons) squad(context, [x, z], soldiers)
+  // the waves appear in the distance a little before they set off
+  const pending = waves.map(wave => squad(context, wave.at, wave.soldiers).finally(() => arrived++))
+
+  return (seconds: number): MissionResult => {
+    if (time === 0) {
+      begin?.(context)
+      if (waves[0]) context.startTimer(waves[0].delay)
+    }
+    const before = time
+    time += seconds
+    for (const [at, text] of hints) {
+      if (before < at && time >= at) context.hint(text)
+    }
+    while (next < waves.length && time >= waves[next]!.delay) {
+      const index = next++
+      pending[index]!.then((soldiers) => {
+        context.attackMove(soldiers, 1, 1)
+      })
+      const coming = waves[next]
+      if (coming) {
+        context.hint(`Nod greift an (${index + 1} von ${waves.length})! Weitere Truppen sind im Anmarsch.`)
+        context.startTimer(coming.delay - time)
+      }
+      else {
+        context.hint('Die letzten Angreifer rücken an. Suchen und vernichten Sie danach die übrigen Nod-Truppen!')
+        context.stopTimer()
+      }
+    }
+    const { own, enemy } = context.units()
+    if (next >= waves.length && arrived === waves.length && !enemy.length && (done?.(context) ?? true)) return 'won'
+    if (!own.length && !context.canReinforce()) return 'lost'
+    return undefined
+  }
+}
+
+/** Sandbags (GASAND) all round a rectangle of cells, leaving out `gaps` */
+function sandbagRing(x0: number, z0: number, x1: number, z1: number, gaps: [number, number][]): Mission['base'] {
+  const cells: [number, number][] = []
+  for (let x = x0; x <= x1; x++) cells.push([x, z0], [x, z1])
+  for (let z = z0 + 1; z < z1; z++) cells.push([x0, z], [x1, z])
+  return cells
+    .filter(([x, z]) => !gaps.some(([gx, gz]) => gx === x && gz === z))
+    .map(([x, z]) => ['GASAND', x, z])
+}
+
+/**
+ * The map selection of the demo: the south-west of the USA. GDI holds the country, Nod
+ * has taken the south-west and Mexico; Nevada and Utah are the targets.
+ */
+const DEMO_MAP: MissionMap = {
+  center: [-113, 36],
+  span: 36,
+  regions: { 'USA': 'gdi', 'CAN': 'gdi', 'MEX': 'nod', 'US-AZ': 'nod', 'US-NM': 'nod', 'US-UT': 'nod' },
+  targets: [{ region: 'US-NV', mission: 'demo-1' }, { region: 'US-UT', mission: 'demo-2' }],
+}
+
+const outpostMission: Mission = {
   id: 'demo-1',
-  title: 'Demo: Die Stellung halten',
+  title: 'Demo 1: Der Außenposten',
   briefing: [
-    'Kommandant, eine Nod-Einheit hat sich in diesem Sektor festgesetzt. Unsere vorgeschobene Basis ist das einzige, was zwischen ihnen und den Tiberiumfeldern steht.',
-    'Die Aufklärung meldet mehrere Angriffswellen der Bruderschaft. Bilden Sie in der Kaserne Infanterie aus und schlagen Sie jeden Angriff zurück.',
-    'Halten Sie die Stellung. Für die GDI!',
+    'Kommandant, unser Außenposten in Nevada besteht nur noch aus einem Kraftwerk und einer Kaserne hinter Sandsäcken. Einen Bauhof gibt es nicht.',
+    'Zwei Dropships bringen Ihnen je einen Wolverine und vier Infanteristen. Nod-Soldaten streifen durch das Gebiet und werden den Posten in kleinen Gruppen angreifen.',
+    'Bilden Sie in der Kaserne Verstärkung aus und vernichten Sie alle Nod-Truppen. Für die GDI!',
   ],
   objectives: [
-    'Alle drei Angriffswellen von Nod abwehren',
+    'Alle Nod-Truppen im Gebiet vernichten',
     'Mindestens eine Einheit muss überleben',
   ],
+  credits: 1000,
+  techLevel: 1,
+  // a power plant and a barracks behind sandbags, open in front of the barracks door
+  base: [
+    ['GAPOWR', -3, 0],
+    ['GAPILE', 0, 0],
+    ...sandbagRing(-5, -2, 3, 3, [[0, 3], [1, 3]]),
+  ],
+  // side by side on the screen, so they come in from the map edge together
+  reinforcements: [
+    { units: ['SMECH', 'E1', 'E1', 'E1', 'E1'], at: [7.5, 6.5] },
+    { units: ['SMECH', 'E1', 'E1', 'E1', 'E1'], at: [3.5, 10.5] },
+  ],
+  dropshipsTogether: true,
+  map: DEMO_MAP,
+  start: context => fightNod(context, {
+    garrisons: [[13, -10, 3], [-15, -9, 2], [-11, 14, 3], [16, 10, 2], [24, -2, 3]],
+    waves: [
+      { delay: 45, at: [17, 13], soldiers: 2 },
+      { delay: 100, at: [-15, 15], soldiers: 3 },
+      { delay: 155, at: [18, -12], soldiers: 2 },
+      { delay: 210, at: [-16, -13], soldiers: 3 },
+    ],
+    begin(context) {
+      context.hint('Wenn Sie Truppen ausbilden wollen, klicken Sie auf die entsprechenden Symbole im Seitenmenü.')
+      // an incoming transmission in the radar, like in the original's first mission
+      context.playRadar('GDI01_SB.VQA')
+    },
+    hints: [[8, 'Wählen Sie Einheiten mit einem Klick oder per Rahmen aus und schicken Sie sie mit einem Klick auf den Boden los.']],
+  }),
+}
+
+const bridgeheadMission: Mission = {
+  id: 'demo-2',
+  title: 'Demo 2: Der Brückenkopf',
+  briefing: [
+    'Kommandant, wir errichten einen Brückenkopf in Utah, mitten im Gebiet der Bruderschaft.',
+    'Ein Dropship bringt Ihnen ein MCV, ein zweites zwei Wolverines und zwei Titans. Errichten Sie mit dem MCV einen Bauhof und bauen Sie die Basis aus.',
+    'Nod wird nicht lange auf sich warten lassen. Vernichten Sie alle Nod-Truppen im Gebiet.',
+  ],
+  objectives: [
+    'Mit dem MCV einen Bauhof errichten',
+    'Alle Nod-Truppen im Gebiet vernichten',
+  ],
   credits: 5000,
-  // construction yard, power plant, refinery and barracks
-  base: [['GACNST', -3, -3], ['GAPOWR', 0, -3], ['PROC', -5, 0], ['GAPILE', 0, 0]],
-  reinforcements: ['E1', 'E1', 'E1'],
-  // the south-west of the USA: GDI holds the country, Nod has taken the south-west and
-  // Mexico; the target is Nevada
-  map: {
-    center: [-113, 36],
-    span: 36,
-    regions: { 'USA': 'gdi', 'CAN': 'gdi', 'MEX': 'nod', 'US-AZ': 'nod', 'US-NM': 'nod', 'US-UT': 'nod' },
-    targets: [{ region: 'US-NV' }],
-  },
-  start(context) {
-    let time = 0
-    let next = 0
-    const waves: THREE.Object3D[][] = []
-
-    // the waves appear in the distance a little before they set off
-    const spawnWave = async (wave: Wave) => {
-      const soldiers = await Promise.all(Array.from({ length: wave.soldiers }, (_, i) =>
-        context.spawnEnemy('E1', wave.at[0] + (i % 3) * 0.7, wave.at[1] + Math.floor(i / 3) * 0.7)))
-      waves.push(soldiers)
-      return soldiers
-    }
-    const pending: Promise<THREE.Object3D[]>[] = DEMO_WAVES.map(spawnWave)
-
-    return (seconds) => {
-      // once the mission runs (after the briefing): hints on how to play and the
-      // countdown to the first attack
-      if (time === 0) {
-        context.hint('Wenn Sie ein Gebäude errichten oder Truppen ausbilden wollen, klicken Sie auf die entsprechenden Symbole im Seitenmenü.')
-        context.startTimer(DEMO_WAVES[0]!.delay)
-        // an incoming transmission in the radar, like in the original's first mission
-        context.playRadar('GDI01_SB.VQA')
-      }
-      const before = time
-      time += seconds
-      if (before < 8 && time >= 8) context.hint('Wählen Sie Einheiten mit einem Klick oder per Rahmen aus und schicken Sie sie mit einem Klick auf den Boden los.')
-      while (next < DEMO_WAVES.length && time >= DEMO_WAVES[next]!.delay) {
-        const index = next++
-        pending[index]!.then((soldiers) => {
-          context.attackMove(soldiers, 1, 1)
-          context.speak('evaBaseAttack')
-        })
-        const coming = DEMO_WAVES[next]
-        if (coming) {
-          context.hint(`Angriffswelle ${index + 1} von ${DEMO_WAVES.length}! Die nächste Welle folgt in Kürze.`)
-          context.startTimer(coming.delay - time)
-        }
-        else {
-          context.hint('Die letzte Angriffswelle rückt an. Halten Sie durch!')
-          context.stopTimer()
-        }
-      }
-      const { own, enemy } = context.units()
-      if (next >= DEMO_WAVES.length && waves.length === DEMO_WAVES.length && !enemy.length) return 'won'
-      if (!own.length && !context.canReinforce()) return 'lost'
-      return undefined
-    }
-  },
+  base: [],
+  // side by side on the screen, so they come in from the map edge together
+  reinforcements: [
+    { units: ['MCV'], at: [0.5, 0.5] },
+    { units: ['SMECH', 'SMECH', 'MMCH', 'MMCH'], at: [-3.5, 4.5] },
+  ],
+  dropshipsTogether: true,
+  // a field to the lower right of the base, for the refinery
+  tiberium: [{ at: [10, -2], radius: 4 }],
+  map: DEMO_MAP,
+  start: context => fightNod(context, {
+    garrisons: [[14, -11, 3], [-16, -8, 3], [-12, 15, 2], [22, 3, 3]],
+    waves: [
+      { delay: 90, at: [18, 14], soldiers: 3 },
+      { delay: 170, at: [-17, 15], soldiers: 4 },
+      { delay: 250, at: [19, -13], soldiers: 4 },
+    ],
+    begin(context) {
+      context.hint('Wählen Sie das MCV aus und klicken Sie es noch einmal an, um den Bauhof zu errichten.')
+    },
+    done: context => context.owns('GACNST'),
+  }),
 }
 
 export const CAMPAIGNS: Campaign[] = [
   {
     id: 'demo',
     title: 'Demo',
-    description: 'Eine kurze Mission zum Ausprobieren: Verteidigen Sie Ihre Basis gegen drei Angriffswellen von Nod.',
-    missions: [demoMission],
+    description: 'Zwei kurze Missionen zum Ausprobieren: Halten Sie einen Außenposten oder errichten Sie einen Brückenkopf im Gebiet von Nod.',
+    missions: [outpostMission, bridgeheadMission],
   },
 ]
 

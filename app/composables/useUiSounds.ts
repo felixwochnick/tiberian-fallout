@@ -17,6 +17,8 @@ const evaQueue: EvaSound[] = []
 let soundsMix: Promise<MixArchive | undefined> | undefined
 const voiceCache = new Map<string, Promise<AudioBuffer | undefined>>()
 let talking: AudioBufferSourceNode | undefined
+/** The game is paused: EVA, the effects and the radar transmission hold where they are */
+const held = ref(false)
 
 export function useUiSounds() {
   const settings = useSettings()
@@ -39,7 +41,7 @@ export function useUiSounds() {
   function play(name: UiSound, volume = 1) {
     const buffer = sounds[name]
     if (!ctx || !gain || !buffer) return undefined
-    ctx.resume().catch(() => {})
+    if (!held.value) ctx.resume().catch(() => {})
     const source = ctx.createBufferSource()
     source.buffer = buffer
     if (volume === 1) {
@@ -111,7 +113,7 @@ export function useUiSounds() {
   }
 
   function start(buffer: AudioBuffer) {
-    ctx!.resume().catch(() => {})
+    if (!held.value) ctx!.resume().catch(() => {})
     const source = ctx!.createBufferSource()
     source.buffer = buffer
     source.connect(gain!)
@@ -141,5 +143,12 @@ export function useUiSounds() {
     return ctx && gain ? { ctx, gain } : undefined
   }
 
-  return { play, speak, speakNow, respond, effect, output }
+  /** Pauses (or resumes) all sounds of the game on this context */
+  function hold(on: boolean) {
+    held.value = on
+    if (on) ctx?.suspend().catch(() => {})
+    else ctx?.resume().catch(() => {})
+  }
+
+  return { play, speak, speakNow, respond, effect, output, held, hold }
 }

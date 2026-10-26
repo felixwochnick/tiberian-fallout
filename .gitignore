@@ -27,3 +27,6 @@ help/
 
 # Blender backups
 *.blend1
+
+# Python caches (Blender scripts)
+__pycache__/

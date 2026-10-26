@@ -1,7 +1,8 @@
 """
 Tiberian Fallout – GDI mobile construction vehicle (MCV), after Tiberian Sun.
 
-A low tracked carrier: four armoured track pods outside a narrow camouflaged hull,
+A low tracked carrier: four armoured track pods outside a narrow camouflaged hull
+(the light camouflage of the buildings, in the house colour: GAPILE.camo_material),
 the narrow cab with its windscreen and steps at the front right, a bumper in warning
 stripes at the front left, and the long grey segmented crane boom lying along the left
 half of the roof
@@ -59,6 +60,8 @@ def materials():
 
 
 def camo(obj, root):
+    """The light camouflage (baked; tinted with the house colour in the game), laid out
+    in the space of `root`."""
     obj.data.materials.clear()
     obj.data.materials.append(kit.camo_material(f'Camo_{obj.name}', root))
     return obj

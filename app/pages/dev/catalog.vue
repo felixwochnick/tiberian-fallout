@@ -22,6 +22,25 @@ const search = ref('')
 const buildableOnly = ref(false)
 const withModelOnly = ref(false)
 
+/** Factions in the order of the list: GDI (also what both sides have), Nod, everything else (civilians, mutants …) */
+const FACTIONS = ['GDI', 'Nod', 'Andere'] as const
+/** The faction of an entry, from Owner= in RULES.INI */
+function factionOf(entry: CatalogEntry) {
+  const owners = entry.owner.split(',').map(o => o.trim().toUpperCase()).filter(Boolean)
+  if (owners.includes('GDI')) return 'GDI'
+  if (owners.includes('NOD')) return 'Nod'
+  return 'Andere'
+}
+const CATEGORY_ORDER = CATEGORIES.map(([id]) => id)
+/** Sorted by type (buildings, infantry, vehicles, aircraft), faction and tech level (not buildable, −1, last) */
+function compare(a: CatalogEntry, b: CatalogEntry) {
+  const tech = (e: CatalogEntry) => e.techLevel < 0 ? Infinity : e.techLevel
+  return CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category)
+    || FACTIONS.indexOf(factionOf(a)) - FACTIONS.indexOf(factionOf(b))
+    || tech(a) - tech(b)
+    || a.name.localeCompare(b.name)
+}
+
 const shown = computed(() => {
   const q = search.value.trim().toLowerCase()
   return entries.value.filter(e =>
@@ -29,7 +48,16 @@ const shown = computed(() => {
     && (!buildableOnly.value || e.techLevel >= 0)
     && (!withModelOnly.value || MODELS[e.id])
     && (!q || e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q)))
+    .sort(compare)
 })
+
+/** The model shown large (a click on a preview), until it is closed */
+const enlarged = ref<CatalogEntry>()
+function onKey(event: KeyboardEvent) {
+  if (event.key === 'Escape') enlarged.value = undefined
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 const modelCount = computed(() => entries.value.filter(e => MODELS[e.id]).length)
 
 onMounted(async () => {
@@ -76,6 +104,7 @@ onMounted(async () => {
           <th>ID</th>
           <th>Name</th>
           <th>Art</th>
+          <th>Fraktion</th>
           <th>Seite</th>
           <th>Kosten</th>
           <th>Leben</th>
@@ -89,12 +118,15 @@ onMounted(async () => {
             <span v-else class="none" :title="entry.cameoName">–</span>
           </td>
           <td>
-            <ModelPreview v-if="MODELS[entry.id]" :url="MODELS[entry.id]!" />
+            <button v-if="MODELS[entry.id]" class="model" title="Groß anzeigen" @click="enlarged = entry">
+              <ModelPreview :url="MODELS[entry.id]!" />
+            </button>
             <span v-else class="none">–</span>
           </td>
           <td><code>{{ entry.id }}</code></td>
           <td>{{ entry.name }}</td>
           <td>{{ CATEGORIES.find(([id]) => id === entry.category)?.[1] }}</td>
+          <td>{{ factionOf(entry) }}</td>
           <td>{{ entry.owner || '–' }}</td>
           <td>{{ entry.cost || '–' }}</td>
           <td>{{ entry.strength || '–' }}</td>
@@ -102,6 +134,18 @@ onMounted(async () => {
         </tr>
       </tbody>
     </table>
+
+    <div v-if="enlarged" class="overlay" @click="enlarged = undefined">
+      <figure @click.stop>
+        <ModelPreview :key="enlarged.id" :url="MODELS[enlarged.id]!" :size="560" />
+        <figcaption>
+          <code>{{ enlarged.id }}</code> {{ enlarged.name }}
+          <button class="btn btn-small btn-secondary" @click="enlarged = undefined">
+            Schließen
+          </button>
+        </figcaption>
+      </figure>
+    </div>
   </div>
 </template>
 
@@ -168,5 +212,45 @@ th {
 }
 .none {
   color: var(--muted);
+}
+.model {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 75%);
+  cursor: zoom-out;
+}
+.overlay figure {
+  margin: 0;
+  max-width: 100%;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: default;
+}
+.overlay figure :deep(.preview) {
+  max-width: 100%;
+  height: auto !important;
+  aspect-ratio: 1;
+}
+.overlay figcaption {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.overlay figcaption button {
+  margin-left: auto;
 }
 </style>

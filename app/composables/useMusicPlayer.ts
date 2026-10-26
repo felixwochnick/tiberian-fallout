@@ -6,6 +6,10 @@ let ctx: AudioContext | undefined
 let gain: GainNode | undefined
 let source: AudioBufferSourceNode | undefined
 const bufferCache = new Map<string, AudioBuffer>()
+/** Themes the original plays quieter than the soundtrack (share of the music volume) */
+const THEME_LEVELS: Record<string, number> = { 'MAPS.AUD': 0.2 }
+/** Level of the track playing now */
+let level = 1
 
 export function useMusicPlayer() {
   const tracks = useState<Track[]>('music:tracks', () => [])
@@ -16,6 +20,8 @@ export function useMusicPlayer() {
   const error = useState<string | null>('music:error', () => null)
   /** Pick the next track at random (in-game) instead of in list order */
   const shuffle = useState('music:shuffle', () => false)
+  /** The in-game play list: without the themes of the menu and the screens (MAPS, SCORE, …) */
+  const playlist = computed(() => tracks.value.filter(t => t.normal))
 
   async function loadTracks() {
     error.value = null
@@ -50,7 +56,8 @@ export function useMusicPlayer() {
         gain = ctx.createGain()
         gain.connect(ctx.destination)
       }
-      gain.gain.value = volume.value
+      level = THEME_LEVELS[track.filename ?? ''] ?? 1
+      gain.gain.value = volume.value * level
       await ctx.resume()
 
       let buffer = bufferCache.get(track.id)
@@ -71,6 +78,7 @@ export function useMusicPlayer() {
     }
     catch (e) {
       error.value = `„${track.title}“ konnte nicht abgespielt werden: ${e instanceof Error ? e.message : e}`
+      console.warn(error.value, e)
     }
     finally {
       loading.value = false
@@ -85,10 +93,10 @@ export function useMusicPlayer() {
     play(list[(index + 1) % list.length]!)
   }
 
-  /** Any track but the current one. */
+  /** Any track of the play list but the current one. */
   function playRandom() {
-    const others = tracks.value.filter(t => t.id !== current.value)
-    const pick = others[Math.floor(Math.random() * others.length)] ?? tracks.value[0]
+    const others = playlist.value.filter(t => t.id !== current.value)
+    const pick = others[Math.floor(Math.random() * others.length)] ?? playlist.value[0]
     if (pick) return play(pick)
   }
 
@@ -101,8 +109,8 @@ export function useMusicPlayer() {
   }
 
   watch(volume, (v) => {
-    if (gain) gain.gain.value = v
+    if (gain) gain.gain.value = v * level
   })
 
-  return { tracks, current, playing, loading, volume, error, shuffle, loadTracks, play, playTheme, stop, next, playRandom }
+  return { tracks, playlist, current, playing, loading, volume, error, shuffle, loadTracks, play, playTheme, stop, next, playRandom }
 }
