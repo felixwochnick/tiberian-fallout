@@ -9,7 +9,6 @@ export interface GameDisc {
   url: string
   /** Size of the ZIP download in bytes */
   size: number
-  optional: boolean
   /** Archive whose presence shows that this disc has been imported */
   marker: string
   /** Single files taken out of archives that are otherwise skipped */
@@ -25,7 +24,6 @@ export const GAME_DISCS: GameDisc[] = [
     description: 'Basisspiel (GDI-CD): Grafiken, Sounds, Karten und Soundtrack',
     url: 'https://downloads.cnc-comm.com/tiberian-sun/iso/TS_GDI.zip',
     size: 575_892_953,
-    optional: false,
     marker: 'TIBSUN.MIX',
     // The Westwood logo and the 6 second animation that opens the main menu (for their sound)
     extract: { 'MOVIES01.MIX': ['STARTUP.VQA', 'WWLOGO.VQA'] },
@@ -38,7 +36,6 @@ export const GAME_DISCS: GameDisc[] = [
     description: 'Erweiterung: zusätzliche Einheiten, Karten und Musik',
     url: 'https://downloads.cnc-comm.com/tiberian-sun/iso/TS_Firestorm.zip',
     size: 521_033_163,
-    optional: true,
     marker: 'EXPAND01.MIX',
     extract: {},
   },

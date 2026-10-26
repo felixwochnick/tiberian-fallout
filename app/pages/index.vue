@@ -5,9 +5,7 @@ useHead({ title: 'Command & Conquer: Tiberian Fallout' })
 
 const settings = useSettings()
 const isDev = import.meta.dev
-const { files, persistent, loaded, hasMusic, importing, refresh, clear } = useGameAssets()
-
-const hasGame = computed(() => files.value.some(f => f.name === 'TIBSUN.MIX'))
+const { files, persistent, loaded, hasMusic, importing, isComplete: hasGame, refresh, clear } = useGameAssets()
 const { supported: deviceSupported } = useDeviceSupport()
 const totalSize = computed(() => files.value.reduce((sum, f) => sum + f.size, 0))
 
@@ -34,7 +32,7 @@ onMounted(() => {
       </p>
       <h1>Command &amp; Conquer<br><span>Tiberian Fallout</span></h1>
       <p class="lead">
-        Für Musik, Grafiken und Sounds werden die Original-Spieldaten von <em>Tiberian Sun</em> benötigt.
+        Für Musik, Grafiken und Sounds werden die Original-Spieldaten von <em>Tiberian Sun</em> und <em>Firestorm</em> benötigt.
         Sie werden einmalig geladen und bleiben in deinem Browser gespeichert.
       </p>
       <p v-if="hasGame && !deviceSupported" class="device-hint">
@@ -107,7 +105,6 @@ onMounted(() => {
     </main>
 
     <BrowserNotice v-if="deviceSupported" :has-game="hasGame" />
-    <PwaUpdate />
 
     <footer class="footer">
       Inoffizielles Fanprojekt. Command &amp; Conquer ist eine Marke von Electronic Arts.

@@ -1,6 +1,8 @@
 /**
- * Reads single entries from a ZIP file on a server that supports HTTP range
- * requests, without downloading the rest of the archive.
+ * Streams an entry out of a ZIP file on a server while the archive comes in, front to
+ * back in one plain download. There are no range requests: the mirror sits behind
+ * Cloudflare, which answers them with the whole file (HTTP 200) whenever the archive is
+ * not in its cache yet, so they cannot be relied on.
  */
 
 export interface RemoteZipEntry {
@@ -8,89 +10,125 @@ export interface RemoteZipEntry {
   method: number
   compressedSize: number
   size: number
-  localHeaderOffset: number
 }
 
-const EOCD_SIGNATURE = 0x06054b50
-const CENTRAL_SIGNATURE = 0x02014b50
 const LOCAL_SIGNATURE = 0x04034b50
+/** Bit 3 of the flags: sizes follow the data instead of standing in the header */
+const DATA_DESCRIPTOR = 0x08
 
-async function fetchRange(url: string, range: string, signal?: AbortSignal) {
-  const response = await fetch(url, { headers: { range }, signal })
-  if (response.status !== 206) throw new Error(`Server unterstützt keine Teil-Downloads (HTTP ${response.status})`)
-  return new Uint8Array(await response.arrayBuffer())
-}
+/** Reads a byte stream in pieces of exactly the requested length. */
+class ByteReader {
+  private buffer: Uint8Array = new Uint8Array(0)
 
-export async function listRemoteZip(url: string, signal?: AbortSignal): Promise<RemoteZipEntry[]> {
-  const tail = await fetchRange(url, 'bytes=-65558', signal)
-  const view = new DataView(tail.buffer)
+  constructor(private readonly reader: ReadableStreamDefaultReader<Uint8Array>) {}
 
-  let eocd = -1
-  for (let i = tail.length - 22; i >= 0; i--) {
-    if (view.getUint32(i, true) === EOCD_SIGNATURE) {
-      eocd = i
-      break
+  /** Exactly `length` bytes, or fewer once the stream has ended */
+  async read(length: number) {
+    while (this.buffer.length < length) {
+      const { done, value } = await this.reader.read()
+      if (done) break
+      const joined = new Uint8Array(this.buffer.length + value.length)
+      joined.set(this.buffer)
+      joined.set(value, this.buffer.length)
+      this.buffer = joined
     }
+    const bytes = this.buffer.subarray(0, length)
+    this.buffer = this.buffer.subarray(bytes.length)
+    return bytes
   }
-  if (eocd < 0) throw new Error('Ungültiges ZIP-Archiv')
 
-  const count = view.getUint16(eocd + 10, true)
-  const cdSize = view.getUint32(eocd + 12, true)
-  const cdOffset = view.getUint32(eocd + 16, true)
-  if (cdOffset === 0xffffffff) throw new Error('ZIP64-Archive werden nicht unterstützt')
-
-  const cd = await fetchRange(url, `bytes=${cdOffset}-${cdOffset + cdSize - 1}`, signal)
-  const cdView = new DataView(cd.buffer)
-  const entries: RemoteZipEntry[] = []
-  let pos = 0
-  for (let i = 0; i < count; i++) {
-    if (cdView.getUint32(pos, true) !== CENTRAL_SIGNATURE) throw new Error('Beschädigtes ZIP-Inhaltsverzeichnis')
-    const nameLength = cdView.getUint16(pos + 28, true)
-    const extraLength = cdView.getUint16(pos + 30, true)
-    const commentLength = cdView.getUint16(pos + 32, true)
-    entries.push({
-      method: cdView.getUint16(pos + 10, true),
-      compressedSize: cdView.getUint32(pos + 20, true),
-      size: cdView.getUint32(pos + 24, true),
-      localHeaderOffset: cdView.getUint32(pos + 42, true),
-      name: new TextDecoder().decode(cd.subarray(pos + 46, pos + 46 + nameLength)),
-    })
-    pos += 46 + nameLength + extraLength + commentLength
+  /** Up to `limit` bytes, as they come in (empty once the stream has ended) */
+  async chunk(limit: number) {
+    if (!this.buffer.length) {
+      const { done, value } = await this.reader.read()
+      if (done) return new Uint8Array(0)
+      this.buffer = value
+    }
+    const bytes = this.buffer.subarray(0, limit)
+    this.buffer = this.buffer.subarray(bytes.length)
+    return bytes
   }
-  return entries
+
+  cancel() {
+    return this.reader.cancel().catch(() => {})
+  }
 }
 
 /**
- * Streams the uncompressed content of a ZIP entry.
- * `onProgress` reports the number of compressed bytes received.
+ * Downloads the ZIP at `url` and streams the uncompressed content of the first entry
+ * that `wanted` accepts. Entries before it are skipped as they come in; when the stream
+ * is cancelled or ends, so does the download. `onProgress` reports the number of bytes
+ * received of the whole archive.
  */
 export async function openRemoteZipEntry(
   url: string,
-  entry: RemoteZipEntry,
+  wanted: (name: string) => boolean,
   onProgress?: (received: number) => void,
   signal?: AbortSignal,
-): Promise<ReadableStream<Uint8Array>> {
-  const header = await fetchRange(url, `bytes=${entry.localHeaderOffset}-${entry.localHeaderOffset + 29}`, signal)
-  const view = new DataView(header.buffer)
-  if (view.getUint32(0, true) !== LOCAL_SIGNATURE) throw new Error('Beschädigter ZIP-Eintrag')
-  const dataStart = entry.localHeaderOffset + 30 + view.getUint16(26, true) + view.getUint16(28, true)
-
-  const response = await fetch(url, {
-    headers: { range: `bytes=${dataStart}-${dataStart + entry.compressedSize - 1}` },
-    signal,
-  })
-  if (response.status !== 206 || !response.body) throw new Error(`Download fehlgeschlagen (HTTP ${response.status})`)
+): Promise<{ entry: RemoteZipEntry, stream: ReadableStream<Uint8Array> }> {
+  const response = await fetch(url, { signal })
+  if (!response.ok || !response.body) throw new Error(`Download fehlgeschlagen (HTTP ${response.status})`)
 
   let received = 0
-  const counted = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+  const reader = new ByteReader(response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       received += chunk.byteLength
       onProgress?.(received)
       controller.enqueue(chunk)
     },
-  }))
+  })).getReader())
 
-  if (entry.method === 0) return counted
-  if (entry.method === 8) return counted.pipeThrough(new DecompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>)
-  throw new Error(`Nicht unterstützte ZIP-Kompression (${entry.method})`)
+  try {
+    for (;;) {
+      const header = await reader.read(30)
+      const view = new DataView(header.buffer, header.byteOffset, header.byteLength)
+      if (header.length < 30 || view.getUint32(0, true) !== LOCAL_SIGNATURE) throw new Error('Kein passender Eintrag im ZIP-Archiv gefunden')
+      const flags = view.getUint16(6, true)
+      const name = new TextDecoder().decode(await reader.read(view.getUint16(26, true)))
+      await reader.read(view.getUint16(28, true)) // extra field
+      const entry: RemoteZipEntry = {
+        name,
+        method: view.getUint16(8, true),
+        compressedSize: view.getUint32(18, true),
+        size: view.getUint32(22, true),
+      }
+      if (flags & DATA_DESCRIPTOR || entry.compressedSize === 0xffffffff) throw new Error('Nicht unterstütztes ZIP-Format')
+
+      if (!wanted(name)) {
+        for (let left = entry.compressedSize; left > 0;) {
+          const bytes = await reader.chunk(left)
+          if (!bytes.length) throw new Error('Download unvollständig')
+          left -= bytes.length
+        }
+        continue
+      }
+
+      let left = entry.compressedSize
+      const data = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (!left) {
+            controller.close()
+            await reader.cancel()
+            return
+          }
+          const bytes = await reader.chunk(left)
+          if (!bytes.length) {
+            controller.error(new Error('Download unvollständig'))
+            return
+          }
+          left -= bytes.length
+          controller.enqueue(bytes.slice())
+        },
+        cancel: () => reader.cancel(),
+      })
+
+      if (entry.method === 0) return { entry, stream: data }
+      if (entry.method === 8) return { entry, stream: data.pipeThrough(new DecompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>) }
+      throw new Error(`Nicht unterstützte ZIP-Kompression (${entry.method})`)
+    }
+  }
+  catch (e) {
+    await reader.cancel()
+    throw e
+  }
 }

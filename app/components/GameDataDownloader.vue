@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import type { GameDisc } from '#shared/game-discs'
 
+/** Tiberian Sun and Firestorm, always both and always complete */
 const { discs, files, importing, progress, downloadError: error, isDiscLoaded, downloadDiscs, cancel } = useGameAssets()
 
 /** Disc was imported by an older version that did not extract everything yet */
 const isPartial = (disc: GameDisc) => !isDiscLoaded(disc) && files.value.some(f => f.name === disc.marker)
 
-const selected = ref<string[]>(discs.filter(d => !d.optional).map(d => d.id))
-
-const pending = computed(() => discs.filter(d => selected.value.includes(d.id) && !isDiscLoaded(d)))
+const pending = computed(() => discs.filter(d => !isDiscLoaded(d)))
 const downloadSize = computed(() => pending.value.reduce((sum, d) => sum + d.size, 0))
 const downloading = computed(() => importing.value && !!progress.value?.disc)
 const percent = computed(() =>
@@ -24,13 +23,8 @@ function formatMB(bytes: number) {
   <div>
     <ul class="discs">
       <li v-for="disc in discs" :key="disc.id">
-        <label class="disc" :class="{ done: isDiscLoaded(disc) }">
-          <input
-            v-model="selected"
-            type="checkbox"
-            :value="disc.id"
-            :disabled="!disc.optional || isDiscLoaded(disc) || importing"
-          >
+        <div class="disc" :class="{ done: isDiscLoaded(disc) }">
+          <span class="disc-mark">{{ isDiscLoaded(disc) ? '✓' : '' }}</span>
           <span class="disc-text">
             <strong>{{ disc.title }}</strong>
             <span>{{ disc.description }}</span>
@@ -38,7 +32,7 @@ function formatMB(bytes: number) {
           <span class="disc-size">
             {{ isDiscLoaded(disc) ? 'geladen ✓' : isPartial(disc) ? 'Update verfügbar' : formatMB(disc.size) }}
           </span>
-        </label>
+        </div>
       </li>
     </ul>
 
@@ -59,9 +53,9 @@ function formatMB(bytes: number) {
     </div>
 
     <div v-else class="start">
-      <button class="btn" :disabled="importing || !pending.length" @click="downloadDiscs(pending)">
+      <button class="btn" :disabled="importing || !pending.length" @click="downloadDiscs()">
         {{ !pending.length
-          ? 'Ausgewählte Spieldaten geladen'
+          ? 'Spieldaten geladen'
           : pending.every(isPartial) ? 'Fehlende Dateien laden' : `Spieldaten laden (${formatMB(downloadSize)})` }}
       </button>
     </div>
@@ -92,15 +86,23 @@ function formatMB(bytes: number) {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 4px;
-  cursor: pointer;
 }
 .disc.done {
   border-color: var(--tib-dim);
 }
-.disc input {
-  accent-color: var(--tib);
+.disc-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
   width: 18px;
   height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--tib);
+  font-size: 0.8rem;
+}
+.disc.done .disc-mark {
+  border-color: var(--tib);
 }
 .disc-text {
   display: flex;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isWantedDiscFile } from '../shared/game-discs'
-import { listRemoteZip, openRemoteZipEntry } from '../app/lib/download/remote-zip'
+import { openRemoteZipEntry } from '../app/lib/download/remote-zip'
 import { extractIsoStream } from '../app/lib/formats/iso9660'
 import { MixArchive } from '../app/lib/formats/mix'
 import { MixEntrySink } from '../app/lib/download/mix-entry-sink'
@@ -19,11 +19,9 @@ describe.skipIf(!base)('game data download', () => {
 
   it('streams the first archive off the GDI disc', async () => {
     const url = `${base}/api/game-data/gdi`
-    const iso = (await listRemoteZip(url)).find(e => e.name.endsWith('.iso'))!
-    expect(iso.size).toBeGreaterThan(700_000_000)
-
     let received = 0
-    const stream = await openRemoteZipEntry(url, iso, (n) => { received = n })
+    const { entry: iso, stream } = await openRemoteZipEntry(url, name => name.endsWith('.iso'), (n) => { received = n })
+    expect(iso.size).toBeGreaterThan(700_000_000)
     const parts: Uint8Array[] = []
     const files = await extractIsoStream(stream, p => p === 'MAPS01.MIX', async () => ({
       write: async (chunk) => { parts.push(chunk.slice()) },
@@ -41,8 +39,7 @@ describe.skipIf(!base)('game data download', () => {
 
   it('extracts STARTUP.VQA out of the streamed cutscene archive', async () => {
     const url = `${base}/api/game-data/gdi`
-    const iso = (await listRemoteZip(url)).find(e => e.name.endsWith('.iso'))!
-    const stream = await openRemoteZipEntry(url, iso)
+    const { stream } = await openRemoteZipEntry(url, name => name.endsWith('.iso'))
     const parts: Uint8Array[] = []
     let closed = false
     await extractIsoStream(stream, p => p === 'MOVIES01.MIX', async () => new MixEntrySink(['STARTUP.VQA'], async () => ({

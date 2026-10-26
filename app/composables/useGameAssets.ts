@@ -1,6 +1,6 @@
 import { discFileName, discOutputFiles, GAME_DISCS, isWantedDiscFile, type GameDisc } from '#shared/game-discs'
 import { MixEntrySink } from '~/lib/download/mix-entry-sink'
-import { listRemoteZip, openRemoteZipEntry } from '~/lib/download/remote-zip'
+import { openRemoteZipEntry } from '~/lib/download/remote-zip'
 import { extractIsoStream, listIsoFiles } from '~/lib/formats/iso9660'
 import { getAssetStore, type StoredFile } from '~/lib/storage/asset-store'
 
@@ -41,6 +41,12 @@ export function useGameAssets() {
 
   const isDiscLoaded = (disc: GameDisc) =>
     discOutputFiles(disc).every(name => files.value.some(f => f.name === name))
+  /** Tiberian Sun and Firestorm are both complete */
+  const isComplete = computed(() => loaded.value && GAME_DISCS.every(isDiscLoaded))
+  /** Game data is there but this version needs more of it (new files, or Firestorm) */
+  const needsDataUpdate = computed(() =>
+    loaded.value && !isComplete.value && GAME_DISCS.some(d => files.value.some(f => f.name === d.marker)),
+  )
 
   async function refresh() {
     const store = await getAssetStore()
@@ -104,7 +110,7 @@ export function useGameAssets() {
    * Downloads the freeware CD images through the server proxy and extracts
    * the game archives while the data streams in.
    */
-  async function downloadDiscs(discs: GameDisc[]) {
+  async function downloadDiscs(discs: GameDisc[] = GAME_DISCS.filter(d => !isDiscLoaded(d))) {
     if (importing.value || !discs.length) return
     importing.value = true
     downloadError.value = null
@@ -116,21 +122,20 @@ export function useGameAssets() {
     try {
       const store = await getAssetStore()
       for (const disc of discs) {
-        const url = `/api/game-data/${disc.id}`
-        const iso = (await listRemoteZip(url, signal)).find(e => /\.iso$/i.test(e.name))
-        if (!iso) throw new Error(`${disc.title}: kein CD-Image im Archiv gefunden`)
-
-        let file = 'Lese Inhaltsverzeichnis …'
+        let file = 'Verbinde …'
         let received = 0
         const report = () => {
           progress.value = { disc: disc.title, file, done: finished + received, total }
         }
         report()
 
-        const stream = await openRemoteZipEntry(url, iso, (bytes) => {
-          received = bytes
+        // the whole archive in one download, the CD image unpacked as it comes in
+        const { stream } = await openRemoteZipEntry(`/api/game-data/${disc.id}`, name => /\.iso$/i.test(name), (bytes) => {
+          received = Math.min(bytes, disc.size)
           report()
         }, signal)
+        file = 'Lese Inhaltsverzeichnis …'
+        report()
 
         // Only fetch what is still missing (e.g. files added in a later version)
         const stored = new Set((await store.list()).map(f => f.name))
@@ -194,6 +199,8 @@ export function useGameAssets() {
     downloadError,
     hasMusic,
     isDiscLoaded,
+    isComplete,
+    needsDataUpdate,
     refresh,
     importFiles,
     downloadDiscs,
