@@ -89,6 +89,8 @@ export interface BuildInfo {
   techLevel: number
   /** How far it sees in cells (Sight=): idle units attack enemies within it */
   sight: number
+  /** Top speed in cells per game second (Speed=), 0 for buildings */
+  speed: number
   /** Hit points (Strength=) */
   strength: number
   /** Can be repaired (Repairable=, default yes) */
@@ -148,9 +150,16 @@ const ARMOR_TYPES = ['none', 'wood', 'light', 'heavy', 'concrete']
 /** Speed= is in leptons (1/256 cell) per frame; from this speed on a shot hits at once */
 const LEPTONS_PER_CELL = 256
 const INSTANT_SPEED = 100
-/** Projectiles fly at the game's "fast" setting: at 15 frames a second rockets would crawl */
-const PROJECTILE_FRAMES_PER_SECOND = 30
 const MIN_PROJECTILE_SPEED = 2
+/**
+ * A unit's Speed= is converted to leptons per frame as Speed × 256 / 72 (OpenRA's
+ * Tiberian Sun uses the same ratio; measured in the original: a light infantryman with
+ * Speed=5 walks about 2 cells a second at 30 frames a second, the MCV with Speed=3 drives
+ * a little over 1)
+ */
+const SPEED_PER_CELL = 72
+/** The game logic runs on frames of the original at 15 a second (game speed factor 1, see SPEED_FACTORS) */
+const FRAMES_PER_SECOND = 15
 
 export type UnitVoice = 'select' | 'move' | 'attack' | 'die'
 
@@ -207,6 +216,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       sellable: !yes(section?.get('UNSELLABLE')),
       storage: Number(section?.get('STORAGE') ?? 0),
       sight: Number(section?.get('SIGHT') ?? 5),
+      speed: (Number(section?.get('SPEED') ?? 0) / SPEED_PER_CELL) * FRAMES_PER_SECOND,
       armor: Math.max(0, ARMOR_TYPES.indexOf((section?.get('ARMOR') ?? 'none').toLowerCase())),
       weapon: weapon && {
         name: weaponName!,
@@ -220,7 +230,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
         projectile: visible
           ? { arcing: yes(projectile!.get('ARCING')), homing: Number(projectile!.get('ROT') ?? 0) > 0 }
           : undefined,
-        speed: Math.max(MIN_PROJECTILE_SPEED, (speed / LEPTONS_PER_CELL) * PROJECTILE_FRAMES_PER_SECOND),
+        speed: Math.max(MIN_PROJECTILE_SPEED, (speed / LEPTONS_PER_CELL) * FRAMES_PER_SECOND),
         spread: Number(warhead?.get('CELLSPREAD') ?? 0),
         percentAtMax: Number(warhead?.get('PERCENTATMAX') ?? 1),
       },

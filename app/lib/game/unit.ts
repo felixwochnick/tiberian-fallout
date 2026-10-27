@@ -67,7 +67,9 @@ export class Unit {
   /** The clip into or out of a posture playing now, and what follows it */
   private changing?: { action: THREE.AnimationAction, posture?: string, done: () => void, finished: Promise<void> }
   /** Ground speed in cells per second; the model's own (feet don't slide) unless given */
-  readonly speed: number
+  private groundSpeed: number
+  /** The speed the model's walk cycle was made for, if it says */
+  private readonly modelSpeed?: number
 
   constructor(readonly object: THREE.Object3D, private readonly clips: THREE.AnimationClip[], speed?: number) {
     this.mixer = new THREE.AnimationMixer(object)
@@ -110,9 +112,23 @@ export class Unit {
     object.traverse((node) => {
       modelSpeed ??= node.userData.walkSpeed
     })
-    this.speed = speed ?? modelSpeed ?? 0.25
-    // the walk cycle runs faster or slower with the speed, so the feet stay on the ground
-    if (this.walk && modelSpeed) this.walk.timeScale = this.speed / modelSpeed
+    this.modelSpeed = modelSpeed
+    this.groundSpeed = speed ?? modelSpeed ?? 0.25
+    this.speed = this.groundSpeed
+  }
+
+  /** Ground speed in cells per (game) second */
+  get speed() {
+    return this.groundSpeed
+  }
+
+  /** Sets the ground speed (from Speed= of the rules); the walk cycle runs faster or slower with it, so the feet stay on the ground */
+  set speed(speed: number) {
+    this.groundSpeed = speed
+    if (!this.walk || !this.modelSpeed) return
+    const scale = speed / this.modelSpeed
+    this.walk.timeScale = Math.sign(this.walk.timeScale || 1) * scale
+    if (this.crawl) this.crawl.timeScale = scale
   }
 
   get walking() {

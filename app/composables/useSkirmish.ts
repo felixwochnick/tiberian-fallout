@@ -70,8 +70,12 @@ export function tickMissionDisplay(skirmish: Skirmish, seconds: number) {
 
 const KEY: InjectionKey<Skirmish> = Symbol('skirmish')
 
-/** Game speed of the setting (Sehr langsam … Maximal) as a factor */
-export const SPEED_FACTORS = [0.5, 0.65, 0.8, 1, 1.25, 1.5, 2]
+/**
+ * Game speed of the setting (Sehr langsam … Maximal) as a factor of the game logic's
+ * 15 frames a second, like the original's seven steps (frames a second 10, 12, 15, 20,
+ * 30, 45, 60): its default, the fifth step ("Schnell", also ours), runs at 30
+ */
+export const SPEED_FACTORS = [10, 12, 15, 20, 30, 45, 60].map(fps => fps / 15)
 
 export function createSkirmish(startCredits: number) {
   const sounds = useUiSounds()

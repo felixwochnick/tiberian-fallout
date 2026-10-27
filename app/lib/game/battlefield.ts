@@ -713,6 +713,8 @@ export class Battlefield {
     this.rising.splice(0, this.rising.length, ...this.rising.filter(item => item.time < 1))
     this.updateUnbuilding(seconds)
     for (const unit of this.units) {
+      const speed = this.speedOf(unit.object)
+      if (speed && speed !== unit.speed) unit.speed = speed
       unit.update(seconds)
       // on the ground, up and down the ramps (unless it is up on a refinery's pad)
       const at = unit.object.position
@@ -2067,6 +2069,9 @@ export class Battlefield {
    * which knows the rules
    */
   crusher: (object: THREE.Object3D) => boolean = () => false
+
+  /** A unit's speed in cells per second (Speed=, see Combat); undefined: the model's own */
+  speedOf: (object: THREE.Object3D) => number | undefined = () => undefined
 
   /**
    * Whether a cell is on the map and not under a building; for a crusher of `crusher`'s

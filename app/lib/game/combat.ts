@@ -36,7 +36,7 @@ import type { Death, Unit } from './unit'
  * sandbags they drive round.
  */
 
-/** The game runs 15 frames a second at normal speed */
+/** The game logic runs 15 frames a second at game speed factor 1 (see SPEED_FACTORS) */
 const FRAMES_PER_SECOND = 15
 /** How often a unit walking after its target looks where the target is now */
 const CHASE_INTERVAL = 0.5
@@ -178,6 +178,8 @@ export class Combat {
   ) {
     // crushers find their way over enemy sandbags
     battlefield.crusher = object => !!infoOf(object)?.crusher
+    // units move at their Speed=
+    battlefield.speedOf = object => infoOf(object)?.speed || undefined
   }
 
   /** Hit points left of an object, starting at its Strength= */
