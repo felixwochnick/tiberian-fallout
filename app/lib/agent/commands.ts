@@ -200,9 +200,9 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
       return state()
     },
 
-    /** Cells round (x, z): '.' free, '#' blocked or slope, 'g'/'b' Tiberium, 'S'/'X' own/enemy building, 'u'/'x' own/enemy unit */
-    map(x?: number, z?: number, radius: number = 16) {
-      const at = x === undefined ? baseCentre() : ground(x, z!)
+    /** Cells round (x, z), or round the base without them (null to give only a radius): '.' free, '#' blocked or slope, 'g'/'b' Tiberium, 'S'/'X' own/enemy building, 'u'/'x' own/enemy unit */
+    map(x?: number | null, z?: number | null, radius: number = 16) {
+      const at = x == null || z == null ? baseCentre() : ground(x, z)
       const r = Math.min(40, Math.max(2, Math.floor(Number(radius))))
       const x0 = Math.floor(at.x) - r
       const z0 = Math.floor(at.z) - r

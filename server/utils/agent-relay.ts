@@ -82,6 +82,9 @@ export function nextCommand(waitMs: number, signal: AbortSignal) {
 
 /** The game page answered a command. */
 export function settleCommand(id: number, result: unknown, error?: string) {
+  // the page polls again right after answering; until then it still counts as linked
+  // (a long `wait` keeps it from polling, and the agent's next command may come first)
+  relay.lastPoll = Date.now()
   const pending = relay.pending.get(id)
   if (!pending) return
   relay.pending.delete(id)
