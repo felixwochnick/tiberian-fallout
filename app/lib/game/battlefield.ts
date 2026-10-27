@@ -1004,18 +1004,63 @@ export class Battlefield {
     this.band = band
   }
 
-  /** Selects all box-selectable units whose centre lies in the screen box (client pixels). */
-  selectInBox(x0: number, y0: number, x1: number, y1: number) {
-    const rect = this.renderer.domElement.getBoundingClientRect()
+  /**
+   * Selects all box-selectable units whose centre lies in the screen box (client pixels);
+   * `add` (Shift): to the units selected already
+   */
+  selectInBox(x0: number, y0: number, x1: number, y1: number, add = false) {
     const [left, right] = [Math.min(x0, x1), Math.max(x0, x1)]
     const [top, bottom] = [Math.min(y0, y1), Math.max(y0, y1)]
-    this.selection = this.selectables.filter((object) => {
+    const inBox = this.selectables.filter((object) => {
       if (!Battlefield.boxSelectable(object)) return false
-      const centre = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3()).project(this.camera)
-      const x = rect.left + (centre.x + 1) / 2 * rect.width
-      const y = rect.top + (1 - centre.y) / 2 * rect.height
+      const { x, y } = this.screenCentre(object)
       return x >= left && x <= right && y >= top && y <= bottom
     })
+    this.selection = add ? [...new Set([...this.selection.filter(Battlefield.multiSelectable), ...inBox])] : inBox
+    return inBox.length
+  }
+
+  /** An object's middle on the screen (client pixels) */
+  private screenCentre(object: THREE.Object3D) {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const centre = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3()).project(this.camera)
+    return { x: rect.left + (centre.x + 1) / 2 * rect.width, y: rect.top + (1 - centre.y) / 2 * rect.height, visible: Math.abs(centre.x) <= 1 && Math.abs(centre.y) <= 1 }
+  }
+
+  /** Several of these can be selected together: the player's units (harvesters too, by Shift+click) */
+  static multiSelectable(object: THREE.Object3D) {
+    return object.userData.kind === 'unit' && Battlefield.own(object) && !object.userData.dead
+  }
+
+  /**
+   * Shift+click like in the original: a unit of the player is added to the selection, or
+   * taken out if it is in it already; anything else is selected alone
+   */
+  toggleSelect(object: THREE.Object3D) {
+    if (!Battlefield.multiSelectable(object)) {
+      this.select(object)
+      return true
+    }
+    const units = this.selection.filter(Battlefield.multiSelectable)
+    const i = units.indexOf(object)
+    if (i >= 0) units.splice(i, 1)
+    else units.push(object)
+    this.selection = units
+    return i < 0
+  }
+
+  /** The player's units of the selected units' kinds that are on the screen (T in the original) */
+  selectSameType() {
+    const ids = new Set(this.selection.filter(Battlefield.multiSelectable).map(object => object.userData.id))
+    if (!ids.size) return 0
+    this.selection = this.selectables.filter(object => Battlefield.multiSelectable(object) && ids.has(object.userData.id)
+      && this.screenCentre(object).visible)
+    return this.selection.length
+  }
+
+  /** Selects these objects (a team), leaving out those gone; returns how many */
+  selectAll(objects: THREE.Object3D[]) {
+    this.selection = objects.filter(object => !object.userData.dead && object.parent && this.selectables.includes(object))
     return this.selection.length
   }
 

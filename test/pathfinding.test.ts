@@ -28,6 +28,16 @@ describe('pathfinding', () => {
     expect(path.at(-1)!.x).toBeCloseTo(15.5)
   })
 
+  it('gets out of a blocked cell past blocked corners (a soldier at its barracks door)', () => {
+    // standing on (5, 5), blocked like its neighbours left, right, above and below: only the diagonals are open
+    const walled: NavMap = {
+      free: (x, z) => x >= 0 && x < 20 && z >= 0 && z < 20 && !(Math.abs(x - 5) + Math.abs(z - 5) <= 1),
+    }
+    const path = findPath(walled, v(5.5, 5.5), v(12.5, 12.5))
+    expect(path.length).toBeGreaterThan(0)
+    expect(path.at(-1)!.x).toBeCloseTo(12.5)
+  })
+
   it('takes the shortest way (about the length of the detour through the gap)', () => {
     const path = findPath(map, v(5.5, 5.5), v(15.5, 5.5))
     let length = 0

@@ -93,6 +93,9 @@ function frame(now: number) {
       const hovered = battlefield.objectAt(at.x, at.y)
       // a button of the sidebar is on: its cursor, crossed out where it cannot be used
       if (skirmish?.mode) cursor = modeCursor(skirmish.mode, hovered, at.x, at.y)
+      // Ctrl: fire at whatever is under the cursor; Alt: move there, whatever is there
+      else if (modifiers.ctrl && hovered && combat?.canAttack(battlefield.selection, hovered, true)) cursor = 'attack'
+      else if (modifiers.alt && battlefield.canMove && battlefield.groundAt(at.x, at.y)) cursor = 'move'
       // over the selected MCV: unfold it here (or not, if there is no room)
       else if (hovered && isDeployable(hovered)) cursor = canDeploy(hovered) ? 'deploy' : 'deploy-blocked'
       // a harvester over its refinery: drive in and unload
@@ -127,6 +130,7 @@ function onMouseDown(event: MouseEvent) {
 }
 
 function onMouseMove(event: MouseEvent) {
+  trackModifiers(event)
   if (!drag || !battlefield) return
   if (!drag.active && Math.hypot(event.clientX - drag.x0, event.clientY - drag.y0) < DRAG) return
   drag.active = true
@@ -137,7 +141,7 @@ function onMouseUp(event: MouseEvent) {
   if (!drag || !battlefield) return
   if (drag.active) {
     battlefield.setBand(undefined)
-    if (battlefield.selectInBox(drag.x0, drag.y0, event.clientX, event.clientY)) respond('select')
+    if (battlefield.selectInBox(drag.x0, drag.y0, event.clientX, event.clientY, event.shiftKey)) respond('select')
     suppressClick = true // the click that follows the release
   }
   drag = undefined
@@ -188,14 +192,19 @@ function onClick(event: MouseEvent) {
     return
   }
   const object = battlefield.objectAt(event.clientX, event.clientY)
+  // Shift: a unit is added to the selection (or taken out of it)
+  if (object && event.shiftKey) {
+    if (battlefield.toggleSelect(object)) respond('select')
+    return
+  }
+  // classic controls: Ctrl and Alt give their orders with the left button (with modern ones the right button does)
+  if (settings.controls === 'classic' && forcedOrder(event, object)) return
   // classic controls: a left click on an enemy attacks it, on an own refinery sends the harvesters in
   if (object && settings.controls === 'classic' && (unloadAt(object) || enter(object) || attack(object))) return
   // a second click on the selected MCV deploys it into a construction yard, on a Tick Tank digs it in (or out),
   // on a transport lets its soldiers out
   if (object && isDeployable(object)) {
-    if (Battlefield.capacity(object)) unloadTransport(object)
-    else if (Battlefield.digsIn(object)) digIn(object)
-    else deployMcv(object)
+    deployObject(object)
     return
   }
   if (object) {
@@ -226,6 +235,7 @@ function onRightClick(event: MouseEvent) {
   if (settings.controls === 'modern') {
     const onMap = (event.target as Element | null)?.closest?.('.battlefield')
     const object = onMap && battlefield.objectAt(event.clientX, event.clientY)
+    if (onMap && forcedOrder(event, object || undefined)) return
     if (object) {
       if (!unloadAt(object) && !enter(object)) attack(object)
     }
@@ -239,6 +249,9 @@ const sounds = useUiSounds()
 /** Keyboard shortcuts of the battlefield (see "Tastenbelegung" in the options) */
 const keys = useKeys()
 function onKeyDown(event: KeyboardEvent) {
+  trackModifiers(event)
+  // Alt alone would open the browser's menu (Firefox)
+  if (event.key === 'Alt') event.preventDefault()
   if (props.paused || !battlefield) return
   if (keys.matches(event, 'stop')) {
     const own = battlefield.selection.filter(Battlefield.own)
@@ -250,11 +263,78 @@ function onKeyDown(event: KeyboardEvent) {
   else if (keys.matches(event, 'selectAll')) {
     if (battlefield.selectAllUnits()) respond('select')
   }
+  else if (keys.matches(event, 'selectType')) {
+    if (battlefield.selectSameType()) respond('select')
+  }
+  else if (keys.matches(event, 'deploy')) {
+    const object = battlefield.selected
+    if (object && isDeployable(object)) deployObject(object)
+  }
+  else if (keys.matches(event, 'scatter')) {
+    for (const object of battlefield.selection.filter(Battlefield.own)) {
+      const unit = object.userData.unit as Unit | undefined
+      if (!unit || object.userData.harvester) continue
+      const angle = Math.random() * Math.PI * 2
+      combat?.stop([object])
+      battlefield.walk(unit, battlefield.openSpot(object.position.clone().add(new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(1.2))))
+    }
+  }
+  else if (/^Digit\d$/.test(event.code)) team(Number(event.code.slice(5)), event)
   else if (keys.matches(event, 'home')) {
     // the construction yard (or barracks), else the MCV that is still to deploy
     const yard = battlefield.structuresOf('GACNST').find(Battlefield.own) ?? battlefield.structuresOf('GAPILE').find(Battlefield.own)
       ?? battlefield.units.map(u => u.object).find(o => o.userData.id === 'MCV' && Battlefield.own(o) && !o.userData.dead)
     if (yard) battlefield.lookAt(yard.position)
+  }
+}
+
+/** Unfolds the MCV, digs the Tick Tank in or out, lets a transport's soldiers out (click on it or D) */
+function deployObject(object: THREE.Object3D) {
+  if (Battlefield.capacity(object)) unloadTransport(object)
+  else if (Battlefield.digsIn(object)) digIn(object)
+  else deployMcv(object)
+}
+
+/** Ctrl, Shift and Alt as held now (for the cursor) */
+const modifiers = { ctrl: false, shift: false, alt: false }
+function trackModifiers(event: KeyboardEvent | MouseEvent) {
+  modifiers.ctrl = event.ctrlKey
+  modifiers.shift = event.shiftKey
+  modifiers.alt = event.altKey
+}
+
+/**
+ * Teams like in the original: Ctrl+digit makes the selected units team 1 … 9 (0 is the
+ * tenth), the digit selects it again, Shift+digit adds it to the selection; pressed
+ * twice quickly the view jumps to the team.
+ */
+const teams = new Map<number, THREE.Object3D[]>()
+let lastTeam = { number: -1, time: 0 }
+/** Two presses of the same digit within this many milliseconds centre the view on the team */
+const DOUBLE_PRESS = 400
+function team(number: number, event: KeyboardEvent) {
+  if (!battlefield) return
+  event.preventDefault()
+  if (event.ctrlKey) {
+    const units = battlefield.selection.filter(Battlefield.multiSelectable)
+    if (!units.length) return
+    // a unit is in one team at a time
+    for (const [n, members] of teams) teams.set(n, members.filter(object => !units.includes(object)))
+    teams.set(number, units)
+    return
+  }
+  const members = (teams.get(number) ?? []).filter(object => !object.userData.dead && object.parent)
+  teams.set(number, members)
+  if (!members.length) return
+  const now = performance.now()
+  const twice = lastTeam.number === number && now - lastTeam.time < DOUBLE_PRESS
+  lastTeam = { number, time: now }
+  if (event.shiftKey) battlefield.selectAll([...new Set([...battlefield.selection.filter(Battlefield.multiSelectable), ...members])])
+  else battlefield.selectAll(members)
+  respond('select')
+  if (twice) {
+    const centre = members.reduce((sum, object) => sum.add(object.position), new THREE.Vector3()).divideScalar(members.length)
+    battlefield.lookAt(centre)
   }
 }
 
@@ -336,13 +416,28 @@ async function addTurbine(plant: THREE.Object3D, colour: number) {
     .catch(error => console.error('GAPOWRUP konnte nicht montiert werden', error))
 }
 
-/** Selected units attack an enemy; false if they cannot (not an enemy, no weapons). */
-function attack(target: THREE.Object3D) {
-  if (!battlefield || !combat?.canAttack(battlefield.selection, target)) return false
+/**
+ * Selected units attack an enemy; false if they cannot (not an enemy, no weapons).
+ * `force` (Ctrl): also their own side's units and buildings, and walls.
+ */
+function attack(target: THREE.Object3D, force = false) {
+  if (!battlefield || !combat?.canAttack(battlefield.selection, target, force)) return false
   battlefield.clearWaypoints(battlefield.selection)
-  combat.attack(battlefield.selection, target)
+  harvesting?.order(battlefield.selection)
+  combat.attack(battlefield.selection, target, force)
   respond('attack')
   return true
+}
+
+/**
+ * The orders with a key held, like in the original: Ctrl fires at what is under the
+ * cursor (force fire), Alt moves there whatever is there (force move). Returns whether
+ * one was given.
+ */
+function forcedOrder(event: MouseEvent, object: THREE.Object3D | undefined) {
+  if (event.ctrlKey && object) return attack(object, true)
+  if (event.altKey && battlefield?.canMove) return order(event.clientX, event.clientY)
+  return false
 }
 
 /** Own harvesters are selected */
@@ -521,7 +616,8 @@ async function deliver(info: BuildInfo) {
   const angle = delivered * 2.4
   const radius = 0.35 + 0.18 * Math.sqrt(delivered % 12)
   const spread = new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius)
-  battlefield.walk(unit, (rally ?? door.clone().add(new THREE.Vector3(0.8, 0, 2.6))).clone().add(spread))
+  // to a free spot: in front of the door may be another building
+  battlefield.walk(unit, battlefield.openSpot((rally ?? door.clone().add(new THREE.Vector3(0.8, 0, 2.6))).clone().add(spread)))
 }
 
 /** Shows or hides the placement preview when the sidebar starts or stops placing. */
@@ -780,6 +876,7 @@ onMounted(() => {
   resizeObserver.observe(stage.value!)
   window.addEventListener('contextmenu', onRightClick)
   window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('keyup', trackModifiers)
   // moving and releasing may happen over the HUD as well
   window.addEventListener('mousemove', onMouseMove)
   window.addEventListener('mouseup', onMouseUp)
@@ -796,6 +893,7 @@ onBeforeUnmount(() => {
   resizeObserver.disconnect()
   window.removeEventListener('contextmenu', onRightClick)
   window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', trackModifiers)
   window.removeEventListener('mousemove', onMouseMove)
   window.removeEventListener('mouseup', onMouseUp)
   setCursor('default')

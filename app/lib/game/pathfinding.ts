@@ -131,6 +131,9 @@ export function findPath(map: NavMap, from: THREE.Vector3, to: THREE.Vector3): T
     const dz = Math.abs(z - gz)
     return Math.max(dx, dz) + (Math.SQRT2 - 1) * Math.min(dx, dz) // octile distance
   }
+  // standing on a blocked cell (a soldier at the door of its barracks, which another
+  // building touches): out of it in any free direction, past blocked corners too
+  const stuck = !map.free(sx, sz)
   const open = new Heap()
   const g = new Map<string, number>([[key(sx, sz), 0]])
   const came = new Map<string, string>()
@@ -151,7 +154,7 @@ export function findPath(map: NavMap, from: THREE.Vector3, to: THREE.Vector3): T
         const nz = z + dz
         if (!map.free(nx, nz) || !canStep(map, x, z, dx, dz)) continue
         // diagonal steps may not squeeze past a blocked corner
-        if (dx && dz && (!map.free(x + dx, z) || !map.free(x, z + dz))) continue
+        if (dx && dz && !(stuck && x === sx && z === sz) && (!map.free(x + dx, z) || !map.free(x, z + dz))) continue
         const cost = here + (dx && dz ? Math.SQRT2 : 1)
         const k = key(nx, nz)
         if (cost >= (g.get(k) ?? Infinity)) continue

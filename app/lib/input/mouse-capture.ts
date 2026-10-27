@@ -83,8 +83,8 @@ export async function capture(at?: { clientX: number, clientY: number }, { lock 
   }
   catch {}
   await Promise.allSettled(requests)
-  // Esc only reaches the page in full screen
-  await keyboard()?.lock?.(['Escape']).catch(() => {})
+  // Esc only reaches the page in full screen; so do Ctrl+digit (the teams), else the browser's tab keys
+  await keyboard()?.lock?.(['Escape', ...Array.from({ length: 10 }, (_, i) => `Digit${i}`)]).catch(() => {})
   mouseCapture.capturing = false
   sync()
 }

@@ -4,13 +4,16 @@
  * keyboard layout. Esc always opens the menu and cannot be changed.
  */
 
-export type KeyAction = 'radar' | 'stop' | 'selectAll' | 'home'
+export type KeyAction = 'radar' | 'stop' | 'selectAll' | 'home' | 'selectType' | 'deploy' | 'scatter'
 
 export const KEY_ACTIONS: { action: KeyAction, label: string }[] = [
   { action: 'radar', label: 'Radar an/aus' },
   { action: 'stop', label: 'Einheiten anhalten' },
   { action: 'selectAll', label: 'Alle Einheiten auswählen' },
   { action: 'home', label: 'Zur Basis springen' },
+  { action: 'selectType', label: 'Gleiche Einheiten auswählen' },
+  { action: 'deploy', label: 'Einsetzen (MBF, Tick Tank, Entladen)' },
+  { action: 'scatter', label: 'Auseinander' },
 ]
 
 export const DEFAULT_KEYS: Record<KeyAction, string> = {
@@ -18,10 +21,15 @@ export const DEFAULT_KEYS: Record<KeyAction, string> = {
   stop: 'KeyS',
   selectAll: 'KeyQ',
   home: 'KeyH',
+  selectType: 'KeyT',
+  deploy: 'KeyD',
+  scatter: 'KeyX',
 }
 
 /** Keys that cannot be used for shortcuts */
-export const RESERVED_KEYS = ['Escape', 'Tab', 'MetaLeft', 'MetaRight', 'OSLeft', 'OSRight']
+export const RESERVED_KEYS = ['Escape', 'Tab', 'MetaLeft', 'MetaRight', 'OSLeft', 'OSRight',
+  // the teams (Ctrl+digit makes one, the digit selects it)
+  'Digit0', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9']
 
 const NAMES: Record<string, string> = {
   Space: 'Leertaste', Enter: 'Enter', Backspace: 'Rücktaste', ShiftLeft: 'Umschalt links', ShiftRight: 'Umschalt rechts',

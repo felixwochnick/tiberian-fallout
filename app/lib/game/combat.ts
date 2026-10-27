@@ -197,18 +197,22 @@ export class Combat {
     return Battlefield.own(a) !== Battlefield.own(b)
   }
 
-  /** Whether the selected units could attack an object (it is an enemy, they have weapons) */
-  canAttack(selection: THREE.Object3D[], target: THREE.Object3D) {
-    if (Battlefield.isWall(target)) return false
-    return selection.some(object => object.userData.unit && Battlefield.own(object) && Combat.hostile(object, target)
-      && this.infoOf(object)?.weapon)
+  /**
+   * Whether the selected units could attack an object (it is an enemy, they have weapons).
+   * `force` (Ctrl, like the original): anything but themselves, also walls and their own side.
+   */
+  canAttack(selection: THREE.Object3D[], target: THREE.Object3D, force = false) {
+    if (!force && Battlefield.isWall(target)) return false
+    if (target.userData.dead || target.userData.underground) return false
+    return selection.some(object => object.userData.unit && Battlefield.own(object) && object !== target
+      && (force || Combat.hostile(object, target)) && this.infoOf(object)?.weapon)
   }
 
-  /** Orders units to attack a target. */
-  attack(attackers: THREE.Object3D[], target: THREE.Object3D) {
+  /** Orders units to attack a target; `force`: also one that is not an enemy (see canAttack). */
+  attack(attackers: THREE.Object3D[], target: THREE.Object3D, force = false) {
     for (const object of attackers) {
       const unit = object.userData.unit as Unit | undefined
-      if (!unit || !Combat.hostile(object, target) || !this.infoOf(object)?.weapon) continue
+      if (!unit || object === target || !(force || Combat.hostile(object, target)) || !this.infoOf(object)?.weapon) continue
       this.fighters.set(unit, { target, ordered: true, cooldown: this.fighters.get(unit)?.cooldown ?? 0, chase: 0 })
     }
   }
