@@ -7,7 +7,7 @@ the model is made of pieces the game shows or hides (see Battlefield.connectWall
     Post     the pile in the middle of the cell, always shown
     ArmXP    a wall from the middle to the cell's edge towards world +x (glTF)
     ArmXN    … towards -x
-    ArmZP    … towards +z (the screen's lower right; Blender -y)
+    ArmZP    … towards +z (the screen's lower left; Blender -y)
     ArmZN    … towards -z (Blender +y)
 
 Two neighbours in a line give a straight wall, two at right angles a corner, three a
@@ -49,9 +49,9 @@ POST = 0.18                          # half the post's size
 srgb, material = kit.srgb, kit.material
 
 
-def bag(name, mat, centre, along_x, tilt):
+def bag(name, mat, centre, along_x, tilt, length=BAG.x):
     """One sandbag: a subdivided box rounded into a pillow, flattened on top and bottom."""
-    lx, ly, lz = BAG if along_x else (BAG.y, BAG.x, BAG.z)
+    lx, ly, lz = (length, BAG.y, BAG.z) if along_x else (BAG.y, length, BAG.z)
 
     def build(bm):
         bmesh.ops.create_cube(bm, size=1.0)
@@ -77,18 +77,23 @@ def bag(name, mat, centre, along_x, tilt):
 
 
 def course_bags(rng, mats, x0, x1, y_rows, z, offset, along_x, prefix):
-    """A course of bags from x0 to x1 (along the wall), one row per y in y_rows."""
+    """A course of bags filling x0 … x1 (along the wall) exactly, one row per y in y_rows.
+    The bags end at x1, the cell's edge, so the arms of two neighbours meet without
+    sticking into each other; staggered rows have a half bag at either end."""
     out = []
     step = BAG.x * 0.97
+    n = max(1, round((x1 - x0) / step))
+    length = (x1 - x0) / n
     for r, y in enumerate(y_rows):
-        x = x0 + (offset + r * 0.5) % 1 * step * 0.5
-        k = 0
-        while x + step * 0.5 <= x1 + 0.03:
+        if (offset + r * 0.5) % 1:
+            cuts = [x0] + [x0 + length * (k + 0.5) for k in range(n)] + [x1]
+        else:
+            cuts = [x0 + length * k for k in range(n + 1)]
+        for k, (a, b) in enumerate(zip(cuts, cuts[1:])):
             tilt = (rng.uniform(-0.06, 0.06), rng.uniform(-0.05, 0.05), rng.uniform(-0.12, 0.12))
-            c = Vector((x + step / 2, y, z)) if along_x else Vector((y, x + step / 2, z))
-            out.append(bag(f'{prefix}_{r}_{k}', rng.choice(mats), c, along_x, tilt))
-            x += step
-            k += 1
+            x = (a + b) / 2
+            c = Vector((x, y, z)) if along_x else Vector((y, x, z))
+            out.append(bag(f'{prefix}_{r}_{k}', rng.choice(mats), c, along_x, tilt, (b - a) / 0.97))
     return out
 
 

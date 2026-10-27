@@ -387,7 +387,9 @@ def build():
     # ---- flames (Idle); each sits in a holder that pops in the Build
     idle = []
     flames = [(flame(m, 'Burnoff', burner, 0.07), tower_group, 0.0)]
-    flames += [(flame(m, f'DeckFlame{i}', top, 0.04), obj, 1.7 + i) for i, (obj, top, _) in enumerate(stacks[:1])]
+    # the deck flame hangs on the plant, not on its stack: under two parents scaled down to
+    # nothing in the Build (stack and mount), the exporter's sampled Idle translation jitters
+    flames += [(flame(m, f'DeckFlame{i}', top, 0.04), plant, 1.7 + i) for i, (obj, top, _) in enumerate(stacks[:1])]
     for obj, holder, seed in flames:
         mount = kit.parent(kit.empty(f'{obj.name}Mount', obj.location), holder)
         kit.parent(obj, mount)
@@ -397,7 +399,7 @@ def build():
     # ---- beacons: red on the stack's cap, amber on the gate's top corners
     lights = []
     tops = [(burner - Vector((0, 0, 0.06)) + Vector((math.cos(a), math.sin(a), 0)) * 0.1, 'red', tower_group) for a in (0.6, 2.7, 4.8)]
-    tops += [(corner, 'amber', frame) for corner in corners]
+    tops += [(corner, 'amber', plant) for corner in corners]  # not on the popping frame (see the deck flame)
     for k, (at, colour, holder) in enumerate(tops):
         housing, light = kit.beacon(f'Beacon{k}', m, at, colour)
         housing = kit.parent(kit.merge(f'Beacon{k}', [housing], at), holder)

@@ -502,6 +502,30 @@ def keys(obj, path, frames, interpolation='BEZIER'):
         setattr(obj, path, value)
         obj.keyframe_insert(path, frame=frame)
     prefs.keyframe_new_interpolation_type = old
+    # Blender 5 ignores the preference for keys inserted from Python: set them directly
+    # (else CONSTANT blinks come out as slow Bezier fades)
+    for fcurve in _fcurves(obj.id_data):
+        if fcurve.data_path != (path if obj == obj.id_data else obj.path_from_id(path)):
+            continue
+        for point in fcurve.keyframe_points:
+            if round(point.co.x) in frames:
+                point.interpolation = interpolation
+
+
+def _fcurves(id_data):
+    """The F-curves of a datablock's active action (layered actions of Blender 4.4+ too)."""
+    ad = getattr(id_data, 'animation_data', None)
+    action = ad and ad.action
+    if not action:
+        return []
+    try:
+        from bpy_extras import anim_utils
+        bag = anim_utils.action_get_channelbag_for_slot(action, ad.action_slot)
+        if bag:
+            return bag.fcurves
+    except (ImportError, AttributeError):
+        pass
+    return getattr(action, 'fcurves', [])
 
 
 def to_track(id_data, track_name):
