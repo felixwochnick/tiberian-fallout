@@ -639,21 +639,41 @@ async function deliver(info: BuildInfo) {
     return
   }
   if (info.jumpjet) battlefield.flight.addJumpjet(unit)
-  if (info.id === 'HARV') {
-    harvesting?.add(unit, undefined, opens || 0)
-    return
-  }
   const rally = factory.userData.rallyPoint as THREE.Vector3 | undefined
   // each one stands a bit apart from the last, round the rally point
   delivered++
   const angle = delivered * 2.4
   const radius = 0.35 + 0.18 * Math.sqrt(delivered % 12)
   const spread = new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius)
-  // to a free spot: in front of the door may be another building
-  const leave = () => battlefield?.walk(unit, battlefield.openSpot((rally ?? door.clone().addScaledVector(out, 2.2)).clone().add(spread)))
+  // to a free spot: in front of the door may be another building; a harvester goes to work
+  const onwards = () => info.id === 'HARV'
+    ? harvesting?.add(unit)
+    : battlefield?.walk(unit, battlefield.openSpot((rally ?? door.clone().addScaledVector(out, 2.2)).clone().add(spread)))
+  // first straight out through the door and off the factory's foundation (inside it no
+  // way can be found: all its cells are taken), then on round anything in the way
+  const leave = () => {
+    if (!battlefield || unit.object.userData.dead) return
+    const outside = clearOf(factory, door, out)
+    unit.walkTo(outside)
+    const wait = setInterval(() => {
+      if (unit.walking && !unit.object.userData.dead) return
+      clearInterval(wait)
+      if (!unit.object.userData.dead) onwards()
+    }, 100)
+  }
   // out of the war factory once the door is open
   if (opens) setTimeout(leave, opens * 1000 / (SPEED_FACTORS[settings.speed] ?? 1))
   else leave()
+}
+
+/** The first point from `door` along `out` that is off the building's foundation (half a cell beyond its edge) */
+function clearOf(building: THREE.Object3D, door: THREE.Vector3, out: THREE.Vector3) {
+  const f = building.userData.footprint as { x: number, z: number, w: number, h: number } | undefined
+  const point = door.clone()
+  if (!f) return point.addScaledVector(out, 1)
+  const inside = (p: THREE.Vector3) => p.x >= f.x - 0.5 && p.x < f.x + f.w + 0.5 && p.z >= f.z - 0.5 && p.z < f.z + f.h + 0.5
+  for (let step = 0; step < 40 && inside(point); step++) point.addScaledVector(out, 0.1)
+  return point
 }
 
 /** Shows or hides the placement preview when the sidebar starts or stops placing. */
@@ -664,6 +684,8 @@ function syncPlacement() {
   const info = skirmish?.placing
   // a gun for the component tower: a square that is white on top of a tower it fits, red elsewhere
   if (info?.powersUp) battlefield.startPlacement(1, 1, 0, (x, z) => towerTop(info, x, z))
+  // pavement is laid on the free cells of its 4 × 4, the others are left out
+  else if (info && PAVING.has(info.id)) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent, undefined, true)
   else if (info) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent)
   else battlefield.cancelPlacement()
 }
@@ -686,6 +708,11 @@ function placeAt(info: BuildInfo, cell: [number, number]) {
   skirmish.placing = undefined
   skirmish.production.placed()
   syncPlacement()
+  if (PAVING.has(info.id)) {
+    battlefield!.pave(battlefield!.paveCells(cell[0], cell[1], info.foundation[0], info.foundation[1], info.adjacent))
+    buildSound()
+    return
+  }
   if (info.powersUp) {
     const tower = battlefield!.structureObjects.find(o => o.userData.footprint?.x === cell[0] && o.userData.footprint?.z === cell[1] && towerFor(info, o))
     if (tower) mountGun(tower, info.id)
@@ -696,6 +723,9 @@ function placeAt(info: BuildInfo, cell: [number, number]) {
   const yard = battlefield!.structuresOf('GACNST').filter(Battlefield.own).at(-1)
   if (yard) battlefield!.playClip(yard, 'Deliver')
 }
+
+/** Structures that are laid on the ground instead of standing on it (ToTile= in ART.INI: pavement) */
+const PAVING = new Set(['GAPAVE'])
 
 /** Whether a gun (the Vulcan, the SAM) can go onto this building: an own component tower without one */
 function towerFor(info: BuildInfo, object: THREE.Object3D) {

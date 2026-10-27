@@ -265,6 +265,14 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
         return { placed: info.id, on: refOf(tower) }
       }
       const [w, h] = info.foundation
+      // pavement goes on the free cells of its area, the others are left out
+      if (info.id === 'GAPAVE') {
+        const at = x === undefined ? baseCentre() : ground(x, z!)
+        const cell: [number, number] = [Math.floor(at.x), Math.floor(at.z)]
+        if (!battlefield.paveCells(cell[0], cell[1], w, h, info.adjacent).length) throw new Error('Dort ist kein Platz für Betonplatten')
+        ctx.place(info, cell)
+        return { placed: info.id, cells: [cell[0], cell[1], w, h] }
+      }
       let cell: [number, number] | undefined
       if (x === undefined || near) cell = findSpot(info, x === undefined ? baseCentre() : ground(x, z!))
       else if (battlefield.canPlace(Math.floor(x), Math.floor(Number(z)), w, h, info.adjacent)) cell = [Math.floor(x), Math.floor(Number(z))]

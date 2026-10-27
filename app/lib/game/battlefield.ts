@@ -68,17 +68,69 @@ const WALLS = new Set(['GASAND', 'GAWALL', 'NAWALL'])
  * show arms (ArmXP …) towards it in turn
  */
 const JOINS: Record<string, string[]> = {
-  GASAND: ['GASAND'],
-  GAWALL: ['GAWALL', 'GACTWR', 'GAGATE_A'],
-  GACTWR: ['GAWALL', 'GAGATE_A'],
-  GAGATE_A: ['GAWALL', 'GACTWR'],
-  NAWALL: ['NAWALL', 'NAGATE_A'],
+  GASAND: ['GASAND', 'GACTWR', 'GAGATE_A', 'GAGATE_B'],
+  GAWALL: ['GAWALL', 'GACTWR', 'GAGATE_A', 'GAGATE_B'],
+  GACTWR: ['GAWALL', 'GASAND', 'GAGATE_A', 'GAGATE_B'],
+  GAGATE_A: ['GAWALL', 'GASAND', 'GACTWR'],
+  GAGATE_B: ['GAWALL', 'GASAND', 'GACTWR'],
+  NAWALL: ['NAWALL', 'NAGATE_A', 'NAGATE_B'],
   NAGATE_A: ['NAWALL'],
+  NAGATE_B: ['NAWALL'],
 }
+/**
+ * The towers and gates have two kinds of arms: concrete ones (Arm…) towards concrete walls
+ * and the rest, sandbag ones (Sand…) towards sandbags
+ */
+const SAND_ARMS: Record<string, string> = { GASAND: 'Sand' }
 /** Walls a crusher drives over (the sandbags; concrete stops it) */
 const CRUSHABLE_WALLS = new Set(['GASAND'])
+/** Most cells of pavement on a map */
+const PAVEMENT_MAX = 4096
+
+/** A slab of concrete as a texture: grey with grain, a darker joint round it, a few stains and patches */
+function pavementTexture() {
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const g = canvas.getContext('2d')!
+  g.fillStyle = '#8c8a84'
+  g.fillRect(0, 0, size, size)
+  // grain
+  const image = g.getImageData(0, 0, size, size)
+  for (let i = 0; i < image.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 22
+    for (let c = 0; c < 3; c++) image.data[i + c] = image.data[i + c]! + n
+  }
+  g.putImageData(image, 0, 0)
+  // the slab is split in four, with joints between them and round the edge
+  g.strokeStyle = 'rgba(40,38,34,0.75)'
+  g.lineWidth = 3
+  g.strokeRect(1.5, 1.5, size - 3, size - 3)
+  g.lineWidth = 2
+  g.beginPath()
+  g.moveTo(size / 2, 0)
+  g.lineTo(size / 2, size)
+  g.moveTo(0, size / 2)
+  g.lineTo(size, size / 2)
+  g.stroke()
+  // oil stains and patches
+  for (let i = 0; i < 3; i++) {
+    const x = 16 + Math.random() * (size - 32)
+    const y = 16 + Math.random() * (size - 32)
+    const stain = g.createRadialGradient(x, y, 0, x, y, 6 + Math.random() * 10)
+    stain.addColorStop(0, 'rgba(30,28,26,0.35)')
+    stain.addColorStop(1, 'rgba(30,28,26,0)')
+    g.fillStyle = stain
+    g.fillRect(0, 0, size, size)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.anisotropy = 4
+  return texture
+}
+
 /** Gates (Gate=): their side's units pass, they open as these come near */
-const GATES = new Set(['GAGATE_A', 'NAGATE_A'])
+const GATES = new Set(['GAGATE_A', 'GAGATE_B', 'NAGATE_A', 'NAGATE_B'])
 /** A gate opens when a unit of its side is this near (cells) */
 const GATE_REACH = 1.6
 
@@ -365,6 +417,8 @@ export class Battlefield {
     w: number, h: number, adjacent: number, preview: THREE.Group,
     materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial },
     cell?: [number, number], valid: boolean, fits?: PlacementFit,
+    /** Laid where it can be, the other cells left out (pavement) */
+    partial?: boolean
   }
 
   /** Aircraft and jumpjets in the air (see Flight) */
@@ -1571,8 +1625,59 @@ export class Battlefield {
     return !own.length || own.some(f => gap(f) <= adjacent)
   }
 
+  /** Cells already paved (GAPAVE): ground, built on like any other */
+  private readonly paved = new Set<string>()
+  private pavement?: THREE.InstancedMesh
+
+  /**
+   * The cells of w × h at (x, z) that pavement can be laid on: free, flat, not paved yet;
+   * none if the area is too far from the base (`adjacent` cells, like a building)
+   */
+  paveCells(x: number, z: number, w: number, h: number, adjacent: number) {
+    const gap = (f: Footprint) => Math.max(f.x - (x + w), x - (f.x + f.w), f.z - (z + h), z - (f.z + f.h), 0)
+    const own = this.footprints.filter(f => f.owner === 'player')
+    if (own.length && !own.some(f => gap(f) <= adjacent)) return []
+    const cells: [number, number][] = []
+    for (let i = 0; i < w; i++) {
+      for (let j = 0; j < h; j++) {
+        const [cx, cz] = [x + i, z + j]
+        if (!this.paved.has(`${cx},${cz}`) && this.cellFree(cx, cz) && this.terrain.cell(cx, cz) === Cell.Flat) cells.push([cx, cz])
+      }
+    }
+    return cells
+  }
+
+  /**
+   * Lays pavement on cells, like the original's GAPAVE: concrete slabs as part of the
+   * ground (no building: units drive over it, anything can be built on it)
+   */
+  pave(cells: [number, number][]) {
+    if (!this.pavement) {
+      const geometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)
+      const material = new THREE.MeshStandardMaterial({ map: pavementTexture(), roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
+      this.pavement = new THREE.InstancedMesh(geometry, material, PAVEMENT_MAX)
+      this.pavement.count = 0
+      this.pavement.receiveShadow = true
+      this.disposables.push(geometry, material, material.map!)
+      this.scene.add(this.pavement)
+    }
+    const matrix = new THREE.Matrix4()
+    const colour = new THREE.Color()
+    for (const [x, z] of cells) {
+      if (this.paved.has(`${x},${z}`) || this.pavement.count >= PAVEMENT_MAX) continue
+      this.paved.add(`${x},${z}`)
+      // a quarter turn and a shade of grey of its own, so the slabs do not repeat
+      matrix.makeRotationY((Math.floor(Math.random() * 4) * Math.PI) / 2).setPosition(x + 0.5, this.heightAt(x + 0.5, z + 0.5) + 0.004, z + 0.5)
+      this.pavement.setMatrixAt(this.pavement.count, matrix)
+      this.pavement.setColorAt(this.pavement.count, colour.setScalar(0.88 + Math.random() * 0.12))
+      this.pavement.count++
+    }
+    this.pavement.instanceMatrix.needsUpdate = true
+    if (this.pavement.instanceColor) this.pavement.instanceColor.needsUpdate = true
+  }
+
   /** Starts placing a structure of w × h cells: its cells follow the cursor (see updatePlacement). */
-  startPlacement(w: number, h: number, adjacent: number, fits?: PlacementFit) {
+  startPlacement(w: number, h: number, adjacent: number, fits?: PlacementFit, partial = false) {
     this.cancelPlacement()
     const preview = new THREE.Group()
     const geometry = new THREE.PlaneGeometry(0.92, 0.92).rotateX(-Math.PI / 2)
@@ -1587,7 +1692,7 @@ export class Battlefield {
     }
     preview.visible = false
     this.scene.add(preview)
-    this.placement = { w, h, adjacent, preview, materials, valid: false, fits }
+    this.placement = { w, h, adjacent, preview, materials, valid: false, fits, partial }
   }
 
   /**
@@ -1613,6 +1718,17 @@ export class Battlefield {
       return
     }
     const free: boolean[] = []
+    if (placement.partial) {
+      // pavement: on every free cell that is not paved yet, the others are left out
+      const cells = this.paveCells(cell[0], cell[1], placement.w, placement.h, placement.adjacent)
+      placement.valid = cells.length > 0
+      placement.preview.children.forEach((child, i) => {
+        const [dx, dz] = [Math.floor(i / placement.h), i % placement.h]
+        const ok = cells.some(([x, z]) => x === cell[0] + dx && z === cell[1] + dz)
+        ;(child as THREE.Mesh).material = ok ? placement.materials.free : placement.materials.blocked
+      })
+      return
+    }
     placement.valid = this.canPlace(cell[0], cell[1], placement.w, placement.h, placement.adjacent, { free })
     const anyBlocked = free.includes(false)
     placement.preview.children.forEach((child, i) => {
@@ -1688,27 +1804,30 @@ export class Battlefield {
       if (!piece || !joins || piece.userData.dead) continue
       // the arms are taken out of the model when not needed (hidden ones would still
       // count for picking and the selection frame); kept here to put them back
+      const names = ['Arm', 'Sand'].flatMap(kind => ['XP', 'XN', 'ZP', 'ZN'].map(dir => kind + dir))
       const arms: Record<string, THREE.Object3D> = piece.userData.arms ??= Object.fromEntries(
-        ['ArmXP', 'ArmXN', 'ArmZP', 'ArmZN'].map(name => [name, piece.getObjectByName(name)]).filter(([, arm]) => arm))
+        names.map(name => [name, piece.getObjectByName(name)]).filter(([, arm]) => arm))
       const f = piece.userData.footprint as Footprint
-      const towards = { ArmXP: [1, 0], ArmXN: [-1, 0], ArmZP: [0, 1], ArmZN: [0, -1] } as const
-      for (const [name, [dx, dz]] of Object.entries(towards)) {
-        const arm = arms[name]
-        if (!arm) continue
+      const towards = { XP: [1, 0], XN: [-1, 0], ZP: [0, 1], ZN: [0, -1] } as const
+      for (const [dir, [dx, dz]] of Object.entries(towards)) {
         // the cells next to the piece on that side
         const side: [number, number][] = dx
           ? Array.from({ length: f.h }, (_, i) => [dx > 0 ? f.x + f.w : f.x - 1, f.z + i])
           : Array.from({ length: f.w }, (_, i) => [f.x + i, dz > 0 ? f.z + f.h : f.z - 1])
-        const joined = side.some(([nx, nz]) => {
-          const other = this.structureOn(nx, nz)
-          return !!other && other !== piece && !other.userData.dead && joins.includes(other.userData.id)
-        })
-        if (joined) {
-          if (!arm.parent) arm.userData.home.add(arm)
-        }
-        else if (arm.parent) {
-          arm.userData.home = arm.parent
-          arm.removeFromParent()
+        const neighbour = side.map(([nx, nz]) => this.structureOn(nx, nz))
+          .find(other => !!other && other !== piece && !other.userData.dead && joins.includes(other.userData.id))
+        // the arm that fits the neighbour: a sandbag one towards sandbags if the piece has one
+        const kind = neighbour && SAND_ARMS[neighbour.userData.id] && arms[SAND_ARMS[neighbour.userData.id]! + dir] ? 'Sand' : 'Arm'
+        for (const name of ['Arm', 'Sand'].map(k => k + dir)) {
+          const arm = arms[name]
+          if (!arm) continue
+          if (neighbour && name === kind + dir) {
+            if (!arm.parent) arm.userData.home.add(arm)
+          }
+          else if (arm.parent) {
+            arm.userData.home = arm.parent
+            arm.removeFromParent()
+          }
         }
       }
     }
