@@ -1,7 +1,7 @@
-import { parseIni } from '../formats/ini'
 import { MixArchive } from '../formats/mix'
 import { decodePalette, decodeShp, frameToRgba } from '../formats/shp'
 import type { AssetStore } from '../storage/asset-store'
+import { expansionArchive, gameIni } from './gamefiles'
 
 /**
  * Everything the game knows about: all buildings, infantry, vehicles and aircraft
@@ -37,14 +37,16 @@ export async function loadCatalog(store: AssetStore): Promise<CatalogEntry[]> {
   if (!tibsun) return []
   const archive = await MixArchive.open(tibsun, 'TIBSUN.MIX')
   // cameos are in CONQUER.MIX, side-specific ones in the sidebar archives
-  const [local, cache, ...pictures] = await Promise.all(
-    ['LOCAL.MIX', 'CACHE.MIX', 'CONQUER.MIX', 'SIDEC01.MIX', 'SIDEC02.MIX'].map(name => archive.openNested(name)),
+  const [cache, ...pictures] = await Promise.all(
+    ['CACHE.MIX', 'CONQUER.MIX', 'SIDEC01.MIX', 'SIDEC02.MIX'].map(name => archive.openNested(name)),
   )
-  const ini = async (name: string) => {
-    const bytes = await local?.read(name)
-    return bytes ? parseIni(new TextDecoder('latin1').decode(bytes)) : new Map<string, Map<string, string>>()
+  // with Firestorm: its rules, art and cameos too
+  const [rules, art] = await Promise.all([gameIni(store, 'RULES.INI'), gameIni(store, 'ART.INI')])
+  if (!rules || !art) return []
+  const expansion = await expansionArchive(store)
+  if (expansion) {
+    pictures.push(expansion, ...(await Promise.all(['ECACHE01.MIX', 0x30F90780].map(name => expansion.openNested(name).catch(() => undefined)))))
   }
-  const [rules, art] = await Promise.all([ini('RULES.INI'), ini('ART.INI')])
   const pal = await cache?.read('CAMEO.PAL')
   const palette = pal && decodePalette(pal)
 
