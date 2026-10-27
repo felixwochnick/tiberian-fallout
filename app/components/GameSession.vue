@@ -48,6 +48,7 @@ const escMenu = ref<{ open: () => void }>()
 function restart() {
   round.value++
   skirmish.credits.value = props.startCredits
+  shownCredits.value = props.startCredits
   skirmish.buildings.splice(0)
   skirmish.offline.splice(0)
   skirmish.mode = undefined
@@ -85,8 +86,26 @@ getAssetStore().then(loadBuildRules).then((rules) => {
 }).catch(() => {})
 const power = computed(() => basePower(skirmish))
 const owned = computed(() => skirmish.buildings)
-/** Whole credits for the top bar, counting along like in the original */
-const credits = computed(() => Math.floor(skirmish.credits.value))
+/**
+ * Whole credits for the top bar, counting along like in the original: the display
+ * rolls towards the money there is (a harvester's load comes in over seconds anyway),
+ * at least CREDITS_ROLL a second, faster the bigger the difference
+ */
+const shownCredits = ref(Math.floor(skirmish.credits.value))
+const credits = computed(() => Math.floor(shownCredits.value))
+const CREDITS_ROLL = 100
+const CREDITS_CATCH_UP = 3
+let creditsFrame = 0
+let creditsTime = performance.now()
+function rollCredits(now: number) {
+  const seconds = Math.min(0.1, (now - creditsTime) / 1000)
+  creditsTime = now
+  const target = skirmish.credits.value
+  const diff = target - shownCredits.value
+  const step = Math.max(CREDITS_ROLL, Math.abs(diff) * CREDITS_CATCH_UP) * seconds
+  shownCredits.value = Math.abs(diff) <= step ? target : shownCredits.value + Math.sign(diff) * step
+  creditsFrame = requestAnimationFrame(rollCredits)
+}
 
 /**
  * The credits counter ticks while money comes in or goes out, like in the original:
@@ -135,6 +154,7 @@ watch(() => volumeOf('music'), (value) => {
 // only once the game can be played (see DeviceGate)
 const { supported } = useDeviceSupport()
 onMounted(() => {
+  creditsFrame = requestAnimationFrame(rollCredits)
   onResize()
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', onKey)
@@ -154,6 +174,7 @@ watch(() => props.theme, () => {
 watch(paused, on => cashSounds.hold(on))
 
 onBeforeUnmount(() => {
+  cancelAnimationFrame(creditsFrame)
   cashSounds.hold(false)
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onKey)

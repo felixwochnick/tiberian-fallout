@@ -200,6 +200,11 @@ export class Unit {
     return action.getClip().duration
   }
 
+  /** Holds the clip played with perform() where it is, or lets it play on */
+  pausePerform(paused: boolean) {
+    if (this.current) this.current.paused = paused
+  }
+
   /** Back to Idle (or what fits the stance) after perform() or drive(). */
   rest() {
     if (this.walk) this.walk.timeScale = Math.abs(this.walk.timeScale)

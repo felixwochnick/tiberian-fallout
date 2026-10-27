@@ -12,9 +12,11 @@ import type { Unit } from './unit'
  * and blue Tiberium are never mixed in a square, but the squares may hold different
  * kinds. Then it drives to the nearest refinery of its owner, turns in front of the
  * dock, backs in (the refinery's "Dock" node: where it stands, facing away) and
- * unloads (clip "Unload": the container is swapped). A full load is worth Storage=
- * bales of the Tiberium's Value= (blue more than green). Then it drives out again and
- * goes back to work.
+ * unloads (clip "Unload": the container rolls in, waits there while its Tiberium is
+ * credited stage by stage – the credits count up – and a new one comes out). A full
+ * load is worth Storage= bales of the Tiberium's Value= (blue more than green). Picking
+ * up and unloading take BALE_FRAMES a bale, like in the original. Then it drives out
+ * again and goes back to work.
  *
  * A move order of the player takes it off its work until it is there; then it goes
  * on from where it stands (harvesting the nearest Tiberium, or bringing in its load).
@@ -24,14 +26,22 @@ import type { Unit } from './unit'
 
 /** The collector's middle: this far in front of the harvester's origin (cells, see blender/HARV.py, scaled by its SCALE) */
 const COLLECTOR = 0.56
-/** Seconds to harvest one stage of a cell (one bale) */
-const HARVEST_SECONDS = 0.5
+/**
+ * Frames of the original (15 a second at game speed factor 1) to pick up one bale and
+ * to unload one: a full load of 28 bales takes about 14 seconds to unload at the
+ * original's default speed (measured; OpenRA's BaleLoadDelay/BaleUnloadDelay agree)
+ */
+const BALE_FRAMES = 15
+const FRAMES_PER_SECOND = 15
 /** Where a harvester turns before backing into the dock: this far in front of it (cells) */
 const DOCK_APPROACH = 1.4
 /** Backing in is slower than driving */
 const REVERSE_FACTOR = 0.6
-/** Share of the Unload clip after which the container is inside the refinery: the load is credited */
-const CREDIT_AT = 0.45
+/**
+ * Where the Unload clip holds while the Tiberium is unloaded (seconds): the full
+ * container is inside the refinery (see blender/HARV.py, frame 60 of 30 a second)
+ */
+const UNLOAD_HOLD = 2
 /** Seconds a harvester with nothing to do waits before it looks again */
 const IDLE_SECONDS = 3
 /** Seconds between two puffs of dust from the collector */
@@ -66,7 +76,10 @@ interface Harvester {
   /** Cells it could not get at, left out for a while */
   skip: Set<string>
   refinery?: THREE.Object3D
-  credited: boolean
+  /** Unloading: the container is inside, its Tiberium goes in stage by stage; then it comes back */
+  unload?: 'in' | 'emptying' | 'out'
+  /** Length of its Unload clip (seconds) */
+  clip: number
   dust: number
 }
 
@@ -89,7 +102,7 @@ export class Harvesting {
    * refinery) it drives out first, after `wait` seconds.
    */
   add(unit: Unit, refinery?: THREE.Object3D, wait = 0) {
-    const harvester: Harvester = { unit, state: 'waiting', cargo: [], timer: wait, skip: new Set(), credited: false, dust: 0 }
+    const harvester: Harvester = { unit, state: 'waiting', cargo: [], timer: wait, skip: new Set(), clip: 0, dust: 0 }
     unit.object.userData.cargo = harvester.cargo
     unit.object.userData.harvester = true
     if (refinery) {
@@ -233,7 +246,7 @@ export class Harvesting {
           return
         }
         h.state = 'harvesting'
-        h.timer = HARVEST_SECONDS
+        h.timer = this.stageSeconds(h)
         unit.perform('Harvest')
         return
       }
@@ -242,7 +255,7 @@ export class Harvesting {
         this.dustFrom(h, dt)
         h.timer -= dt
         if (h.timer > 0) return
-        h.timer = HARVEST_SECONDS
+        h.timer = this.stageSeconds(h)
         const cell = h.cell!
         const kind = cell.kind ?? 'green'
         if (!cargoFits(h.cargo, kind)) h.state = 'seeking'
@@ -298,23 +311,42 @@ export class Harvesting {
         unit.drive(true)
         if (!this.moveTowards(h, at, unit.speed * REVERSE_FACTOR * dt)) return
         h.state = 'unloading'
-        h.credited = false
-        h.timer = unit.perform('Unload', false) ?? 1
-        unit.object.userData.unloadTime = h.timer
+        h.unload = 'in'
+        h.clip = unit.perform('Unload', false) ?? 0
+        h.timer = Math.min(h.clip, UNLOAD_HOLD)
         return
       }
 
       case 'unloading': {
         h.timer -= dt
-        const length = unit.object.userData.unloadTime as number
-        // the full container is in the refinery: its Tiberium is credited
-        if (!h.credited && h.timer <= length * (1 - CREDIT_AT)) {
-          h.credited = true
-          const credits = this.worth(h)
-          if (credits > 0) this.rules().earn(unit.object.userData.owner ?? 'player', credits)
-          h.cargo.length = 0
+        // the container rolls into the refinery
+        if (h.unload === 'in') {
+          if (h.timer > 0) return
+          unit.pausePerform(true)
+          h.unload = 'emptying'
+          h.timer = this.stageSeconds(h)
+          return
         }
-        if (h.timer <= 0) h.state = 'leaving'
+        // stage by stage the Tiberium goes in and is credited (the credits count up)
+        if (h.unload === 'emptying') {
+          if (h.timer > 0) return
+          h.timer = this.stageSeconds(h)
+          const last = h.cargo.at(-1)
+          if (last) {
+            const credits = this.worth(h, [{ kind: last.kind, stages: 1 }])
+            if (credits > 0) this.rules().earn(unit.object.userData.owner ?? 'player', credits)
+            if (--last.stages <= 0) h.cargo.pop()
+            return
+          }
+          // empty: the next container rolls out onto the bed
+          unit.pausePerform(false)
+          h.unload = 'out'
+          h.timer = Math.max(0, h.clip - UNLOAD_HOLD)
+          return
+        }
+        if (h.timer > 0) return
+        h.unload = undefined
+        h.state = 'leaving'
         return
       }
 
@@ -341,11 +373,22 @@ export class Harvesting {
     }
   }
 
-  /** Credits of a harvester's load: each stage a share of a full load's Storage= bales */
-  private worth(h: Harvester) {
+  /** Bales of Tiberium in one stage of a square: a full load (all squares) is its Storage= */
+  private balesPerStage(h: Harvester) {
+    return Math.max(1, this.rules().capacity(h.unit)) / (CARGO_SLOTS * SLOT_STAGES)
+  }
+
+  /** Game seconds to pick up or unload one stage (its bales, BALE_FRAMES each) */
+  private stageSeconds(h: Harvester) {
+    return (this.balesPerStage(h) * BALE_FRAMES) / FRAMES_PER_SECOND
+  }
+
+  /** Credits of some Tiberium (a load or part of it): each stage its bales of the Tiberium's Value= */
+  private worth(h: Harvester, cargo: CargoSlot[]) {
     const rules = this.rules()
-    const bales = Math.max(1, rules.capacity(h.unit)) / (CARGO_SLOTS * SLOT_STAGES)
-    return Math.round(h.cargo.reduce((sum, slot) => sum + slot.stages * bales * rules.value(slot.kind), 0))
+    const bales = this.balesPerStage(h)
+    // not rounded: the stages of a full load add up to its exact worth (the credits are kept with fractions)
+    return cargo.reduce((sum, slot) => sum + slot.stages * bales * rules.value(slot.kind), 0)
   }
 
   /** Where the collector is now (on the ground) */

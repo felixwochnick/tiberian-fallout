@@ -56,7 +56,7 @@ it('harvests, docks, unloads and goes back to work', () => {
   object.position.copy(at.at)
   object.rotation.y = Math.atan2(at.forward.x, at.forward.z)
   harvesting.add(unit, refinery, 1)
-  for (let t = 0; t < 200; t += 0.05) {
+  for (let t = 0; t < 400; t += 0.05) {
     harvesting.update(0.05)
     unit.update(0.05)
     const s = (harvesting as never as { harvesters: { state: string }[] }).harvesters[0]!.state
@@ -65,7 +65,7 @@ it('harvests, docks, unloads and goes back to work', () => {
   // the whole field (9 ripe cells, 27 stages) brought in over two trips: five ripe
   // cells fill a harvester; a full load is worth its 30 bales
   expect([...cells.values()].every(c => c.stage === 0)).toBe(true)
-  expect(credits).toBe(27 / 15 * 30 * 25)
+  expect(credits).toBeCloseTo(27 / 15 * 30 * 25)
   expect(states.filter(s => s === 'unloading')).toHaveLength(2)
   expect(states.slice(0, 6)).toEqual(['waiting', 'leaving', 'seeking', 'driving', 'aiming', 'harvesting'])
 })
