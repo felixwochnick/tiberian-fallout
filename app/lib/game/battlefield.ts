@@ -54,8 +54,27 @@ interface Footprint { x: number, z: number, w: number, h: number, owner: Owner, 
 
 export type Owner = 'player' | 'enemy'
 
+/**
+ * Whether what is being placed fits on a cell, for things put onto a building: the
+ * height above the ground where the preview shows (the building's top), undefined if not
+ */
+export type PlacementFit = (x: number, z: number) => number | undefined
+
 /** Structures that join up with their neighbours (see connectWalls) */
 const WALLS = new Set(['GASAND', 'GAWALL', 'NAWALL'])
+/**
+ * What joins up with what (see connectWalls), like in the original: walls with walls of
+ * their kind; GDI's concrete wall also with the component tower and the gate, which
+ * show arms (ArmXP …) towards it in turn
+ */
+const JOINS: Record<string, string[]> = {
+  GASAND: ['GASAND'],
+  GAWALL: ['GAWALL', 'GACTWR', 'GAGATE_A'],
+  GACTWR: ['GAWALL', 'GAGATE_A'],
+  GAGATE_A: ['GAWALL', 'GACTWR'],
+  NAWALL: ['NAWALL', 'NAGATE_A'],
+  NAGATE_A: ['NAWALL'],
+}
 /** Walls a crusher drives over (the sandbags; concrete stops it) */
 const CRUSHABLE_WALLS = new Set(['GASAND'])
 /** Gates (Gate=): their side's units pass, they open as these come near */
@@ -345,7 +364,7 @@ export class Battlefield {
   private placement?: {
     w: number, h: number, adjacent: number, preview: THREE.Group,
     materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial },
-    cell?: [number, number], valid: boolean,
+    cell?: [number, number], valid: boolean, fits?: PlacementFit,
   }
 
   /** Aircraft and jumpjets in the air (see Flight) */
@@ -1551,7 +1570,7 @@ export class Battlefield {
   }
 
   /** Starts placing a structure of w × h cells: its cells follow the cursor (see updatePlacement). */
-  startPlacement(w: number, h: number, adjacent: number) {
+  startPlacement(w: number, h: number, adjacent: number, fits?: PlacementFit) {
     this.cancelPlacement()
     const preview = new THREE.Group()
     const geometry = new THREE.PlaneGeometry(0.92, 0.92).rotateX(-Math.PI / 2)
@@ -1566,7 +1585,7 @@ export class Battlefield {
     }
     preview.visible = false
     this.scene.add(preview)
-    this.placement = { w, h, adjacent, preview, materials, valid: false }
+    this.placement = { w, h, adjacent, preview, materials, valid: false, fits }
   }
 
   /**
@@ -1582,6 +1601,15 @@ export class Battlefield {
     placement.preview.visible = !!cell
     if (!cell) return
     placement.preview.position.set(cell[0], this.heightAt(cell[0] + 0.5, cell[1] + 0.5), cell[1])
+    // something put onto a building (a gun onto the component tower): white on top of
+    // one it fits, red on the ground anywhere else
+    if (placement.fits) {
+      const lift = placement.fits(cell[0], cell[1])
+      placement.valid = lift !== undefined
+      placement.preview.position.y += lift ?? 0
+      for (const child of placement.preview.children) (child as THREE.Mesh).material = placement.valid ? placement.materials.free : placement.materials.blocked
+      return
+    }
     const free: boolean[] = []
     placement.valid = this.canPlace(cell[0], cell[1], placement.w, placement.h, placement.adjacent, { free })
     const anyBlocked = free.includes(false)
@@ -1622,8 +1650,8 @@ export class Battlefield {
     object.userData.side = side
     object.userData.footprint = footprint
     this.structures.set(id, [...(this.structures.get(id) ?? []), object])
+    if (JOINS[id]) this.joinAround(footprint)
     if (WALLS.has(id)) {
-      this.connectWalls(x, z)
       // walls cannot be clicked or picked with a box (Selectable=no in RULES.INI)
       const i = this.selectables.indexOf(object)
       if (i >= 0) this.selectables.splice(i, 1)
@@ -1631,34 +1659,49 @@ export class Battlefield {
     return object
   }
 
-  /** The wall (sandbags …) standing on a cell, if any; `id`: only a wall of that kind */
-  private wallAt(x: number, z: number, id?: string) {
-    for (const kind of id ? [id] : WALLS) {
-      const wall = this.structuresOf(kind).find(o => o.userData.footprint?.x === x && o.userData.footprint?.z === z)
-      if (wall) return wall
+  /** The structure standing on a cell (its foundation covers it), if any */
+  private structureOn(x: number, z: number) {
+    const f = this.footprints.find(f => x >= f.x && x < f.x + f.w && z >= f.z && z < f.z + f.h)
+    return f && this.structureObjects.find(o => o.userData.footprint === f)
+  }
+
+  /** Joins up the pieces on the cells of a foundation and round them (a piece came or went) */
+  private joinAround(f: Footprint) {
+    for (let x = f.x; x < f.x + f.w; x++) {
+      for (let z = f.z; z < f.z + f.h; z++) this.connectWalls(x, z)
     }
-    return undefined
   }
 
   /**
-   * Joins up the walls on a cell and its four neighbours: each wall model shows an arm
-   * (ArmXP, ArmXN, ArmZP, ArmZN) towards every neighbouring cell with a wall, so they
-   * make straight walls, corners, T-pieces and crossings.
+   * Joins up the walls on a cell and its four neighbours: each piece (a wall, the
+   * component tower, a gate) shows an arm (ArmXP, ArmXN, ArmZP, ArmZN) towards every
+   * neighbouring cell with something it joins (JOINS), so they make straight walls,
+   * corners, T-pieces and crossings, and walls run into towers and gates. A piece wider
+   * than a cell (the gate) shows the arm at its end.
    */
   connectWalls(x: number, z: number) {
     for (const [cx, cz] of [[x, z], [x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]] as const) {
-      const wall = this.wallAt(cx, cz)
-      if (!wall) continue
+      const piece = this.structureOn(cx, cz)
+      const joins = piece && JOINS[piece.userData.id]
+      if (!piece || !joins || piece.userData.dead) continue
       // the arms are taken out of the model when not needed (hidden ones would still
       // count for picking and the selection frame); kept here to put them back
-      const arms: Record<string, THREE.Object3D> = wall.userData.arms ??= Object.fromEntries(
-        ['ArmXP', 'ArmXN', 'ArmZP', 'ArmZN'].map(name => [name, wall.getObjectByName(name)]).filter(([, arm]) => arm))
+      const arms: Record<string, THREE.Object3D> = piece.userData.arms ??= Object.fromEntries(
+        ['ArmXP', 'ArmXN', 'ArmZP', 'ArmZN'].map(name => [name, piece.getObjectByName(name)]).filter(([, arm]) => arm))
+      const f = piece.userData.footprint as Footprint
       const towards = { ArmXP: [1, 0], ArmXN: [-1, 0], ArmZP: [0, 1], ArmZN: [0, -1] } as const
       for (const [name, [dx, dz]] of Object.entries(towards)) {
         const arm = arms[name]
         if (!arm) continue
-        // only walls of the same kind join up (sandbags with sandbags, concrete with concrete)
-        if (this.wallAt(cx + dx, cz + dz, wall.userData.id)) {
+        // the cells next to the piece on that side
+        const side: [number, number][] = dx
+          ? Array.from({ length: f.h }, (_, i) => [dx > 0 ? f.x + f.w : f.x - 1, f.z + i])
+          : Array.from({ length: f.w }, (_, i) => [f.x + i, dz > 0 ? f.z + f.h : f.z - 1])
+        const joined = side.some(([nx, nz]) => {
+          const other = this.structureOn(nx, nz)
+          return !!other && other !== piece && !other.userData.dead && joins.includes(other.userData.id)
+        })
+        if (joined) {
           if (!arm.parent) arm.userData.home.add(arm)
         }
         else if (arm.parent) {
@@ -2493,7 +2536,7 @@ export class Battlefield {
     if (list) drop(list, object)
     // the neighbouring walls lose their arm towards it
     const footprint = object.userData.footprint as Footprint | undefined
-    if (footprint && WALLS.has(object.userData.id)) this.connectWalls(footprint.x, footprint.z)
+    if (footprint && JOINS[object.userData.id]) this.joinAround(footprint)
   }
 
   /** Takes a unit or building off the map (after it was destroyed). */

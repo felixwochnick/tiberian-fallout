@@ -662,8 +662,9 @@ function syncPlacement() {
   if (!battlefield || placingId === skirmish?.placing?.id) return
   placingId = skirmish?.placing?.id
   const info = skirmish?.placing
-  // a gun for the component tower is put onto a tower with a click, no foundation to show
-  if (info && !info.powersUp) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent)
+  // a gun for the component tower: a square that is white on top of a tower it fits, red elsewhere
+  if (info?.powersUp) battlefield.startPlacement(1, 1, 0, (x, z) => towerTop(info, x, z))
+  else if (info) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent)
   else battlefield.cancelPlacement()
 }
 
@@ -672,14 +673,6 @@ function place() {
   const info = skirmish?.placing
   const cell = battlefield?.placementCell
   if (!skirmish || !info) return
-  if (info.powersUp) {
-    const at = pointer()
-    const tower = battlefield?.objectAt(at.x, at.y)
-    const f = tower && towerFor(info, tower) && tower.userData.footprint
-    if (f) placeAt(info, [f.x, f.z])
-    else sounds.speak('evaCannotPlace')
-    return
-  }
   if (!cell) {
     sounds.speak('evaCannotPlace')
     return
@@ -707,6 +700,15 @@ function placeAt(info: BuildInfo, cell: [number, number]) {
 /** Whether a gun (the Vulcan, the SAM) can go onto this building: an own component tower without one */
 function towerFor(info: BuildInfo, object: THREE.Object3D) {
   return object.userData.id === info.powersUp && Battlefield.own(object) && !object.userData.gun && !object.userData.dead
+}
+
+/** The height of the top of a tower on the cell that the gun fits on, undefined if there is none */
+function towerTop(info: BuildInfo, x: number, z: number) {
+  const tower = battlefield?.structuresOf(info.powersUp!).find(o => o.userData.footprint?.x === x && o.userData.footprint?.z === z && towerFor(info, o))
+  if (!tower) return undefined
+  tower.updateMatrixWorld(true)
+  const slot = tower.getObjectByName('TowerSlot1')
+  return (slot ? slot.getWorldPosition(new THREE.Vector3()).y : new THREE.Box3().setFromObject(tower).max.y) - tower.position.y
 }
 
 /** Mounts a gun on a component tower (its TowerSlot1): from now on the tower fires with it (see Combat) */
