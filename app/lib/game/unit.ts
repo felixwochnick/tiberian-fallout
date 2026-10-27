@@ -119,6 +119,11 @@ export class Unit {
     return !!this.target
   }
 
+  /** A soldier (it can throw itself down): it can ride in a transport */
+  get infantry() {
+    return !!this.goProne
+  }
+
   /** The posture it has taken up (Deployed, Underground …), if any */
   get posture() {
     return this.postureName

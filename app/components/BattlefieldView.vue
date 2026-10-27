@@ -89,7 +89,7 @@ function frame(now: number) {
       // over the selected MCV: unfold it here (or not, if there is no room)
       else if (hovered && isDeployable(hovered)) cursor = canDeploy(hovered) ? 'deploy' : 'deploy-blocked'
       // a harvester over its refinery: drive in and unload
-      else if (hovered) cursor = canUnloadAt(hovered) ? 'enter' : combat?.canAttack(battlefield.selection, hovered) ? 'attack' : 'select'
+      else if (hovered) cursor = canUnloadAt(hovered) || canEnter(hovered) ? 'enter' : combat?.canAttack(battlefield.selection, hovered) ? 'attack' : 'select'
       // a harvester over Tiberium: harvest it (the attack cursor, like in the original)
       else if (harvestTarget(at.x, at.y)) cursor = 'attack'
       else if (battlefield.groundAt(at.x, at.y)) cursor = battlefield.canMove ? 'move' : battlefield.canSetRallyPoint ? 'rally' : 'default'
@@ -182,10 +182,12 @@ function onClick(event: MouseEvent) {
   }
   const object = battlefield.objectAt(event.clientX, event.clientY)
   // classic controls: a left click on an enemy attacks it, on an own refinery sends the harvesters in
-  if (object && settings.controls === 'classic' && (unloadAt(object) || attack(object))) return
-  // a second click on the selected MCV deploys it into a construction yard, on a Tick Tank digs it in (or out)
+  if (object && settings.controls === 'classic' && (unloadAt(object) || enter(object) || attack(object))) return
+  // a second click on the selected MCV deploys it into a construction yard, on a Tick Tank digs it in (or out),
+  // on a transport lets its soldiers out
   if (object && isDeployable(object)) {
-    if (Battlefield.digsIn(object)) digIn(object)
+    if (Battlefield.capacity(object)) unloadTransport(object)
+    else if (Battlefield.digsIn(object)) digIn(object)
     else deployMcv(object)
     return
   }
@@ -218,7 +220,7 @@ function onRightClick(event: MouseEvent) {
     const onMap = (event.target as Element | null)?.closest?.('.battlefield')
     const object = onMap && battlefield.objectAt(event.clientX, event.clientY)
     if (object) {
-      if (!unloadAt(object)) attack(object)
+      if (!unloadAt(object) && !enter(object)) attack(object)
     }
     else if (onMap) order(event.clientX, event.clientY)
   }
@@ -370,15 +372,52 @@ function respond(voice: UnitVoice) {
 
 let delivered = 0
 
-/** The selected MCV or Tick Tank of the player: a click on it unfolds it (digs it in or out) */
+/**
+ * The selected MCV, Tick Tank or loaded transport of the player: a click on it unfolds
+ * it (digs it in or out, lets the soldiers out)
+ */
 function isDeployable(object: THREE.Object3D) {
-  return object === battlefield?.selected && (object.userData.id === 'MCV' || Battlefield.digsIn(object)) && Battlefield.own(object)
-    && !!object.userData.unit
+  const transport = Battlefield.capacity(object) > 0 && Battlefield.passengers(object).length > 0
+  return object === battlefield?.selected && (object.userData.id === 'MCV' || Battlefield.digsIn(object) || transport)
+    && Battlefield.own(object) && !!object.userData.unit
+}
+
+/** The selected soldiers of the player that could get into a transport */
+function boarders(transport: THREE.Object3D) {
+  return battlefield!.selection
+    .map(object => object.userData.unit as Unit | undefined)
+    .filter((unit): unit is Unit => !!unit && Battlefield.own(unit.object) && battlefield!.canBoard(unit, transport))
+}
+
+/** Whether the selected soldiers can get into this (an own transport with room): the enter cursor */
+function canEnter(object: THREE.Object3D) {
+  return !!battlefield && Battlefield.capacity(object) > 0 && Battlefield.own(object) && boarders(object).length > 0
+}
+
+/** Sends the selected soldiers into a transport; returns false if it is none they can get into */
+function enter(transport: THREE.Object3D) {
+  if (!battlefield || !canEnter(transport)) return false
+  const units = boarders(transport)
+  combat?.stop(units.map(unit => unit.object))
+  battlefield.board(units, transport)
+  respond('move')
+  sounds.play('click')
+  return true
+}
+
+/** Lets a transport's soldiers out round it; not under the ground or while it digs */
+function unloadTransport(object: THREE.Object3D) {
+  if (!battlefield!.unload(object).length) {
+    sounds.play('evaCannotPlace')
+    return
+  }
+  sounds.play('click')
 }
 
 /** Whether it can deploy where it stands: the MCV on 3 × 3 free flat cells, the Tick Tank on flat ground (or it is dug in) */
 function canDeploy(object: THREE.Object3D) {
   const unit = object.userData.unit as Unit
+  if (Battlefield.capacity(object)) return battlefield!.canUnload(object)
   if (Battlefield.digsIn(object)) return !!unit.posture || battlefield!.canDig(object.position)
   return !!battlefield!.deployCell(unit)
 }

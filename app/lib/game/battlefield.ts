@@ -269,8 +269,14 @@ const POSTURES = {
 const DIGGERS = new Set(['TTNK'])
 /** Units that go under the ground to get somewhere */
 const TUNNELLERS = new Set(['SAPC'])
-/** Farther than this (cells) the subterranean APC goes under the ground */
-const TUNNEL_MIN = 3
+/** Farther than this (cells) the subterranean APC goes under the ground; nearer it drives */
+const TUNNEL_MIN = 8
+/** How many soldiers the transports carry (Passengers=) */
+const TRANSPORTS: Record<string, number> = { SAPC: 5 }
+/** A soldier this near (cells) to its transport gets in */
+const BOARD_REACH = 0.8
+/** How far from the transport (cells) the soldiers get out */
+const UNLOAD_DISTANCE = 0.9
 /** Under the ground it is this much faster than on it */
 const TUNNEL_SPEED = 1.5
 
@@ -723,6 +729,8 @@ export class Battlefield {
     }
     this.updateDeploying(seconds)
     this.updateTunnels(seconds)
+    this.updateBoarding()
+    this.updateDeliveries()
     this.growTiberium(seconds)
     this.groundTime.value = (this.groundTime.value + seconds) % 1000
     this.effects.update(seconds, this.renderer.getDrawingBufferSize(new THREE.Vector2()).y / (this.camera.top - this.camera.bottom))
@@ -2116,12 +2124,126 @@ export class Battlefield {
       })
       return
     }
-    // the subterranean APC goes far under the ground, where the ground lets it dig
-    if (TUNNELLERS.has(object.userData.id) && object.position.distanceTo(to) > TUNNEL_MIN && this.canDig(object.position)) {
+    // the subterranean APC goes far under the ground, where the ground lets it dig (under it already: on under it)
+    if (unit.posture === POSTURES.tunnel.posture
+      || (TUNNELLERS.has(object.userData.id) && object.position.distanceTo(to) > TUNNEL_MIN && this.canDig(object.position))) {
       this.burrow(unit, to)
       return
     }
     unit.followPath(findPath(this.navFor(object), object.position, to))
+  }
+
+  /** The soldiers a transport carries (out of the scene meanwhile) */
+  static passengers(transport: THREE.Object3D): Unit[] {
+    return (transport.userData.passengers ??= []) as Unit[]
+  }
+
+  /** How many soldiers a unit can carry (0: it is no transport) */
+  static capacity(object: THREE.Object3D) {
+    return TRANSPORTS[object.userData.id as string] ?? 0
+  }
+
+  /** Whether a soldier can get into a transport: of the same side, there is room, it is up on the ground */
+  canBoard(unit: Unit, transport: THREE.Object3D) {
+    const passengers = Battlefield.passengers(transport)
+    const coming = this.units.filter(u => u.object.userData.boarding === transport && u !== unit).length
+    return unit.infantry && !unit.object.userData.dead && !transport.userData.dead && transport.parent === this.scene
+      && transport.userData.owner === unit.object.userData.owner && !transport.userData.underground
+      && passengers.length + coming < Battlefield.capacity(transport)
+  }
+
+  /** Sends soldiers into a transport (those for whom there is room); returns how many go */
+  board(units: Unit[], transport: THREE.Object3D) {
+    let going = 0
+    for (const unit of units) {
+      if (!this.canBoard(unit, transport)) continue
+      unit.object.userData.boarding = transport
+      unit.followPath(findPath(this.navFor(unit.object), unit.object.position, transport.position))
+      going++
+    }
+    return going
+  }
+
+  /** The soldiers on their way into a transport: in when they reach it, after it when it drives off */
+  private updateBoarding() {
+    for (const unit of [...this.units]) {
+      const transport = unit.object.userData.boarding as THREE.Object3D | undefined
+      if (!transport) continue
+      const room = Battlefield.passengers(transport).length < Battlefield.capacity(transport)
+      if (unit.object.userData.dead || transport.userData.dead || transport.parent !== this.scene || transport.userData.underground || !room) {
+        delete unit.object.userData.boarding
+        continue
+      }
+      const distance = Math.hypot(unit.object.position.x - transport.position.x, unit.object.position.z - transport.position.z)
+      if (distance <= BOARD_REACH) this.embark(unit, transport)
+      else if (!unit.walking || (unit.destination && unit.destination.distanceTo(transport.position.clone().setY(unit.destination.y)) > 0.5)) {
+        unit.followPath(findPath(this.navFor(unit.object), unit.object.position, transport.position))
+      }
+    }
+  }
+
+  /** Puts soldiers straight into a transport, as many as fit (a mission's Nod APC, loaded from the start); returns them */
+  load(transport: THREE.Object3D, units: Unit[]) {
+    const loaded = units.filter(unit => this.units.includes(unit) && this.canBoard(unit, transport))
+    for (const unit of loaded) this.embark(unit, transport)
+    return loaded
+  }
+
+  /** A soldier gets in: off the map until the transport lets it out */
+  private embark(unit: Unit, transport: THREE.Object3D) {
+    delete unit.object.userData.boarding
+    unit.stop()
+    this.scene.remove(unit.object)
+    for (const list of [this.selectables, this.selection] as THREE.Object3D[][]) {
+      const i = list.indexOf(unit.object)
+      if (i >= 0) list.splice(i, 1)
+    }
+    this.units.splice(this.units.indexOf(unit), 1)
+    Battlefield.passengers(transport).push(unit)
+  }
+
+  /** Whether a transport can let its soldiers out where it is: it has some, and is up on the ground */
+  canUnload(transport: THREE.Object3D) {
+    const unit = transport.userData.unit as Unit | undefined
+    return Battlefield.passengers(transport).length > 0 && !transport.userData.dead && !transport.userData.underground
+      && !!unit && !unit.changingPosture && !this.tunnels.some(t => t.unit === unit)
+  }
+
+  /** Lets the soldiers out round the transport; returns them */
+  unload(transport: THREE.Object3D) {
+    if (!this.canUnload(transport)) return []
+    const out = Battlefield.passengers(transport).splice(0)
+    const unit = transport.userData.unit as Unit
+    unit.stop()
+    out.forEach((passenger, i) => {
+      // round it, behind it first (where the door is)
+      const angle = transport.rotation.y + Math.PI + (i - (out.length - 1) / 2) * 0.7
+      const at = transport.position.clone().add(new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle)).multiplyScalar(UNLOAD_DISTANCE))
+      const spot = this.openSpot(at)
+      passenger.object.position.copy(spot).setY(this.heightAt(spot.x, spot.z))
+      passenger.object.rotation.y = angle
+      this.scene.add(passenger.object)
+      this.units.push(passenger)
+      this.addSelectable(passenger.object)
+    })
+    return out
+  }
+
+  /**
+   * When the transport has got where it was sent (on or under the ground) and stands,
+   * it lets its soldiers out and hands them to `then` (the missions' Nod APC)
+   */
+  deliver(transport: THREE.Object3D, then: (soldiers: Unit[]) => void) {
+    transport.userData.deliver = then
+  }
+
+  private updateDeliveries() {
+    for (const unit of this.units) {
+      const then = unit.object.userData.deliver as ((soldiers: Unit[]) => void) | undefined
+      if (!then || unit.walking || !this.canUnload(unit.object)) continue
+      delete unit.object.userData.deliver
+      then(this.unload(unit.object))
+    }
   }
 
   /** Units under the ground (the subterranean APC): where they come up again */
@@ -2167,6 +2289,11 @@ export class Battlefield {
     const object = unit.object
     const tunnel: (typeof this.tunnels)[number] = { unit, to: this.openSpot(to, true), phase: 'down' }
     this.tunnels.push(tunnel)
+    // under the ground already: off at once
+    if (unit.posture === POSTURES.tunnel.posture) {
+      tunnel.phase = 'moving'
+      return
+    }
     void unit.change(POSTURES.tunnel.in, POSTURES.tunnel.posture).then(() => {
       if (object.userData.dead) return
       // out of sight and out of reach
@@ -2174,6 +2301,24 @@ export class Battlefield {
       object.visible = false
       tunnel.phase = 'moving'
     })
+  }
+
+  /** A subterranean APC starts out under the ground, out of sight (a mission's Nod APC on its way in) */
+  startUnderground(unit: Unit) {
+    if (!TUNNELLERS.has(unit.object.userData.id)) return
+    unit.object.userData.underground = true
+    unit.object.visible = false
+    void unit.change('', POSTURES.tunnel.posture)
+  }
+
+  /** A subterranean APC digs into the ground where it stands and is gone (off the map) */
+  vanish(unit: Unit) {
+    const object = unit.object
+    if (!TUNNELLERS.has(object.userData.id) || !this.canDig(object.position)) return false
+    void unit.change(POSTURES.tunnel.in, POSTURES.tunnel.posture).then(() => {
+      if (!object.userData.dead) this.remove(object)
+    })
+    return true
   }
 
   private updateTunnels(seconds: number) {
@@ -2256,6 +2401,8 @@ export class Battlefield {
       drop(this.units, unit)
       unit.dispose()
     }
+    // the soldiers inside a transport go with it
+    for (const passenger of Battlefield.passengers(object).splice(0)) passenger.dispose()
   }
 
   /** Adds an effect object (muzzle flash, hit puff …) to the scene; `remove` takes it away. */

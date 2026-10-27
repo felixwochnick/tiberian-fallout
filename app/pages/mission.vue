@@ -153,8 +153,37 @@ function missionContext({ battlefield, combat, addUnit }: Field): Parameters<Mis
       const unit = object.userData.unit as Unit | undefined
       if (unit && Battlefield.digsIn(object)) battlefield.toggleDigIn(unit)
     },
+    load(transport, soldiers) {
+      battlefield.load(transport, soldiers.map(object => object.userData.unit as Unit).filter(Boolean))
+    },
+    burrow(transport) {
+      const unit = transport.userData.unit as Unit | undefined
+      if (unit) battlefield.startUnderground(unit)
+    },
+    tunnelIn(transport, [dx, dz], [ax, az]) {
+      const unit = transport.userData.unit as Unit | undefined
+      if (!unit || !alive(transport)) return
+      const target = base.clone().add(new THREE.Vector3(ax, 0, az))
+      battlefield.deliver(transport, (soldiers) => {
+        combat.attackMove(soldiers.map(soldier => soldier.object), target)
+        // and off again under the ground
+        battlefield.vanish(unit)
+      })
+      battlefield.walk(unit, base.clone().add(new THREE.Vector3(dx, 0, dz)))
+    },
     attackMove(objects, dx, dz) {
-      combat.attackMove(objects.filter(alive), base.clone().add(new THREE.Vector3(dx, 0, dz)))
+      const to = base.clone().add(new THREE.Vector3(dx, 0, dz))
+      // those in a transport ride along (they are off the map meanwhile)
+      const out = objects.filter(object => alive(object) && object.parent)
+      combat.attackMove(out, to)
+      // a transport lets its soldiers out where it gets to, and they attack on
+      for (const transport of out.filter(object => Battlefield.passengers(object).length)) {
+        battlefield.deliver(transport, (soldiers) => {
+          combat.attackMove(soldiers.map(unit => unit.object), to)
+          // and off again under the ground
+          battlefield.vanish(transport.userData.unit as Unit)
+        })
+      }
     },
     speak: message => sounds.speak(message),
     units() {

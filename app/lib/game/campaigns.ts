@@ -12,6 +12,15 @@ export interface MissionContext {
   base: THREE.Vector3
   /** Puts an enemy soldier (Nod) on the map, `at` in cells from the base */
   spawnEnemy: (id: string, dx: number, dz: number) => Promise<THREE.Object3D>
+  /** Puts soldiers into a transport (the subterranean APC), as many as fit */
+  load: (transport: THREE.Object3D, soldiers: THREE.Object3D[]) => void
+  /** A subterranean APC starts out under the ground, out of sight */
+  burrow: (transport: THREE.Object3D) => void
+  /**
+   * A subterranean APC (under the ground) comes up at (dx, dz) (cells from the base),
+   * lets its soldiers out, who attack towards (ax, az), and digs off again
+   */
+  tunnelIn: (transport: THREE.Object3D, at: [number, number], attack: [number, number]) => void
   /** A unit that can dig in (the Tick Tank) does so where it stands, if the ground lets it */
   digIn: (object: THREE.Object3D) => void
   /** Sends enemies towards a point (cells from the base), fighting on the way */
@@ -76,14 +85,20 @@ export interface Campaign {
 
 /**
  * A wave of Nod soldiers (and vehicles, RULES.INI ids): appears at `at` (cells from
- * the base), waits `delay` seconds, then attacks the base
+ * the base), waits `delay` seconds, then attacks the base. With `tunnel` the soldiers
+ * come under the ground in a subterranean APC instead, which waits under `at` and comes
+ * up near the base (SURFACE_DISTANCE from it, on the side of `at`).
  */
 interface Wave {
   delay: number
   at: [number, number]
   soldiers: number
   vehicles?: string[]
+  tunnel?: boolean
 }
+
+/** How far from the middle of the base (cells) a wave's subterranean APC comes up */
+const SURFACE_DISTANCE = 7
 
 /** Nod soldiers (and vehicles) that stand about on the map (cells from the base) until they are found */
 type Garrison = [dx: number, dz: number, soldiers: number, vehicles?: string[]]
@@ -105,14 +120,24 @@ const ROCKET_EVERY = 3
 /** Cells between the vehicles of a squad */
 const VEHICLE_SPACING = 1.2
 
-/** A few soldiers close together, in rows of three, and the vehicles in a row behind them */
-function squad(context: MissionContext, [x, z]: [number, number], soldiers: number, vehicles: string[] = []) {
+/** Transports among the vehicles: the squad's soldiers ride in them (`load`) */
+const TRANSPORTS = new Set(['SAPC'])
+
+/**
+ * A few soldiers close together, in rows of three, and the vehicles in a row behind
+ * them; with `load` the soldiers get into the squad's transports
+ */
+async function squad(context: MissionContext, [x, z]: [number, number], soldiers: number, vehicles: string[] = [], load = false) {
   const behind = z + Math.ceil(soldiers / 3) * 0.7 + 0.6
-  return Promise.all([
+  const units = await Promise.all([
     ...Array.from({ length: soldiers }, (_, i) =>
       context.spawnEnemy(i % ROCKET_EVERY === ROCKET_EVERY - 1 ? 'E3' : 'E1', x + (i % 3) * 0.7, z + Math.floor(i / 3) * 0.7)),
     ...vehicles.map((id, i) => context.spawnEnemy(id, x + i * VEHICLE_SPACING, behind)),
   ])
+  if (load) {
+    for (const transport of units.filter(u => TRANSPORTS.has(u.userData.id))) context.load(transport, units.slice(0, soldiers))
+  }
+  return units
 }
 
 /**
@@ -127,7 +152,13 @@ function fightNod(context: MissionContext, { garrisons, waves, begin, hints = []
   // the garrisons' Tick Tanks dig in where they stand
   for (const [x, z, soldiers, vehicles] of garrisons) void squad(context, [x, z], soldiers, vehicles).then(units => units.forEach(context.digIn))
   // the waves appear in the distance a little before they set off
-  const pending = waves.map(wave => squad(context, wave.at, wave.soldiers, wave.vehicles).finally(() => arrived++))
+  // their soldiers ride in the wave's transport, if it has one; one that comes under the ground waits there
+  const pending = waves.map(wave => squad(context, wave.at, wave.soldiers, wave.tunnel ? ['SAPC'] : wave.vehicles, true)
+    .then((units) => {
+      if (wave.tunnel) units.filter(u => TRANSPORTS.has(u.userData.id)).forEach(context.burrow)
+      return units
+    })
+    .finally(() => arrived++))
 
   return (seconds: number): MissionResult => {
     if (time === 0) {
@@ -141,8 +172,18 @@ function fightNod(context: MissionContext, { garrisons, waves, begin, hints = []
     }
     while (next < waves.length && time >= waves[next]!.delay) {
       const index = next++
-      pending[index]!.then((soldiers) => {
-        context.attackMove(soldiers, 1, 1)
+      const wave = waves[index]!
+      pending[index]!.then((units) => {
+        if (!wave.tunnel) {
+          context.attackMove(units, 1, 1)
+          return
+        }
+        // up out of the ground near the base, on the side it comes from
+        const [x, z] = wave.at
+        const d = Math.hypot(x, z) || 1
+        for (const transport of units.filter(u => TRANSPORTS.has(u.userData.id))) {
+          context.tunnelIn(transport, [x / d * SURFACE_DISTANCE, z / d * SURFACE_DISTANCE], [1, 1])
+        }
       })
       const coming = waves[next]
       if (coming) {
@@ -187,7 +228,7 @@ const outpostMission: Mission = {
   title: 'Demo 1: Der Außenposten',
   briefing: [
     'Kommandant, unser Außenposten in Nevada besteht nur noch aus einem Kraftwerk und einer Kaserne hinter Sandsäcken. Einen Bauhof gibt es nicht.',
-    'Zwei Dropships bringen Ihnen je einen Wolverine und vier Infanteristen. Nod-Soldaten streifen durch das Gebiet und werden den Posten in kleinen Gruppen angreifen.',
+    'Zwei Dropships bringen Ihnen je einen Wolverine und vier Infanteristen. Nod-Soldaten streifen durch das Gebiet. Ihre Angriffstrupps kommen in Untergrund-Transportern und tauchen ohne Vorwarnung nahe dem Posten auf.',
     'Bilden Sie in der Kaserne Verstärkung aus und vernichten Sie alle Nod-Truppen. Für die GDI!',
   ],
   objectives: [
@@ -211,11 +252,12 @@ const outpostMission: Mission = {
   map: DEMO_MAP,
   start: context => fightNod(context, {
     garrisons: [[13, -10, 3], [-15, -9, 2], [-11, 14, 3], [16, 10, 2], [24, -2, 3]],
+    // every wave comes under the ground in a subterranean APC and comes up near the post
     waves: [
-      { delay: 45, at: [17, 13], soldiers: 2 },
-      { delay: 100, at: [-15, 15], soldiers: 3 },
-      { delay: 155, at: [18, -12], soldiers: 2 },
-      { delay: 210, at: [-16, -13], soldiers: 3 },
+      { delay: 45, at: [17, 13], soldiers: 2, tunnel: true },
+      { delay: 100, at: [-15, 15], soldiers: 3, tunnel: true },
+      { delay: 155, at: [18, -12], soldiers: 2, tunnel: true },
+      { delay: 210, at: [-16, -13], soldiers: 3, tunnel: true },
     ],
     begin(context) {
       context.hint('Wenn Sie Truppen ausbilden wollen, klicken Sie auf die entsprechenden Symbole im Seitenmenü.')
@@ -232,7 +274,7 @@ const bridgeheadMission: Mission = {
   briefing: [
     'Kommandant, wir errichten einen Brückenkopf in Utah, mitten im Gebiet der Bruderschaft.',
     'Ein Dropship bringt Ihnen ein MCV, ein zweites zwei Wolverines und zwei Titans. Errichten Sie mit dem MCV einen Bauhof und bauen Sie die Basis aus.',
-    'Nod wird nicht lange auf sich warten lassen. Unsere Aufklärung meldet neben Infanterie auch Buggys, Angriffsmotorräder, Tick Tanks und einen Untergrund-Truppentransporter. Vernichten Sie alle Nod-Truppen im Gebiet.',
+    'Nod wird nicht lange auf sich warten lassen. Unsere Aufklärung meldet neben Infanterie auch Buggys, Angriffsmotorräder, Tick Tanks und Untergrund-Truppentransporter, die Soldaten unter der Erde heranbringen. Vernichten Sie alle Nod-Truppen im Gebiet.',
   ],
   objectives: [
     'Mit dem MCV einen Bauhof errichten',
@@ -254,7 +296,8 @@ const bridgeheadMission: Mission = {
     waves: [
       { delay: 90, at: [18, 14], soldiers: 3, vehicles: ['BIKE', 'BIKE'] },
       { delay: 170, at: [-17, 15], soldiers: 4, vehicles: ['BGGY', 'TTNK'] },
-      { delay: 250, at: [19, -13], soldiers: 4, vehicles: ['TTNK', 'BGGY', 'BIKE'] },
+      // the last wave: its soldiers come in the subterranean APC
+      { delay: 250, at: [19, -13], soldiers: 4, vehicles: ['TTNK', 'BGGY', 'BIKE', 'SAPC'] },
     ],
     begin(context) {
       context.hint('Wählen Sie das MCV aus und klicken Sie es noch einmal an, um den Bauhof zu errichten.')

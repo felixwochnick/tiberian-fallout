@@ -40,6 +40,8 @@ import type { Death, Unit } from './unit'
 const FRAMES_PER_SECOND = 15
 /** How often a unit walking after its target looks where the target is now */
 const CHASE_INTERVAL = 0.5
+/** How far (cells) a target may move before a unit walking up to it heads for where it is now */
+const FOLLOW_SLACK = 1
 /** Seconds a destroyed unit lies on the ground before it disappears */
 const CORPSE_SECONDS = 3
 /** Seconds the burning wreck of a vehicle stays before it sinks away */
@@ -127,6 +129,8 @@ interface Fighter {
   chase: number
   /** Where it walks to get a clear shot at its target */
   spot?: THREE.Vector3
+  /** The spot is the target itself (no place with a clear shot found): it follows the target */
+  toTarget?: boolean
   /** Targets it found no clear shot at, until when it leaves them alone (seconds of game time) */
   ignore?: Map<THREE.Object3D, number>
 }
@@ -279,8 +283,15 @@ export class Combat {
       const target = fighter.target
       if (!target) continue
       // on its way to a place with a clear shot: let it get there
+      // (while the target stays where it can be hit from there; once it moves away, a new place)
       if (fighter.spot) {
-        if (unit.walking) continue
+        if (unit.walking) {
+          fighter.chase -= dt
+          if (fighter.chase > 0) continue
+          fighter.chase = CHASE_INTERVAL
+          if (fighter.toTarget ? Battlefield.reach(fighter.spot, target) < FOLLOW_SLACK : this.spotHolds(fighter.spot, weapon, target)) continue
+          fighter.chase = 0
+        }
         fighter.spot = undefined
       }
 
@@ -588,6 +599,7 @@ export class Combat {
         const muzzle = spot.clone().setY(spot.y + muzzleHeight)
         if (!this.flightBlocked(weapon, muzzle, this.aimPoint(muzzle, target))) {
           fighter.spot = spot
+          fighter.toTarget = false
           this.battlefield.walk(unit, spot)
           return
         }
@@ -604,11 +616,19 @@ export class Combat {
     if (fighter.ordered) {
       // ordered: up to it, on the way something better may turn up
       fighter.spot = Battlefield.closestPoint(object.position, target)
+      fighter.toTarget = true
       this.battlefield.walk(unit, fighter.spot)
       return
     }
     ;(fighter.ignore ??= new Map()).set(target, this.clock + GIVE_UP_SECONDS)
     fighter.target = undefined
+  }
+
+  /** The target (where it is now) can still be hit from `spot`, with a clear shot */
+  private spotHolds(spot: THREE.Vector3, weapon: Weapon, target: THREE.Object3D) {
+    if (Battlefield.reach(spot, target) > this.range(spot, weapon, target)) return false
+    const muzzle = spot.clone().setY(spot.y + MUZZLE_HEIGHT)
+    return !this.flightBlocked(weapon, muzzle, this.aimPoint(muzzle, target))
   }
 
   /** The first point on the straight line from `from` to `to` where the ground is in the way, if any */
