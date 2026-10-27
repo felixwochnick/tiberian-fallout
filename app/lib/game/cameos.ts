@@ -239,6 +239,9 @@ export interface BuildInfo {
   sensors: boolean
   /** Its weapon fires only as a special weapon the player aims (EMPulseCannon=: the EMP cannon) */
   manualOnly: boolean
+  /** An aircraft's sounds taking off and landing (AuxSound1=, AuxSound2=) */
+  takeOffSound: string[]
+  landSound: string[]
   /** Hit points (Strength=) */
   strength: number
   /** Can be repaired (Repairable=, default yes) */
@@ -317,7 +320,7 @@ const SPEED_PER_CELL = 72
 /** The game logic runs on frames of the original at 15 a second (game speed factor 1, see SPEED_FACTORS) */
 const FRAMES_PER_SECOND = 15
 
-export type UnitVoice = 'select' | 'move' | 'attack' | 'die'
+export type UnitVoice = 'select' | 'move' | 'attack' | 'die' | 'feedback'
 
 const CONSTRUCTION_YARDS = ['GACNST', 'NACNST']
 /** These crush whatever RULES.INI says: the Titan and the heavy vehicles */
@@ -386,6 +389,8 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       ...cloaking(section),
       sensors: yes(section?.get('SENSORS')),
       manualOnly: yes(section?.get('EMPULSECANNON')),
+      takeOffSound: list(section?.get('AUXSOUND1')),
+      landSound: list(section?.get('AUXSOUND2')),
       armor: Math.max(0, ARMOR_TYPES.indexOf((section?.get('ARMOR') ?? 'none').toLowerCase())),
       weapon: weapon && {
         name: weaponName!,
@@ -448,6 +453,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
         move: list(section?.get('VOICEMOVE')),
         attack: list(section?.get('VOICEATTACK')),
         die: list(section?.get('VOICEDIE')),
+        feedback: list(section?.get('VOICEFEEDBACK')),
       },
     })
   }

@@ -48,6 +48,9 @@ export interface FlightGround {
 export class Flight {
   private readonly flyers = new Map<Unit, Flyer>()
 
+  /** It takes off or comes down (for its sounds) */
+  sound: (unit: Unit, event: 'takeOff' | 'land') => void = () => {}
+
   constructor(private readonly ground: FlightGround) {}
 
   /** An aircraft of a helipad: it stands on the pad, `ammo` shots on board (0: unlimited) */
@@ -170,6 +173,7 @@ export class Flight {
           }
           if (!there) {
             flyer.phase = 'rising'
+            this.sound(unit, 'takeOff')
             void unit.change('TakeOff', 'Fly')
           }
           break
@@ -186,6 +190,7 @@ export class Flight {
             flyer.returning = false
             if (landing) {
               flyer.phase = 'sinking'
+              this.sound(unit, 'land')
               void unit.change('Land', undefined)
             }
             break

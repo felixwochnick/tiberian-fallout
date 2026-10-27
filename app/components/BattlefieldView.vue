@@ -635,6 +635,9 @@ let lastFundsWarning = -Infinity
 /** Seconds between two "Our base is under attack" (or "Harvester under attack") */
 const ATTACK_WARNING_INTERVAL = 30
 let lastBaseAttack = -Infinity
+/** Seconds between two hit feedbacks (VoiceFeedback=) */
+const FEEDBACK_INTERVAL = 4
+let lastFeedback = -Infinity
 let lastHarvesterAttack = -Infinity
 let superWeapons: SuperWeapons | undefined
 /** Every so often the lamed things crackle */
@@ -1115,6 +1118,11 @@ onMounted(() => {
     .then(frames => frames && battlefield?.setSigns(frames, cursorScale()))
     .catch(error => console.error('Gebäude-Symbole konnten nicht geladen werden', error))
   // fighting with the values of RULES.INI; shots and death cries from SOUNDS.MIX
+  // aircraft taking off and landing (AuxSound1=, AuxSound2=)
+  battlefield.flight.sound = (unit, event) => {
+    const info = skirmish?.rules?.info.get(unit.object.userData.id)
+    sounds.effect((event === 'takeOff' ? info?.takeOffSound : info?.landSound) ?? [])
+  }
   // the battlefield's own sounds ([AudioVisual] of RULES.INI: gates, digging …)
   battlefield.sound = (key) => {
     const files = skirmish?.rules?.audio.get(key)
@@ -1142,6 +1150,12 @@ onMounted(() => {
       // EVA warns when a building or a harvester of the player is attacked, not again for every shot
       hit(target) {
         if (!Battlefield.own(target)) return
+        // a unit that says something when hit (VoiceFeedback=: the limpet drone …)
+        const feedback = infoOf(target)?.voices.feedback
+        if (feedback?.length && performance.now() - lastFeedback > FEEDBACK_INTERVAL * 1000) {
+          lastFeedback = performance.now()
+          sounds.effect(feedback, 'voices')
+        }
         const harvester = !!target.userData.harvester
         if (!harvester && (!target.userData.footprint || Battlefield.isWall(target))) return
         const now = performance.now()
