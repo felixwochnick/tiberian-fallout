@@ -547,8 +547,13 @@ def build():
     hatch_at = Vector((rest_tip.x, rest_tip.y, 0))
     hatch_frame, covers = hatch(m, hatch_at)
     kit.parent(hatch_frame, floor)
+    # the covers move in Deliver: not under the floor, which Build scales up from nothing
+    # (the exporter then writes a scale of 1000 into Deliver); they rise out of the
+    # ground on their own mount as the slab is done
+    hatch_mount = kit.parent(kit.empty('HatchMount'), root)
+    keys(hatch_mount, 'location', {0: Vector((0, 0, -0.05)), 16: Vector((0, 0, -0.05)), 17: Vector((0, 0, 0))}, 'CONSTANT')
     for cover in covers:
-        kit.parent(cover, floor)
+        kit.parent(cover, hatch_mount)
     carried = kit.parent(crate(m, 'CarriedCrate', Vector((0, 0, 0))), root)
     carried.scale = hidden
 

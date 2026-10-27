@@ -1,19 +1,27 @@
 """
 Tiberian Fallout – GDI gate (GAGATE_A), after Tiberian Sun.
 
-A gate across three cells along x (foundation 3 × 1): a camouflaged concrete sill on a
-dark footing, a sloped buttress post at each end with a warning lamp, and between them
-the gate itself: a tall wedge whose two sloped faces are grilles of vertical bars in a
-frame in the house colour. The gate (node Gate) retracts into a slot in the sill to let
-units through.
+A gate across three cells along x (foundation 3 × 1): a low camouflaged concrete sill
+on a dark footing and, along nearly all of it, the gate itself: a tall, narrow wedge
+whose two sloped faces are grilles of light vertical bars in a heavy frame in the house
+colour. The gate retracts into a slot in the sill to let units through. Two small
+lamps on the sill at the gate's ends blink.
+
+Like the wall (GAWALL.py) the gate shows wall stubs at its ends towards neighbouring
+walls and component towers (Battlefield.connectWalls): ArmXP and ArmXN (glTF axes),
+each a block of the concrete wall from the gate's end to the joint at the edge of the
+foundation.
 
 Materials as for the barracks (see GAPILE.py): Camo_* is the baked desert camouflage,
 Remap the house colour, Lamp* emissive, Glow* additive halos.
 
+Nodes: GateRise (scaled by Build: the gate comes up) holds Gate (scaled by Open), which
+holds the panel – so no channel belongs to two clips.
+
 Animations (glTF clips, merged from the NLA tracks of the same name)
-    Build    one-shot, 1.6 s: the footing and sill spread out, the posts rise, the
-             gate comes up out of the sill, the lamps come on
-    Idle     loop, 2 s: the lamps on the posts blink in turn
+    Build    one-shot, 1.6 s: the footing and sill spread out, the wall stubs grow,
+             the gate comes up out of the sill, the lamps' housings pop up
+    Idle     loop, 2 s: the lamps blink in turn
     Open     one-shot, 1 s: the gate sinks into the sill (played backwards it closes)
 
 Run headless (builds, bakes, saves the .blend, exports the GLB):
@@ -34,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402 – the helpers of the barracks script
 import GACTWR as tower  # noqa: E402 – the preview with another camera
+import GAWALL as wall  # noqa: E402 – the wall stubs
 
 kit.COLLECTION = 'GDIGate'  # after the imports, which set their own
 PROJECT = os.path.dirname(HERE)
@@ -43,13 +52,12 @@ BLEND = os.path.join(HERE, 'GAGATE_A.blend')
 BUILD_END = 48
 OPEN_END = 30
 FOOTING = 0.025
-SILL = 0.07             # top of the sill
-POST_X = 1.27           # the posts' middle
-POST_HALF = 0.2         # half a post's length (along x)
-GATE_HALF = 1.06        # half the gate's length
-GATE_TOP = 0.5
-GATE_BASE = 0.12        # half the gate's thickness at the sill …
-GATE_RIDGE = 0.035      # … and at its top
+SILL = 0.06             # top of the sill
+GATE_HALF = 1.34        # half the gate's length
+GATE_TOP = 0.74
+GATE_BASE = 0.1         # half the gate's thickness at the sill …
+GATE_RIDGE = 0.03       # … and at its top
+LAMP_X = 1.43           # the lamps on the sill, beyond the gate's ends
 
 box, cylinder, beam, srgb = kit.box, kit.cylinder, kit.beam, kit.srgb
 
@@ -63,34 +71,14 @@ def camo(obj, root):
 
 def sill(m, root):
     """Footing and camouflaged sill with the dark slot the gate sinks into."""
-    footing = box('Footing', m['concrete_dark'], (3.0, 0.62, FOOTING), (0, 0, FOOTING / 2), bevel=0.006)
-    body = camo(kit.frustum('Sill', m['sand'], (2.96, 0.56), (2.9, 0.48), SILL - FOOTING, (0, 0, FOOTING), bevel=0.01), root)
+    footing = box('Footing', m['concrete_dark'], (3.0, 0.7, FOOTING), (0, 0, FOOTING / 2), bevel=0.006)
+    body = camo(kit.frustum('Sill', m['sand'], (2.98, 0.64), (2.94, 0.58), SILL - FOOTING, (0, 0, FOOTING), bevel=0.01), root)
     slot = [
         box('Slot', m['dark'], (2 * GATE_HALF + 0.02, 2 * GATE_BASE + 0.02, 0.006), (0, 0, SILL + 0.001), bevel=0),
         *[box(f'SlotLip{s}', m['steel'], (2 * GATE_HALF + 0.04, 0.02, 0.012), (0, s * (GATE_BASE + 0.02), SILL + 0.004), bevel=0.003)
           for s in (-1, 1)],
     ]
     return footing, body, kit.merge('Slot', slot)
-
-
-def post(m, root, side):
-    """A sloped buttress post at one end (side ±1), origin at its foot; returns (post, lamp spot)."""
-    x = POST_X * side
-    height = 0.6
-    inner, outer = x - POST_HALF * side, x + POST_HALF * side
-    crest = inner + 0.16 * side
-    # the outer end slopes down, the inner end stands upright against the gate
-    block = camo(kit.hexahedron(f'Post{side}', m['sand'], [
-        (inner, -0.26, SILL), (outer, -0.26, SILL), (outer, 0.26, SILL), (inner, 0.26, SILL),
-        (inner, -0.16, SILL + height), (crest, -0.16, SILL + height), (crest, 0.16, SILL + height), (inner, 0.16, SILL + height),
-    ], 0.014), root)
-    trim = [
-        box(f'PostBand{side}', m['remap'], (2 * POST_HALF - 0.05, 0.53, 0.03), (x - 0.02 * side, 0, SILL + 0.12), bevel=0),
-        box(f'PostGuide{side}', m['steel'], (0.03, 0.2, GATE_TOP - SILL + 0.02), (inner - 0.01 * side, 0, (GATE_TOP + SILL) / 2), bevel=0.004),
-        box(f'PostCap{side}', m['steel_light'], (0.1, 0.34, 0.02), (inner + 0.06 * side, 0, SILL + height + 0.008), bevel=0.004),
-    ]
-    obj = kit.merge(f'PostTrim{side}', trim, (x, 0, SILL))
-    return block, obj, Vector((inner + 0.07 * side, 0, SILL + height + 0.02))
 
 
 def gate(m):
@@ -104,16 +92,16 @@ def gate(m):
         foot = Vector((0, s * (GATE_BASE + 0.006), SILL))
         top = Vector((0, s * (GATE_RIDGE + 0.006), GATE_TOP))
         # the frame: bottom, top and ends, in the house colour
-        parts.append(beam(f'FrameBottom{s}', m['remap'], foot + Vector((-GATE_HALF, 0, 0.02)), foot + Vector((GATE_HALF, 0, 0.02)), 0.04, 0.02))
-        parts.append(beam(f'FrameTop{s}', m['remap'], top + Vector((-GATE_HALF, 0, -0.02)), top + Vector((GATE_HALF, 0, -0.02)), 0.04, 0.02))
+        parts.append(beam(f'FrameBottom{s}', m['remap'], foot + Vector((-GATE_HALF, 0, 0.03)), foot + Vector((GATE_HALF, 0, 0.03)), 0.07, 0.03))
+        parts.append(beam(f'FrameTop{s}', m['remap'], top + Vector((-GATE_HALF, 0, -0.03)), top + Vector((GATE_HALF, 0, -0.03)), 0.065, 0.03))
         for e in (-1, 1):
             parts.append(beam(f'FrameEnd{s}{e}', m['remap'], foot + Vector((e * (GATE_HALF - 0.02), 0, 0)),
-                              top + Vector((e * (GATE_HALF - 0.02), 0, 0)), 0.04, 0.02))
+                              top + Vector((e * (GATE_HALF - 0.03), 0, 0)), 0.065, 0.03))
         # the bars between
-        bars = 28
+        bars = 34
         for k in range(bars):
             x = -GATE_HALF + 0.06 + k * (2 * GATE_HALF - 0.12) / (bars - 1)
-            parts.append(beam(f'Bar{s}_{k}', m['bar'], foot + Vector((x, 0, 0.04)), top + Vector((x, 0, -0.04)), 0.022, 0.012))
+            parts.append(beam(f'Bar{s}_{k}', m['bar'], foot + Vector((x, 0, 0.04)), top + Vector((x, 0, -0.04)), 0.026, 0.012))
         parts.append(beam(f'Rail{s}', m['steel'], foot.lerp(top, 0.5) + Vector((-GATE_HALF + 0.03, s * 0.006, 0)),
                           foot.lerp(top, 0.5) + Vector((GATE_HALF - 0.03, s * 0.006, 0)), 0.014, 0.014))
     parts.append(box('Ridge', m['steel'], (2 * GATE_HALF, 2 * GATE_RIDGE + 0.03, 0.02), (0, 0, GATE_TOP + 0.005), bevel=0.004))
@@ -130,7 +118,8 @@ def build():
     scene.frame_current = BUILD_END
 
     m = kit.materials()
-    m['bar'] = kit.material('GateBar', srgb('#c8bfa4'), 0.5, 0.6)
+    m['bar'] = kit.material('GateBar', srgb('#e2d3b0'), 0.55, 0.0)
+    wm = wall.materials()
     root = kit.empty('GDIGate')
     keys = kit.keys
 
@@ -140,24 +129,27 @@ def build():
         kit.parent(obj, base)
     keys(base, 'scale', {0: Vector((0.05, 1, 1)), 2: Vector((0.05, 1, 1)), 14: Vector((1.02, 1, 1)), 17: Vector((1, 1, 1))})
 
-    # ---- the posts rise
+    # ---- the wall stubs at the ends (towards neighbouring walls and towers) grow up
+    for name, side in (('ArmXP', 1), ('ArmXN', -1)):
+        stub = kit.parent(wall.arm(name, wm, (side, 0, 0), GATE_HALF + 0.005, 1.503), root)
+        keys(stub, 'scale', {0: Vector((1, 1, kit.HIDDEN)), 10: Vector((1, 1, kit.HIDDEN)), 24: Vector((1, 1, 1.05)), 28: Vector((1, 1, 1))})
+
+    # ---- two lamps on the sill beyond the gate's ends; the lights hang from the root
+    # (a parent scaled to nothing in Build spoils their keys in Idle)
     lights = []
     for i, side in enumerate((-1, 1)):
-        block, trim, spot = post(m, root, side)
-        group = kit.parent(kit.empty(f'PostGroup{i}', (POST_X * side, 0, 0)), root)
-        kit.parent(block, group)
-        kit.parent(trim, group)
-        kit.grow(group, 12 + i * 3, 12, 2)
+        spot = Vector((LAMP_X * side, -0.24, SILL))
         housing, light = kit.beacon(f'Lamp{i}', m, spot, 'amber')
-        housing = kit.parent(kit.merge(f'Lamp{i}', [housing], spot), group)
-        kit.parent(light, housing)
+        housing = kit.parent(kit.merge(f'Lamp{i}', [housing], spot), root)
+        kit.parent(light, root)
         kit.pop(housing, 40 + i * 2, 5)
         lights.append((light, kit.flashes((i * 30, 15))))
 
-    # ---- the gate comes up out of its slot
-    panel = kit.parent(kit.empty('Gate', (0, 0, SILL)), root)
+    # ---- the gate comes up out of its slot (GateRise: Build; Gate: Open)
+    rise = kit.parent(kit.empty('GateRise', (0, 0, SILL)), root)
+    panel = kit.parent(kit.empty('Gate', (0, 0, SILL)), rise)
     kit.parent(gate(m), panel)
-    keys(panel, 'scale', {0: Vector((1, 1, kit.HIDDEN)), 24: Vector((1, 1, kit.HIDDEN)), 38: Vector((1, 1, 1.04)), 42: Vector((1, 1, 1))})
+    keys(rise, 'scale', {0: Vector((1, 1, kit.HIDDEN)), 24: Vector((1, 1, kit.HIDDEN)), 38: Vector((1, 1, 1.04)), 42: Vector((1, 1, 1))})
 
     # ---- clips
     for obj in kit.collection().objects:

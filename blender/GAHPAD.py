@@ -2,8 +2,8 @@
 Tiberian Fallout – GDI helipad (GAHPAD), after Tiberian Sun.
 
 An octagonal landing deck in the desert camouflage on a dark footing (foundation 2 × 2
-cells), its sloped rim set with landing lights; on the deck a dark landing circle with
-a yellow ring and a yellow cross. At the back corner a small control booth with a
+cells), on the deck a dark landing circle with a ring in the house colour and a cross of
+light lines set with landing lights. At the back corner a small control booth with a
 window band, a beacon and an antenna, and beside it fuel tanks in the house colour on
 a cradle, joined to the deck by a hose.
 
@@ -15,9 +15,9 @@ Remap the house colour, Lamp* emissive, Glow* additive halos.
 
 Animations (glTF clips, merged from the NLA tracks of the same name)
     Build    one-shot, 2 s: the footing spreads, the deck rises, the circle is painted,
-             booth, tanks and lights come up
-    Idle     loop, 2 s: the landing lights run round the rim (twice), the booth's
-             beacon blinks
+             booth, tanks and the lamps' housings come up
+    Idle     loop, 2 s: the landing lights run out from the middle along the cross
+             (twice), the booth's beacon blinks
 
 Run headless (builds, bakes, saves the .blend, exports the GLB):
 
@@ -46,10 +46,10 @@ BLEND = os.path.join(HERE, 'GAHPAD.blend')
 
 BUILD_END = 60
 FOOTING = 0.025
-DECK = 0.1              # top of the deck: where an aircraft stands
-DECK_R = 0.86           # corner radius of the octagonal deck at the top
-CENTRE = Vector((0.12, -0.12, 0))   # the landing circle, moved off the booth's corner
-BOOTH = Vector((-0.68, 0.68, 0))
+DECK = 0.15             # top of the deck: where an aircraft stands
+DECK_R = 0.7            # corner radius of the octagonal deck at the top
+CENTRE = Vector((0.24, 0.04, 0))    # the deck and its landing circle, towards the front right
+BOOTH = Vector((-0.6, 0.64, 0))
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -65,6 +65,7 @@ def materials():
 def deck(m, root):
     """The camouflaged deck: an octagon with sloped sides (one material, baked)."""
     obj = tower.octagon('Deck', m['sand'], ((DECK_R + 0.06, 0), (DECK_R + 0.06, 0.012), (DECK_R, DECK - FOOTING)), FOOTING, 0.006)
+    obj.location = CENTRE + Vector((0, 0, FOOTING))
     obj = kit.merge('Deck', [obj])
     obj.data.materials.clear()
     obj.data.materials.append(kit.camo_material('Camo_Deck', root))
@@ -76,23 +77,18 @@ def markings(m):
     c = CENTRE + Vector((0, 0, DECK))
     parts = [
         cylinder('Circle', m['pad_dark'], 0.5, 0.006, c + Vector((0, 0, 0.003)), segments=48, bevel=0),
-        plant.lathe('Ring', m['paint'], ((0.53, 0), (0.53, 0.008), (0.47, 0.008)), c, 48),
+        plant.lathe('Ring', m['remap'], ((0.56, 0), (0.56, 0.008), (0.47, 0.008)), c, 48),
         cylinder('RingInner', m['pad_dark'], 0.47, 0.009, c + Vector((0, 0, 0.0045)), segments=48, bevel=0),
     ]
     for k, a in enumerate((0, math.pi / 2)):
-        d = Vector((math.cos(a), math.sin(a), 0)) * 0.36
-        parts.append(beam(f'Cross{k}', m['paint'], c - d + Vector((0, 0, 0.01)), c + d + Vector((0, 0, 0.01)), 0.07, 0.004))
-    # a grating ring inside the circle
-    for k in range(16):
-        a = 2 * math.pi * k / 16
-        d = Vector((math.cos(a), math.sin(a), 0))
-        parts.append(beam(f'Grate{k}', m['grating'], c + d * 0.4 + Vector((0, 0, 0.008)), c + d * 0.45 + Vector((0, 0, 0.008)), 0.03, 0.004))
+        d = Vector((math.cos(a), math.sin(a), 0)) * 0.44
+        parts.append(beam(f'Cross{k}', m['paint_white'], c - d + Vector((0, 0, 0.01)), c + d + Vector((0, 0, 0.01)), 0.022, 0.004))
     # seams of the deck plates
     flat = DECK_R * math.cos(math.pi / 8) - 0.04   # stay inside the octagon
-    for k, (along_x, at) in enumerate(((True, -0.35), (True, 0.45), (False, -0.4), (False, 0.65))):
+    for k, (along_x, at) in enumerate(((True, -0.5), (True, 0.5), (False, -0.5), (False, 0.5))):
         reach = min(flat, flat * math.sqrt(2) - abs(at))
         a, b = ((-reach, at), (reach, at)) if along_x else ((at, -reach), (at, reach))
-        parts.append(beam(f'Seam{k}', m['concrete_dark'], (*a, DECK + 0.001), (*b, DECK + 0.001), 0.012, 0.003))
+        parts.append(beam(f'Seam{k}', m['concrete_dark'], CENTRE + Vector((*a, DECK + 0.001)), CENTRE + Vector((*b, DECK + 0.001)), 0.012, 0.003))
     return kit.merge('Markings', parts, c)
 
 
@@ -124,7 +120,7 @@ def booth(m):
 
 def tanks(m):
     """Two fuel tanks in the house colour on a cradle along the back left edge."""
-    centre = Vector((-0.66, -0.05, 0))
+    centre = Vector((-0.66, 0.0, 0))
     parts = [box('Cradle', m['concrete_dark'], (0.24, 0.46, 0.04), centre + Vector((0, 0, 0.02)), bevel=0.006)]
     for k, x in enumerate((-0.06, 0.06)):
         p = centre + Vector((x, 0, 0.1))
@@ -155,11 +151,13 @@ def build():
     keys = kit.keys
 
     # ---- the footing spreads, the deck rises
-    footing = kit.parent(tower.octagon('Footing', m['concrete_dark'], ((DECK_R + 0.1, 0), (DECK_R + 0.1, FOOTING)), 0, 0.004), root)
+    footing = tower.octagon('Footing', m['concrete_dark'], ((DECK_R + 0.1, 0), (DECK_R + 0.1, FOOTING)), 0, 0.004)
+    footing.location = CENTRE
+    footing = kit.parent(kit.merge('Footing', [footing], CENTRE), root)
     keys(footing, 'scale', {0: Vector((0.05, 0.05, 1)), 2: Vector((0.05, 0.05, 1)), 14: Vector((1.02, 1.02, 1)), 17: Vector((1, 1, 1))})
     deck_group = kit.parent(kit.empty('DeckGroup'), root)
     kit.parent(deck(m, root), deck_group)
-    keys(deck_group, 'location', {0: Vector((0, 0, -0.1)), 10: Vector((0, 0, -0.1)), 24: Vector((0, 0, 0.004)), 27: Vector((0, 0, 0))})
+    keys(deck_group, 'location', {0: Vector((0, 0, -0.15)), 10: Vector((0, 0, -0.15)), 24: Vector((0, 0, 0.004)), 27: Vector((0, 0, 0))})
 
     # ---- the landing circle is painted; the pad node on it
     marks = kit.parent(markings(m), deck_group)
@@ -173,23 +171,28 @@ def build():
     fuel = kit.parent(tanks(m), root)
     kit.pop(fuel, 36, 8)
 
-    # ---- landing lights round the rim and the booth's beacon
+    # ---- landing lights along the cross and the booth's beacon; the lights hang from
+    # parents that are not scaled to nothing in Build (that spoils their Idle keys)
     lights = []
-    flat = math.cos(math.pi / 8)
-    for k in range(8):
-        a = 2 * math.pi * k / 8
-        p = Vector((math.cos(a), math.sin(a), 0)) * (DECK_R * flat - 0.05) + Vector((0, 0, DECK))
-        colour = 'green' if k % 2 else 'amber'
-        housing, light = kit.beacon(f'Rim{k}', m, p, colour)
-        housing = kit.parent(kit.merge(f'Rim{k}', [housing], p), deck_group)
-        kit.parent(light, housing)
-        kit.pop(housing, 40 + k * 2, 5)
-        # running round the rim twice a loop
-        lights.append((light, kit.flashes((k * 30 // 8, 5), (30 + k * 30 // 8, 5))))
+    housings = []
+    spots = [(0, 0.0)] + [(1 + k, r) for k in range(4) for r in (0.11, 0.21, 0.31, 0.41)]
+    for i, (arm, r) in enumerate(spots):
+        a = math.pi / 2 * (arm - 1)
+        p = CENTRE + Vector((math.cos(a), math.sin(a), 0)) * r + Vector((0, 0, DECK + 0.012))
+        housing = cylinder(f'CrossLamp{i}', m['steel'], 0.014, 0.008, p + Vector((0, 0, 0.004)), segments=10, bevel=0)
+        housings.append(housing)
+        bulb = sphere(f'CrossBulb{i}', m['lamp_amber'] if r else m['lamp_green'], 0.011, p + Vector((0, 0, 0.01)), 8)
+        halo = sphere(f'CrossHalo{i}', m['glow_amber'] if r else m['glow_green'], 0.024, p + Vector((0, 0, 0.01)), 8)
+        light = kit.parent(kit.merge(f'CrossLight{i}', [bulb, halo], p + Vector((0, 0, 0.01))), deck_group)
+        step = {0.0: 0, 0.11: 1, 0.21: 2, 0.31: 3, 0.41: 4}[r]
+        # running out from the middle twice a loop
+        lights.append((light, kit.flashes((step * 5, 6), (30 + step * 5, 6))))
+    lamps = kit.parent(kit.merge('CrossLamps', housings, CENTRE + Vector((0, 0, DECK))), deck_group)
+    kit.pop(lamps, 40, 6)
     p = BOOTH + Vector((0, 0, FOOTING + 0.33))
     housing, light = kit.beacon('Beacon', m, p, 'red')
     housing = kit.parent(kit.merge('Beacon', [housing], p), hut)
-    kit.parent(light, housing)
+    kit.parent(light, root)
     kit.pop(housing, 44, 5)
     lights.append((light, kit.flashes((0, 15))))
 

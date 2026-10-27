@@ -2,7 +2,7 @@
 Tiberian Fallout – GDI pavement (GAPAVE), after Tiberian Sun.
 
 A field of concrete plates on 4 × 4 cells (foundation 4 × 4), flat just above the
-ground: half-cell plates with bevelled edges in a few slightly different grey tones,
+ground: one plate per cell with bevelled edges in a few slightly different grey tones,
 laid on a dark bed that shows in the joints; here and there an oil stain, a patched
 plate or a drain. The field's outer edge is a kerb of darker concrete.
 
@@ -35,7 +35,7 @@ OUT = os.path.join(PROJECT, 'public', 'models', 'GAPAVE.glb')
 BLEND = os.path.join(HERE, 'GAPAVE.blend')
 
 SIZE = 4.0              # cells per side
-PLATES = 8              # plates per side (half a cell each)
+PLATES = 4              # plates per side (one per cell, like the original's tiles)
 BED = 0.012             # top of the dark bed
 TOP = 0.03              # top of the plates
 GAP = 0.012             # width of a joint
@@ -45,13 +45,13 @@ box, cylinder, srgb, material = kit.box, kit.cylinder, kit.srgb, kit.material
 
 
 def materials():
-    tones = ('#9a9c97', '#a3a59f', '#92948f', '#aaa9a1')
+    tones = ('#7f827e', '#878985', '#777a77', '#8c8b84')
     return {
         'plates': [material(f'Pave{k}', srgb(c), 0.93) for k, c in enumerate(tones)],
         'bed': material('PaveBed', srgb('#4c4c48'), 0.95),
-        'kerb': material('PaveKerb', srgb('#7c7d78'), 0.92),
-        'stain': material('PaveStain', srgb('#6a6a63'), 0.7),
-        'patch': material('PavePatch', srgb('#b4b2a8'), 0.95),
+        'kerb': material('PaveKerb', srgb('#64665f'), 0.92),
+        'stain': material('PaveStain', srgb('#585954'), 0.7),
+        'patch': material('PavePatch', srgb('#999891'), 0.95),
         'steel': material('Steel', srgb('#4a4d50'), 0.45, 0.85),
         'dark': material('Dark', srgb('#17181a'), 0.9),
     }
@@ -97,24 +97,26 @@ def build():
             mat = rng.choice(m['plates'])
             parts.append(box(f'Plate{row}_{col}', mat, (x_hi - x_lo - GAP, y_hi - y_lo - GAP, height),
                              (cx, cy, BED + height / 2), bevel=0.006))
+            # a scored line across the plate (expansion joint)
+            parts.append(box(f'Score{row}_{col}', m['bed'], (x_hi - x_lo - GAP - 0.06, 0.008, 0.002), (cx, cy, BED + height + 0.0005), bevel=0))
             roll = rng.random()
-            if roll < 0.12:    # an oil stain
-                r = rng.uniform(0.06, 0.13)
-                stain = cylinder(f'Stain{row}_{col}', m['stain'], r, 0.002, (cx + rng.uniform(-0.1, 0.1), cy + rng.uniform(-0.1, 0.1), BED + height + 0.001),
+            if roll < 0.3:    # an oil stain
+                r = rng.uniform(0.08, 0.2)
+                stain = cylinder(f'Stain{row}_{col}', m['stain'], r, 0.002, (cx + rng.uniform(-0.2, 0.2), cy + rng.uniform(-0.2, 0.2), BED + height + 0.001),
                                  segments=12, bevel=0)
                 stain.scale = (1, rng.uniform(0.5, 0.9), 1)
                 for poly in stain.data.polygons:
                     poly.use_smooth = False  # flat, not a dome
                 parts.append(stain)
-            elif roll < 0.2:   # a patched corner
+            elif roll < 0.45:  # a patched corner
                 parts.append(box(f'Patch{row}_{col}', m['patch'], (0.14, 0.12, 0.003),
-                                 (cx + rng.choice((-1, 1)) * 0.08, cy + rng.choice((-1, 1)) * 0.08, BED + height + 0.0015), bevel=0))
-            elif roll < 0.24:  # a drain
+                                 (cx + rng.choice((-1, 1)) * 0.3, cy + rng.choice((-1, 1)) * 0.3, BED + height + 0.0015), bevel=0))
+            elif roll < 0.55:  # a drain
                 parts.append(box(f'Drain{row}_{col}', m['steel'], (0.12, 0.12, 0.004), (cx, cy, BED + height + 0.002), bevel=0.002))
                 for k in range(3):
                     parts.append(box(f'DrainSlot{row}_{col}_{k}', m['dark'], (0.09, 0.012, 0.002), (cx, cy - 0.03 + k * 0.03, BED + height + 0.004), bevel=0))
         obj = kit.parent(kit.merge(f'Row{row}', parts, (0, y0, 0)), root)
-        start = 4 + row * 3
+        start = 4 + row * 5
         kit.keys(obj, 'scale', {0: Vector((1, kit.HIDDEN, kit.HIDDEN)), start: Vector((1, kit.HIDDEN, kit.HIDDEN)),
                                 start + 5: Vector((1, 1, 1.3)), start + 7: Vector((1, 1, 1))})
         kit.to_track(obj, 'Build')

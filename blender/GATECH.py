@@ -1,12 +1,13 @@
 """
 Tiberian Fallout – GDI tech center (GATECH), after Tiberian Sun.
 
-A wide, low plinth (foundation 3 × 2 cells) in two tiers with sloped, camouflaged
-sides, steel edges and dark grooves running round it, a light deck on top; louvres in
-its right end, steps in its front. On the deck at the back right the big geodesic dome:
-panels in the house colour in a frame of light struts on a steel ring. At the front
-left two tall, pointed fins in the house colour stand one behind the other on steel
-mounts, lights at their tips.
+A low plinth (foundation 3 × 2 cells), a wedge in plan – deep at the right end,
+shallow at the left, its back cut off diagonally – in two tiers with sloped,
+camouflaged sides, steel edges and dark grooves running round it, a light deck on top;
+louvres in its right end, steps in its front. On the deck at the back right the big
+geodesic dome: panels in the house colour in a frame of light struts on a steel ring.
+At the front left two tall, pointed blades in the house colour stand side by side on
+steel mounts, turned edge-on towards the viewer, lights at their tips.
 
 Materials as for the barracks (see GAPILE.py): Camo_* is the baked camouflage in a
 pale shade of the house colour, Remap the house colour, Lamp* emissive, Glow* additive.
@@ -30,7 +31,7 @@ import sys
 
 import bmesh
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -44,10 +45,12 @@ BLEND = os.path.join(HERE, 'GATECH.blend')
 BUILD_END = 74
 LOW = 0.13              # top of the lower tier
 DECK = 0.27             # top of the plinth
-OUTLINE = gb.chamfered(-1.47, -0.97, 1.47, 0.97, 0.12)
-DOME = Vector((0.5, 0.22, DECK))
-DOME_RADIUS = 0.6
-FINS = ((-0.78, -0.46, 0.92), (-0.5, -0.34, 0.8))   # x, y, height
+# a wedge in plan: deep at the right end, shallow at the left, the back cut off diagonally
+OUTLINE = [(-1.42, -0.95), (1.45, -0.95), (1.45, 0.88), (-0.12, 0.88), (-1.42, -0.42)]
+DOME = Vector((0.62, 0.18, DECK))
+DOME_RADIUS = 0.5
+FINS = ((-0.52, -0.68, 1.1), (-0.12, -0.68, 0.95))   # x, y, height
+FIN_TURN = 25           # the blades' turn (degrees) from facing along x: almost edge-on
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -55,7 +58,7 @@ box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere,
 def materials():
     m = kit.materials()
     m['strut'] = material('Strut', srgb('#a39065'), 0.6, 0.3)
-    m['deck'] = material('TechDeck', srgb('#c9b78c'), 0.8)
+    m['deck'] = material('TechDeck', srgb('#bba673'), 0.8)
     return m
 
 
@@ -72,10 +75,10 @@ def plinth(m, root):
              gb.slab('Deck', m['deck'], gb.offset(upper_outline, 0.06), 0.012, inset=0.01, z0=DECK - 0.001, bevel=0.003),
              gb.slab('DeckRim', m['steel_light'], gb.offset(upper_outline, 0.045), 0.008, z0=DECK - 0.004, bevel=0)]
     # dark grooves round the tiers (on the front and right faces, where they are seen)
-    x0, y0, x1, y1 = -1.47, -0.97, 1.47, 0.97
+    x0, y0, x1, y1 = -1.42, -0.95, 1.45, 0.88
     for k, (z, inset) in enumerate(((0.045, 0.017), (0.09, 0.034), (LOW + 0.06, 0.1), (LOW + 0.1, 0.115))):
-        parts.append(box(f'GrooveF{k}', m['dark'], (x1 - x0 - 2 * inset - 0.3, 0.01, 0.012), (0, y0 + inset, z), bevel=0))
-        parts.append(box(f'GrooveR{k}', m['dark'], (0.01, y1 - y0 - 2 * inset - 0.3, 0.012), (x1 - inset, 0, z), bevel=0))
+        parts.append(box(f'GrooveF{k}', m['dark'], (x1 - x0 - 2 * inset - 0.3, 0.01, 0.012), ((x0 + x1) / 2, y0 + inset, z), bevel=0))
+        parts.append(box(f'GrooveR{k}', m['dark'], (0.01, y1 - y0 - 2 * inset - 0.3, 0.012), (x1 - inset, (y0 + y1) / 2, z), bevel=0))
     # louvres in the right end
     for k in range(6):
         y = -0.45 + k * 0.18
@@ -89,18 +92,18 @@ def plinth(m, root):
     for k, x in enumerate((-1.2, -0.1, 0.42, 1.0)):
         parts.append(box(f'Window{k}', m['window'], (0.12, 0.012, 0.04), (x, y0 + 0.13, LOW + 0.07), bevel=0.002))
     # on the deck: panel seams, roof vents, a hatch and a short antenna mast at the back left
-    for k in range(5):
-        x = -1.0 + k * 0.42
-        parts.append(box(f'DeckSeam{k}', m['concrete_dark'], (0.01, 1.4, 0.003), (x, 0, DECK + 0.0125), bevel=0))
-    parts.append(box('DeckSeamY', m['concrete_dark'], (2.5, 0.01, 0.003), (0, -0.25, DECK + 0.0125), bevel=0))
-    for k, (x, y) in enumerate(((-0.05, -0.6), (0.95, -0.6))):
+    for k in range(3):
+        x = 0.16 + k * 0.42
+        parts.append(box(f'DeckSeam{k}', m['concrete_dark'], (0.01, 1.4, 0.003), (x, -0.03, DECK + 0.0125), bevel=0))
+    parts.append(box('DeckSeamY', m['concrete_dark'], (2.4, 0.01, 0.003), (0.05, -0.45, DECK + 0.0125), bevel=0))
+    for k, (x, y) in enumerate(((0.35, -0.7), (1.15, -0.7))):
         vent = kit.vent_block(f'Vent{k}', m, x, y)
         vent.location.z = DECK + 0.01
         parts.append(vent)
-    parts.append(box('DeckHatch', m['steel'], (0.18, 0.18, 0.02), (-0.3, 0.45, DECK + 0.02), bevel=0.004))
-    parts.append(kit.ac_unit('DeckAc', m, -1.05, 0.45))
+    parts.append(box('DeckHatch', m['steel'], (0.18, 0.18, 0.02), (-0.75, -0.3, DECK + 0.02), bevel=0.004))
+    parts.append(kit.ac_unit('DeckAc', m, -0.2, 0.55))
     parts[-1].location.z = DECK + 0.01
-    mast = Vector((-0.75, 0.62, DECK))
+    mast = Vector((-0.42, 0.3, DECK))
     parts += [box('MastFoot', m['steel'], (0.08, 0.08, 0.03), mast + Vector((0, 0, 0.015)), bevel=0.004),
               cylinder('MastPole', m['steel_light'], 0.01, 0.5, mast + Vector((0, 0, 0.25)), segments=8, bevel=0),
               beam('MastBar', m['steel'], mast + Vector((-0.07, 0, 0.38)), mast + Vector((0.07, 0, 0.38)), 0.008)]
@@ -138,7 +141,7 @@ def dome(m):
     ring = kit.merge('DomeRing', [
         cylinder('Ring', m['steel'], DOME_RADIUS + 0.05, 0.05, DOME + Vector((0, 0, 0.025)), segments=40),
         cylinder('RingBand', m['remap'], DOME_RADIUS + 0.055, 0.015, DOME + Vector((0, 0, 0.03)), segments=40, bevel=0),
-        box('Hatch', m['dark'], (0.16, 0.012, 0.14), DOME + Vector((-0.38, -0.44, 0.07)), bevel=0.003, rotation=(0, 0, math.radians(40))),
+        box('Hatch', m['dark'], (0.16, 0.012, 0.14), DOME + Vector((-0.65, -0.76, 0)) * (DOME_RADIUS + 0.056) + Vector((0, 0, 0.07)), bevel=0.003, rotation=(0, 0, math.radians(-40))),
     ], DOME)
     return body, ring
 
@@ -147,13 +150,15 @@ def fin(m, k, x, y, height):
     """A tall pointed fin in the house colour on its steel mount; origin at its foot (it
     shoots up from there)."""
     foot = Vector((x, y, DECK))
-    w = 0.11
+    w = 0.15
     profile = [(y - w, 0), (y + w, 0), (y + w * 0.7, height * 0.62), (y + 0.02, height), (y - w * 0.55, height * 0.8), (y - w * 0.9, height * 0.35)]
     blade = gb.prism(f'Fin{k}', m['remap'], [(u, DECK + 0.05 + v) for u, v in profile], x - 0.022, x + 0.022, 'X', bevel=0.004)
     parts = [blade,
              box(f'FinMount{k}', m['steel'], (0.12, 2 * w + 0.08, 0.07), foot + Vector((0, 0, 0.035)), bevel=0.008),
              beam(f'FinSpine{k}', m['steel_light'], foot + Vector((0.028, 0.0, 0.06)), foot + Vector((0.028, 0.02, height * 0.85)), 0.012)]
-    return kit.merge(f'Fin{k}', parts, foot)
+    obj = kit.merge(f'Fin{k}', parts, foot)
+    obj.rotation_euler = (0, 0, math.radians(FIN_TURN))
+    return obj
 
 
 # --------------------------------------------------------------------------- model
@@ -177,19 +182,31 @@ def build():
     body = kit.parent(body, ring)
     keys(body, 'scale', {0: Vector((H, H, H)), 28: Vector((H, H, H)), 29: Vector((1, 1, 0.05)), 44: Vector((1, 1, 1.05)), 48: Vector((1, 1, 1))})
 
+    # the lights hang from the root, not from the parts that grow out of nothing in
+    # Build (a parent scaled to nothing spoils their keys in Idle); their housings pop up
     lights = []
+
+    def lamp(name, at, colour, holder, pop_at, pattern):
+        housing, light = kit.beacon(name, m, at, colour)
+        housing = kit.parent(kit.merge(name, [housing], at), holder)
+        kit.parent(light, root)
+        kit.pop(housing, pop_at, 5)
+        lights.append((light, pattern))
+        return light
+
     for k, (x, y, height) in enumerate(FINS):
         obj = kit.parent(fin(m, k, x, y, height), base)
         kit.grow(obj, 40 + 5 * k, 10, 2)
-        gb.beacon(f'FinTip{k}', m, (x, y + 0.03, DECK + 0.05 + height * 0.97), 'red', obj, 56 + 2 * k, kit.flashes((30 * k, 6), (30 * k + 10, 6)), lights)
+        tip = Vector((x, y, 0)) + Matrix.Rotation(math.radians(FIN_TURN), 3, 'Z') @ Vector((0, 0.02, 0)) + Vector((0, 0, DECK + 0.05 + height * 0.97))
+        lamp(f'FinTip{k}', tip, 'red', obj, 56 + 2 * k, kit.flashes((30 * k, 6), (30 * k + 10, 6)))
 
     idle = []
     top = DOME + Vector((0, 0, DOME_RADIUS + 0.02))
-    beacon = gb.beacon('DomeTop', m, top, 'amber', body, 58, kit.flashes((0, 60)), lights)
-    glow = kit.parent(sphere('DomeTopGlow', m['glow_amber'], 0.07, top + Vector((0, 0, 0.03)), 10), beacon)
+    light = lamp('DomeTop', top, 'amber', body, 58, kit.flashes((0, 60)))
+    glow = kit.parent(sphere('DomeTopGlow', m['glow_amber'], 0.07, top + Vector((0, 0, 0.03)), 10), root)
     idle.append((glow, lambda o: gb.pulse(o, 0.5, 1.2, 1)))
-    for k, (x, y) in enumerate(((-1.2, -0.72), (1.2, -0.72), (1.2, 0.72))):
-        gb.beacon(f'Corner{k}', m, (x, y, DECK + 0.01), 'green' if k == 1 else 'red', base, 62 + 2 * k, kit.flashes((10 + 20 * k, 7)), lights)
+    for k, (x, y) in enumerate(((-1.2, -0.75), (1.25, -0.75), (1.25, 0.68))):
+        lamp(f'Corner{k}', (x, y, DECK + 0.01), 'green' if k == 1 else 'red', base, 62 + 2 * k, kit.flashes((10 + 20 * k, 7)))
 
     gb.clips(idle, lights)
     return len(kit.collection().objects)

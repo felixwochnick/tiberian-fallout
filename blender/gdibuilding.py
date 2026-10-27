@@ -113,8 +113,9 @@ def chamfered(x0, y0, x1, y1, cut):
 
 
 def fan(name, m, centre, radius, blades=6):
-    """A round roof fan: dark ring, hole, blades as a separate child (they turn about z);
-    returns (housing, blades)."""
+    """A round roof fan: dark ring, hole, blades as a separate object (they turn about z);
+    returns (housing, blades). Parent the blades to something that Build does not scale
+    to almost nothing (not to the housing if that pops up)."""
     centre = Vector(centre)
     housing = kit.merge(name, [
         cylinder(f'{name}Ring', m['steel'], radius + 0.025, 0.04, centre + Vector((0, 0, 0.02)), segments=24, bevel=0.004),
@@ -128,7 +129,6 @@ def fan(name, m, centre, radius, blades=6):
                     bevel=0, rotation=(math.radians(18), 0, a))
         parts.append(blade)
     spinner = kit.merge(f'{name}Blades', parts, centre + Vector((0, 0, 0.045)))
-    kit.parent(spinner, housing)
     return housing, spinner
 
 
@@ -142,12 +142,19 @@ def spin(obj, turns=1, end=None, axis=2):
 
 
 def beacon(name, m, at, colour, holder, pop_at, pattern, lights):
-    """A blinking lamp on `holder`: pops up in the Build clip at `pop_at`, blinks in
-    the Idle clip after `pattern` (frames on)."""
+    """A blinking lamp on `holder`: the housing pops up in the Build clip at `pop_at`,
+    the bulb (on its own mount, which comes up out of the holder with it) blinks in the
+    Idle clip after `pattern` (frames on). The bulb never hangs under a part that Build
+    scales to almost nothing (the glTF exporter would make it hop at the Idle loop's
+    end), so `holder` must not be scaled like that either."""
     housing, light = kit.beacon(name, m, at, colour)
     housing = kit.parent(kit.merge(name, [housing], at), holder)
-    kit.parent(light, housing)
     kit.pop(housing, pop_at, 5)
+    mount = kit.parent(kit.empty(f'{name}Mount', at), holder)
+    home = Vector(mount.location)
+    low = home - Vector((0, 0, 0.09))
+    kit.keys(mount, 'location', {0: low, pop_at: low, pop_at + 4: home + Vector((0, 0, 0.004)), pop_at + 5: home})
+    kit.parent(light, mount)
     lights.append((light, pattern))
     return housing
 

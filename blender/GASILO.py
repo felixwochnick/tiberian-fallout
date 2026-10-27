@@ -4,8 +4,8 @@ in the GDI style).
 
 A round, squat tank (foundation 2 × 2 cells): a sloped camouflaged skirt on a dark
 octagonal footing, a shallow blue-grey steel dome on it with a hatch in the middle.
-Eight jagged fins in the house colour run like lightning from the hatch over the
-dome and down the skirt to the ground, star-like. Between them, low in the skirt,
+Eight jagged fins in the house colour run like lightning from the hatch flat over the
+dome and jut out over the skirt to a point, star-like. Between them, low in the skirt,
 green windows glow with the Tiberium inside. At the front right a grey pump unit with
 pipes into the tank.
 
@@ -30,6 +30,7 @@ import math
 import os
 import sys
 
+import bmesh
 import bpy
 from mathutils import Vector
 
@@ -44,15 +45,15 @@ BLEND = os.path.join(HERE, 'GASILO.blend')
 
 BUILD_END = 66
 FOOT = 0.03
-SKIRT = ((0.86, FOOT), (0.86, FOOT + 0.05), (0.72, 0.3), (0.7, 0.31))
-DOME = ((0.7, 0.31), (0.66, 0.35), (0.52, 0.405), (0.3, 0.44), (0.12, 0.452), (0.001, 0.455))
+SKIRT = ((0.86, FOOT), (0.86, FOOT + 0.05), (0.74, 0.22), (0.72, 0.23))
+DOME = ((0.72, 0.23), (0.68, 0.27), (0.54, 0.32), (0.3, 0.35), (0.12, 0.36), (0.001, 0.362))
 FINS = 8
 FIN_ANGLE = math.pi / 8           # leaves a gap at the front right for the pump
 PUMP = Vector((0.6, -0.6, FOOT))
-# a fin's outline (radius, height): over the dome, a jag out, down the skirt to the ground
-FIN = ((0.12, 0.52), (0.5, 0.5), (0.7, 0.46), (1.0, 0.43), (0.84, 0.33), (0.99, 0.22), (0.84, 0.15), (0.93, FOOT),
-       (0.74, FOOT), (0.74, 0.1), (0.68, 0.29), (0.5, 0.39), (0.12, 0.44))
-FIN_WIDTH = 0.065
+# a fin seen from above (radius, sideways): a lightning bolt from the hatch over the
+# dome, jutting out over the skirt to a point
+FIN = ((0.1, -0.025), (0.55, -0.05), (0.5, -0.12), (1.06, 0.07), (0.63, 0.03), (0.68, 0.1), (0.1, 0.025))
+FIN_THICK = 0.035
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -84,10 +85,10 @@ def tank(m, root):
     windows = []
     for k in range(FINS):  # one window between each two fins
         a = FIN_ANGLE + (k + 0.5) * 2 * math.pi / FINS
-        r, z = 0.8, 0.15
+        r, z = 0.8, 0.14
         p = radial(a, r + 0.012, z)
-        frame = box(f'WindowFrame{k}', m['steel'], (0.06, 0.2, 0.09), p, bevel=0.006, rotation=(0, math.radians(-30), a))
-        glass = box(f'Window{k}', m['tiberium'], (0.06, 0.16, 0.06), radial(a, r + 0.02, z), bevel=0.004, rotation=(0, math.radians(-30), a))
+        frame = box(f'WindowFrame{k}', m['steel'], (0.06, 0.2, 0.09), p, bevel=0.006, rotation=(0, math.radians(-40), a))
+        glass = box(f'Window{k}', m['tiberium'], (0.06, 0.16, 0.06), radial(a, r + 0.02, z), bevel=0.004, rotation=(0, math.radians(-40), a))
         parts += [frame, glass]
         windows.append(radial(a, r + 0.06, z))
     return skirt, kit.merge('TankDetails', parts), windows
@@ -98,23 +99,48 @@ def dome(m):
     parts = [gb.lathe('Dome', m['roof'], DOME, (0, 0, 0), 48)]
     for k in range(16):
         a = k * math.pi / 8
-        parts.append(beam(f'DomeSeam{k}', m['steel'], radial(a, 0.2, 0.452), radial(a, 0.68, 0.335), 0.01, 0.006))
+        parts.append(beam(f'DomeSeam{k}', m['steel'], radial(a, 0.2, 0.358), radial(a, 0.66, 0.282), 0.01, 0.006))
     parts += [
-        cylinder('Hatch', m['steel'], 0.13, 0.05, (0, 0, 0.47), segments=24),
-        cylinder('HatchRing', m['remap'], 0.135, 0.015, (0, 0, 0.455), segments=24, bevel=0),
-        cylinder('HatchLid', m['steel_light'], 0.09, 0.02, (0, 0, 0.5), segments=24),
+        cylinder('Hatch', m['steel'], 0.13, 0.04, (0, 0, 0.375), segments=24),
+        cylinder('HatchRing', m['remap'], 0.135, 0.015, (0, 0, 0.362), segments=24, bevel=0),
+        cylinder('HatchLid', m['steel_light'], 0.09, 0.02, (0, 0, 0.4), segments=24),
     ]
     return kit.merge('DomeGroup', parts, (0, 0, SKIRT[-1][1]))
 
 
+def dome_height(r):
+    """Height of the dome's surface at radius r (on its rim and beyond: sloping on down)."""
+    for (r0, z0), (r1, z1) in zip(DOME[::-1], DOME[::-1][1:]):
+        if r0 <= r <= r1:
+            return z0 + (z1 - z0) * (r - r0) / (r1 - r0)
+    return DOME[0][1]
+
+
 def fin(m, k):
-    """One jagged fin in the house colour; origin on the axis at the dome's top (they
-    shoot out from the middle)."""
+    """One jagged fin in the house colour lying on the dome; origin on the axis at the
+    dome's top (they shoot out from the middle)."""
     a = FIN_ANGLE + k * 2 * math.pi / FINS
-    obj = gb.prism(f'Fin{k}', m['remap'], FIN, -FIN_WIDTH / 2, FIN_WIDTH / 2, 'Y', bevel=0.006)
+
+    def top(r):
+        if r <= 0.68:
+            return dome_height(r) + 0.016
+        return dome_height(0.68) + 0.016 + (0.17 - dome_height(0.68) - 0.016) * (r - 0.68) / (1.06 - 0.68)
+
+    def build(bm):
+        up = [bm.verts.new((r, t, top(r))) for r, t in FIN]
+        low = [bm.verts.new((r, t, top(r) - FIN_THICK)) for r, t in FIN]
+        bm.faces.new(up)
+        bm.faces.new(low[::-1])
+        n = len(FIN)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((low[i], low[j], up[j], up[i]))
+        bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 4])
+
+    obj = kit.finish(kit.mesh_object(f'Fin{k}', build), m['remap'], 0.005)
     obj.rotation_euler = (0, 0, a)
     kit.bake_modifiers(obj)
-    return kit.merge(f'Fin{k}', [obj], (0, 0, 0.47))
+    return kit.merge(f'Fin{k}', [obj], (0, 0, 0.38))
 
 
 def pump(m):
@@ -168,10 +194,18 @@ def build():
         glow = kit.parent(sphere(f'TiberiumGlow{k}', m['glow_green'], 0.07, at, 10), details)
         glow.scale = (0.55, 0.55, 0.55)
         idle.append((glow, lambda o, s=k: gb.pulse(o, 0.4, 0.85, 1 if s % 2 else 2)))
+    # the lights hang from parents that are not scaled to nothing in Build (that spoils
+    # their keys in Idle); only their housings pop up
     lights = []
-    gb.beacon('Top', m, (0, 0, 0.51), 'red', cap, 54, kit.flashes((0, 8), (30, 8)), lights)
-    gb.beacon('PumpLamp', m, PUMP + Vector((0, 0, 0.2)), 'amber', root, 58, kit.flashes((10, 12), (40, 12)), lights)
-    gb.beacon('Ready', m, radial(FIN_ANGLE + math.pi, 0.66, 0.36), 'green', body, 60, kit.flashes((0, 50)), lights)
+    for name, at, colour, holder, pop_at, pattern in (
+            ('Top', Vector((0, 0, 0.41)), 'red', (cap, body), 54, kit.flashes((0, 8), (30, 8))),
+            ('PumpLamp', PUMP + Vector((0, 0, 0.2)), 'amber', (root, root), 58, kit.flashes((10, 12), (40, 12))),
+            ('Ready', radial(FIN_ANGLE + math.pi, 0.62, 0.29), 'green', (body, body), 60, kit.flashes((0, 50)))):
+        housing, light = kit.beacon(name, m, at, colour)
+        housing = kit.parent(kit.merge(name, [housing], at), holder[0])
+        kit.parent(light, holder[1])
+        kit.pop(housing, pop_at, 5)
+        lights.append((light, pattern))
     gb.clips(idle, lights)
     return len(kit.collection().objects)
 
