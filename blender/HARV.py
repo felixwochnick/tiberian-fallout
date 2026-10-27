@@ -66,6 +66,7 @@ BED = (-0.19, 0.6, 0.15, 0.19)          # flat bed: front, back, bottom, top
 CONTAINER = (-0.17, 0.6, 0.19, 0.47)    # front, back, bottom, top
 SWAP = 1.35             # how far the container rolls back: all of it into the refinery
 ROUND = 0.04            # radius of the rounded top edges of the cab and the container
+SCALE = 0.85            # the whole harvester, against the walkers and Nod's vehicles
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -370,6 +371,9 @@ def build():
     body.location = still
     for w in wheels:
         w.rotation_euler = still
+    # scaled as a whole at the end (parenting keeps world sizes); the speed with it
+    root.scale = (SCALE,) * 3
+    root['walkSpeed'] = round(WALK_SPEED * SCALE, 4)
     return len(kit.collection().objects)
 
 

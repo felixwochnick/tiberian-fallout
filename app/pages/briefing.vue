@@ -11,7 +11,6 @@ const mission = found?.mission
 if (!mission) navigateTo('/menu', { replace: true })
 useHead({ title: mission ? `Tiberian Fallout – Briefing: ${mission.title}` : 'Tiberian Fallout – Briefing' })
 
-const settings = useSettings()
 const music = useMusicPlayer()
 
 function start(chosen: Mission) {
@@ -27,7 +26,7 @@ function leave() {
 // the map selection has its own music ("Map Selection", MAPS in THEME.INI), over and over
 let left = false
 onMounted(async () => {
-  music.volume.value = settings.music / 100
+  music.volume.value = volumeOf('music')
   if (!music.tracks.value.length) await music.loadTracks()
   if (left) return
   if (!music.playTheme('MAPS', true) && !music.playing.value) music.playRandom()

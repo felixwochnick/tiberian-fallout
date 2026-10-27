@@ -3,10 +3,12 @@ import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { SCROLL_DIRECTIONS, type CursorKind, type ScrollDirection } from '../input/cursor'
 import { findPath, type NavMap } from './pathfinding'
+import { Cell, LEVEL_HEIGHT, Terrain, type TerrainOptions } from './terrain'
+import { terrainGeometry } from './terrain-mesh'
 import { Unit } from './unit'
 import { Dropship, type DropshipFlight } from './dropship'
 import { CARGO_SLOTS, type CargoSlot, SLOT_STAGES, TIBERIUM_RIPE, type TiberiumCell, type TiberiumKind } from './tiberium'
-import { applyHouseColour, type Side } from './models'
+import { applyHouseColour, MODELS, type Side } from './models'
 import { Effects } from './effects'
 import { SIGN_FPS, type SignFrames, type SignKind } from './signs'
 
@@ -116,20 +118,46 @@ const NOISE = /* glsl */ `
  */
 const GroundShader = {
   vertexShader: /* glsl */ `
+    attribute float shade;
+    attribute float rock;
+    attribute float ramp;
+    varying float vRock;
+    varying float vRamp;
     varying vec2 vCell;
+    varying vec3 vNormal;
+    varying float vHeight;
+    varying float vShade;
     void main() {
       vec4 world = modelMatrix * vec4(position, 1.0);
       vCell = world.xz;
+      vHeight = world.y;
+      vShade = shade;
+      vRock = rock;
+      vRamp = ramp;
+      vNormal = normalize(mat3(modelMatrix) * normal);
       gl_Position = projectionMatrix * viewMatrix * world;
     }`,
   fragmentShader: /* glsl */ `
     varying vec2 vCell;
+    varying vec3 vNormal;
+    varying float vHeight;
+    varying float vShade;
+    varying float vRock;
+    varying float vRamp;
     uniform sampler2D tibMap;
     uniform vec4 tibRect;
     uniform float time;
+    uniform vec3 sun;
+    uniform vec4 area;
+    uniform vec2 screenRight;
+    uniform vec2 screenDown;
     ${NOISE}
     void main() {
       vec2 c = vCell;
+      // only the map (a rectangle along the screen axes)
+      float u = dot(c, screenRight);
+      float v = dot(c, screenDown);
+      if (u < area.x || u > area.y || v < area.z || v > area.w) discard;
       // dry ochre earth like Tiberian Sun's temperate ground: large lighter and darker
       // patches, fine sandy grain, scattered pebbles and a hint of dry grass here and there
       float patches = fbm(c * 0.09);
@@ -161,6 +189,57 @@ const GroundShader = {
       // grit of broken crystals
       float speck = smoothstep(0.87, 0.91, noise(c * 13.0 + 29.0)) * cover;
       earth = mix(earth, mix(vec3(0.3, 0.72, 0.24), vec3(0.25, 0.5, 0.9), blue), speck * 0.8);
+      // round the cliffs: stony ground, grey gravel and broken rock, with a ragged edge
+      float stony = smoothstep(0.3, 0.7, vRock + (fbm(c * 1.6 + 13.0) - 0.5) * 0.8);
+      vec3 gravel = mix(vec3(0.34, 0.32, 0.29), vec3(0.56, 0.53, 0.48), fbm(c * 4.0 + 3.0));
+      gravel *= 0.8 + 0.4 * grain;
+      gravel = mix(gravel, vec3(0.22, 0.21, 0.2), smoothstep(0.8, 0.86, noise(c * 7.0 + 5.0)) * 0.8);
+      earth = mix(earth, gravel, stony * 0.85);
+      // cliffs: grey rock in upright columns with dark clefts between them (like
+      // Tiberian Sun's), lighter on the rim, darker and browner towards the scree at the foot
+      vec3 n = normalize(vNormal);
+      float steep = 1.0 - smoothstep(0.55, 0.85, n.y);
+      float along = abs(n.x) > abs(n.z) ? c.y : c.x;
+      float columns = fbm(vec2(along * 5.0, vHeight * 0.6));
+      float cleft = smoothstep(0.42, 0.3, abs(fbm(vec2(along * 2.6 + 11.0, vHeight * 0.35)) - 0.5) * 3.0);
+      vec3 rock = mix(vec3(0.42, 0.41, 0.39), vec3(0.7, 0.69, 0.66), columns);
+      rock *= 0.85 + 0.25 * fbm(vec2(along * 14.0, vHeight * 3.0));
+      rock *= 1.0 - cleft * 0.45;
+      float rise = fract(vHeight / ${LEVEL_HEIGHT.toFixed(2)} + 0.001);
+      rock *= mix(0.7, 1.05, smoothstep(0.0, 0.9, rise));
+      // scree: grey-brown gravel at the foot, ragged where it meets the rock
+      vec3 scree = mix(vec3(0.27, 0.24, 0.2), vec3(0.4, 0.36, 0.3), fbm(c * 7.0 + vHeight * 9.0));
+      float screeLine = 0.12 + 0.14 * fbm(vec2(along * 3.0, 1.0));
+      rock = mix(rock, scree, smoothstep(screeLine + 0.04, screeLine - 0.04, rise) * 0.75);
+      earth = mix(earth, rock, steep);
+      // lit by the sun like the models: flat ground as before, slopes facing it brighter, the others darker
+      vec3 l = normalize(sun);
+      // on ramps and slopes the light picks out lumps and hollows of the rock (bumps in
+      // the normal from the noise's slope), large ones and fine grit
+      float relief = max(steep, smoothstep(0.15, 0.6, vRamp)) + vRock * 0.3;
+      vec2 e = vec2(0.03, 0.0);
+      vec2 coarse = vec2(fbm(c * 2.2 + e.xy) - fbm(c * 2.2 - e.xy), fbm(c * 2.2 + e.yx) - fbm(c * 2.2 - e.yx));
+      vec2 fine = vec2(noise(c * 9.0 + e.xy * 3.0) - noise(c * 9.0 - e.xy * 3.0), noise(c * 9.0 + e.yx * 3.0) - noise(c * 9.0 - e.yx * 3.0));
+      vec2 tilt = (coarse * 9.0 + fine * 2.5) * relief;
+      vec3 bumped = normalize(n - vec3(tilt.x, 0.0, tilt.y));
+      float lit = (0.45 + 0.75 * max(dot(bumped, l), 0.0)) / (0.45 + 0.75 * l.y);
+      // hollows hold shadow
+      lit *= 1.0 - 0.25 * relief * smoothstep(0.5, 0.25, fbm(c * 2.2));
+      // ramps: rough broken rock and stony earth, ridges and clefts running down the
+      // slope, ragged where they meet the ground round them
+      vec2 down = normalize(n.xz + vec2(1e-4));
+      vec2 slope = vec2(dot(c, down), dot(c, vec2(-down.y, down.x)));
+      float ridges = fbm(vec2(slope.x * 1.2, slope.y * 4.5) + 31.0);
+      vec3 rampRock = mix(vec3(0.28, 0.26, 0.23), vec3(0.55, 0.52, 0.47), ridges);
+      rampRock = mix(rampRock, vec3(0.45, 0.36, 0.25), smoothstep(0.45, 0.7, fbm(c * 1.3 + 9.0)) * 0.5);
+      rampRock *= 0.7 + 0.5 * fbm(c * 6.0 + 4.0);
+      rampRock *= 1.0 - smoothstep(0.62, 0.7, fbm(vec2(slope.x * 2.0, slope.y * 7.0) + 2.0)) * 0.45;
+      // only where it slopes: a ramp's four steps (and a terrace's slope) show as bands
+      // of broken rock with earth between them, where one step levels out into the next
+      float sloping = smoothstep(0.995, 0.94, n.y);
+      float onRamp = smoothstep(0.15, 0.45, vRamp + (fbm(c * 2.2 + 21.0) - 0.5) * 0.4) * sloping;
+      earth = mix(earth, rampRock, onRamp * 0.9);
+      earth *= lit * vShade;
       // the gloomy light of the map: darker and greyer
       earth = mix(earth, vec3(dot(earth, vec3(0.3, 0.55, 0.15))), ${GROUND_GREY.toFixed(2)}) * ${GROUND_LIGHT.toFixed(2)};
       // under the crystals the ground glows a little, pulsing slowly out of step
@@ -169,6 +248,31 @@ const GroundShader = {
       gl_FragColor = vec4(earth, 1.0);
     }`,
 }
+
+/** How much of a unit's size (half its longest side) keeps buildings off the cells round it */
+const UNIT_BLOCK_SHARE = 0.7
+
+/** How far (cells) openSpot looks for a cell to stand on */
+const OPEN_SEARCH = 6
+
+/**
+ * The postures of the vehicles that dig (see Unit.change): the clip into it, the
+ * posture's name (its idle and fire clips) and the clip out of it
+ */
+const POSTURES = {
+  /** The Tick Tank dug in, nose down, its turret out of its tail */
+  dig: { in: 'Deploy', posture: 'Deployed', out: 'Undeploy' },
+  /** The subterranean APC under the ground */
+  tunnel: { in: 'Burrow', posture: 'Underground', out: 'Surface' },
+} as const
+/** Units that dig in where they stand */
+const DIGGERS = new Set(['TTNK'])
+/** Units that go under the ground to get somewhere */
+const TUNNELLERS = new Set(['SAPC'])
+/** Farther than this (cells) the subterranean APC goes under the ground */
+const TUNNEL_MIN = 3
+/** Under the ground it is this much faster than on it */
+const TUNNEL_SPEED = 1.5
 
 export class Battlefield {
   private readonly renderer: THREE.WebGLRenderer
@@ -225,7 +329,11 @@ export class Battlefield {
   /** The cells' Tiberium stages for the ground shader (see GroundShader) */
   private readonly tiberiumGround: { texture: THREE.DataTexture, x: number, z: number, w: number, h: number }
   /** Preview of a structure being placed: its cells, green where it may go, red otherwise */
-  private placement?: { w: number, h: number, adjacent: number, preview: THREE.Group, cell?: [number, number], valid: boolean }
+  private placement?: {
+    w: number, h: number, adjacent: number, preview: THREE.Group,
+    materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial },
+    cell?: [number, number], valid: boolean,
+  }
 
   /** Everything selected: one building, or one or more units */
   selection: THREE.Object3D[] = []
@@ -237,6 +345,11 @@ export class Battlefield {
   /** Rubber band while dragging a selection box (client pixels) */
   private band?: { x0: number, y0: number, x1: number, y1: number }
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  /** The ground's height levels, cliffs and ramps (flat until shapeTerrain) */
+  terrain: Terrain
+  /** The ground's mesh and the see-through layer over it that takes the shadows */
+  private readonly ground: THREE.Mesh
+  private readonly shadowLayer: THREE.Mesh
   /** The sun: lights the models and casts their shadows, round the part of the map in view */
   private readonly sun = new THREE.DirectionalLight(SUN_LIGHT.colour, SUN_LIGHT.intensity)
 
@@ -250,13 +363,9 @@ export class Battlefield {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     container.appendChild(this.renderer.domElement)
 
-    // the ground: a rectangle along the screen axes (u right, v down), turned by the
-    // azimuth so it lies diagonally over the cell grid
+    // the map: a rectangle along the screen axes (u right, v down), lying diagonally
+    // over the cell grid; the ground is made of its cells (see shapeTerrain)
     this.bounds = { u: [0, width], v: [0, height] }
-    const geometry = new THREE.PlaneGeometry(width, height)
-    geometry.rotateX(-Math.PI / 2)
-    geometry.translate(width / 2, 0, height / 2)
-    geometry.rotateY(AZIMUTH)
     // one texel per cell over the cells the ground covers (and a free cell round them)
     const corners = [[0, 0], [width, 0], [0, height], [width, height]].map(([u, v]) => this.mapPoint(u!, v!))
     const x0 = Math.floor(Math.min(...corners.map(p => p.x))) - 1
@@ -267,19 +376,32 @@ export class Battlefield {
     texture.magFilter = texture.minFilter = THREE.LinearFilter
     texture.needsUpdate = true
     this.tiberiumGround = { texture, x: x0, z: z0, w, h }
+    this.terrain = new Terrain(x0, z0, w, h)
     const material = new THREE.ShaderMaterial({
       ...GroundShader,
-      uniforms: { tibMap: { value: texture }, tibRect: { value: new THREE.Vector4(x0, z0, w, h) }, time: { value: 0 } },
+      uniforms: {
+        tibMap: { value: texture },
+        tibRect: { value: new THREE.Vector4(x0, z0, w, h) },
+        time: { value: 0 },
+        sun: { value: SUN_DIRECTION.clone() },
+        area: { value: new THREE.Vector4(0, width, 0, height) },
+        screenRight: { value: new THREE.Vector2(this.screenRight.x, this.screenRight.z) },
+        screenDown: { value: new THREE.Vector2(this.screenDown.x, this.screenDown.z) },
+      },
     })
     this.groundTime = material.uniforms.time!
-    this.disposables.push(geometry, material, texture)
-    this.scene.add(new THREE.Mesh(geometry, material))
+    this.disposables.push(material, texture)
+    this.ground = new THREE.Mesh(this.groundGeometry(), material)
+    // the cliffs cast their shadows over the ground below them
+    this.ground.castShadow = true
+    this.scene.add(this.ground)
     // the ground shader knows no light: the shadows lie on a see-through layer over it
     const shadowMaterial = new THREE.ShadowMaterial({ opacity: 0.38, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
     this.disposables.push(shadowMaterial)
-    const shadowLayer = new THREE.Mesh(geometry, shadowMaterial)
-    shadowLayer.receiveShadow = true
-    this.scene.add(shadowLayer)
+    this.shadowLayer = new THREE.Mesh(this.ground.geometry, shadowMaterial)
+    this.shadowLayer.receiveShadow = true
+    this.scene.add(this.shadowLayer)
+    this.effects.heightAt = (x, z) => this.heightAt(x, z)
 
     // light for the models: the sun from the front left, a sky fill and shadows on the ground
     const sun = this.sun
@@ -294,6 +416,154 @@ export class Battlefield {
     this.u = (this.bounds.u[0] + this.bounds.u[1]) / 2
     this.v = (this.bounds.v[0] + this.bounds.v[1]) / 2
     this.resize()
+  }
+
+  /** The ground's mesh for the terrain: the cells on the map and a cell round it */
+  private groundGeometry() {
+    const [u0, u1] = this.bounds.u
+    const [v0, v1] = this.bounds.v
+    return terrainGeometry(this.terrain, (x, z) => {
+      const centre = new THREE.Vector3(x + 0.5, 0, z + 0.5)
+      const u = centre.dot(this.screenRight)
+      const v = centre.dot(this.screenDown)
+      return u > u0 - 1.5 && u < u1 + 1.5 && v > v0 - 1.5 && v < v1 + 1.5
+    })
+  }
+
+  /**
+   * Shapes the ground with plateaus, cliffs and ramps (Terrain.generate); the flat
+   * zones (cells) stay level. Call it before anything is put on the map.
+   */
+  shapeTerrain(options: TerrainOptions) {
+    const { x, z, w, h } = this.tiberiumGround
+    // only the ways on the map count: every part of it has to be reached on it
+    this.terrain = Terrain.generate(x, z, w, h, { inside: (cx, cz) => this.onMap(cx, cz), ...options })
+    const geometry = this.groundGeometry()
+    this.ground.geometry.dispose()
+    this.ground.geometry = geometry
+    this.shadowLayer.geometry = geometry
+    void this.placeCliffs()
+  }
+
+  /** The rock on the cliffs (CLIFF.glb), one instanced mesh per piece */
+  private cliffRock: THREE.InstancedMesh[] = []
+
+  /**
+   * Puts the rock of CLIFF.glb on the rock cells of the terrain, one piece a cell,
+   * picked by which of its corners are up: Straight (two side by side), Cut (three:
+   * the cliff runs across the cell), Foot (one: below the end of a cut); two opposite
+   * corners up get a Foot each. Variants by position. The cells beside the ramps, whose
+   * corners lie between levels, get a Straight as high as they climb, facing downhill,
+   * so the rock of the cliff runs down the ramp's sides.
+   */
+  private async placeCliffs() {
+    for (const mesh of this.cliffRock) {
+      mesh.removeFromParent()
+      mesh.dispose()
+    }
+    this.cliffRock = []
+    const terrain = this.terrain
+    const gltf = await this.loadModel(MODELS.CLIFF!, 0)
+    if (terrain !== this.terrain) return
+    const pieces = new Map<string, THREE.Matrix4[]>()
+    const variants: Record<string, number> = { Straight: 4, Cut: 3, Foot: 3 }
+    /** A piece on the cell, its own corner `from` turned to the cell's corner `to` (quadrants as ±1, ±1) */
+    const putPiece = (kind: string, x: number, z: number, level: number, height: number, from: [number, number], to: [number, number]) => {
+      const n = variants[kind]!
+      const name = `${kind}${(((x * 7 + z * 13) % n) + n) % n}`
+      const angle = Math.atan2(to[0], to[1]) - Math.atan2(from[0], from[1])
+      const matrix = new THREE.Matrix4().makeRotationY(angle).multiply(new THREE.Matrix4().makeScale(1, height, 1))
+        .setPosition(x + 0.5, level * LEVEL_HEIGHT, z + 0.5)
+      pieces.set(name, [...pieces.get(name) ?? [], matrix])
+    }
+    const [u0, u1] = this.bounds.u
+    const [v0, v1] = this.bounds.v
+    const onMap = (x: number, z: number) => {
+      const point = new THREE.Vector3(x, 0, z)
+      const u = point.dot(this.screenRight)
+      const v = point.dot(this.screenDown)
+      return u > u0 - 1 && u < u1 + 1 && v > v0 - 1 && v < v1 + 1
+    }
+    /** The corners a, b, c, d of a cell as quadrants round its middle */
+    const QUADRANTS: [number, number][] = [[-1, -1], [1, -1], [-1, 1], [1, 1]]
+    const { x0, z0, width, depth } = terrain
+    for (let z = z0 - 1; z <= z0 + depth; z++) {
+      for (let x = x0 - 1; x <= x0 + width; x++) {
+        if (terrain.cell(x, z) !== Cell.Rock || !onMap(x + 0.5, z + 0.5)) continue
+        const levels = terrain.corners(x, z)
+        const mains = [terrain.main(x, z), terrain.main(x + 1, z), terrain.main(x, z + 1), terrain.main(x + 1, z + 1)]
+        if (mains.some(l => Math.abs(l - Math.round(l)) > 1e-6)) {
+          // beside a ramp: a lower bank of rock, as high as the cell climbs, facing downhill
+          const [a, b, c, d] = levels
+          const span = Math.max(...levels) - Math.min(...levels)
+          const gx = (b + d - a - c) / 2
+          const gz = (c + d - a - b) / 2
+          if (span < 0.9 || Math.hypot(gx, gz) < 1e-3) continue
+          const n = variants.Straight!
+          const matrix = new THREE.Matrix4().makeRotationY(Math.atan2(-gx, -gz))
+            .multiply(new THREE.Matrix4().makeScale(1, span, 1))
+            .setPosition(x + 0.5, Math.min(...levels) * LEVEL_HEIGHT, z + 0.5)
+          const name = `Straight${(((x * 7 + z * 13) % n) + n) % n}`
+          pieces.set(name, [...pieces.get(name) ?? [], matrix])
+          continue
+        }
+        // which corners are up by their levels; how high the rock stands by their
+        // terraces: from the lowest corner below to the middle of the ones up
+        const lowMain = Math.min(...mains)
+        const up = mains.map(l => l > lowMain)
+        const count = up.filter(Boolean).length
+        if (count === 0) continue
+        const low = Math.min(...levels.filter((_, i) => !up[i]))
+        const top = levels.filter((_, i) => up[i]).reduce((sum, l) => sum + l, 0) / count
+        const put = (kind: string, from: [number, number], to: [number, number]) => putPiece(kind, x, z, low, top - low, from, to)
+        if (count === 2 && up[0] === up[3]) {
+          // two opposite corners up
+          up.forEach((u, i) => u && put('Foot', [-1, -1], QUADRANTS[i]!))
+        }
+        else if (count === 2) {
+          // downhill: from the side the two corners up are on to the other
+          const [i, j] = up.flatMap((u, k) => u ? [k] : [])
+          const [qx, qz] = [(QUADRANTS[i!]![0] + QUADRANTS[j!]![0]) / 2, (QUADRANTS[i!]![1] + QUADRANTS[j!]![1]) / 2]
+          put('Straight', [0, 1], [-qx, -qz])
+        }
+        else if (count === 3) {
+          put('Cut', [1, 1], QUADRANTS[up.indexOf(false)]!)
+        }
+        else {
+          put('Foot', [-1, -1], QUADRANTS[up.indexOf(true)]!)
+        }
+      }
+    }
+    for (const [name, matrices] of pieces) {
+      const source = gltf.scene.getObjectByName(name) as THREE.Mesh | undefined
+      if (!source?.isMesh) continue
+      const mesh = new THREE.InstancedMesh(source.geometry, source.material, matrices.length)
+      matrices.forEach((m, i) => mesh.setMatrixAt(i, m))
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      this.scene.add(mesh)
+      this.cliffRock.push(mesh)
+    }
+  }
+
+  /** Height of the ground at a point (cells) */
+  heightAt(x: number, z: number) {
+    return this.terrain.heightAt(x, z)
+  }
+
+  /** Where a ray from the camera meets the ground: on the plane at the height found there, refined a few times */
+  private pickGround(ray: THREE.Ray) {
+    let height = 0
+    let point: THREE.Vector3 | null = null
+    for (let i = 0; i < 6; i++) {
+      this.groundPlane.constant = -height
+      point = ray.intersectPlane(this.groundPlane, new THREE.Vector3())
+      if (!point) return undefined
+      const next = this.heightAt(point.x, point.z)
+      if (Math.abs(next - height) < 1e-3) break
+      height = next
+    }
+    return point ?? undefined
   }
 
   resize() {
@@ -420,10 +690,14 @@ export class Battlefield {
     return moved.x && moved.y ? `scroll-${direction}` : `blocked-${direction}`
   }
 
-  /** Draws a frame; `frozen` (the game is paused): everything stands still, only the picture is drawn */
-  render(frozen = false) {
+  /**
+   * Draws a frame; `frozen` (the game is paused): everything stands still, only the
+   * picture is drawn. `speed` is the game speed: units, animations and effects run
+   * that much faster or slower.
+   */
+  render(frozen = false, speed = 1) {
     const now = performance.now()
-    const seconds = frozen ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000) // no jump after a stall
+    const seconds = frozen ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000) * speed // no jump after a stall
     this.lastFrame = now
     for (const mixer of this.mixers) mixer.update(seconds)
     for (const item of this.rising) {
@@ -434,6 +708,11 @@ export class Battlefield {
     this.updateUnbuilding(seconds)
     for (const unit of this.units) {
       unit.update(seconds)
+      // on the ground, up and down the ramps (unless it is up on a refinery's pad)
+      const at = unit.object.position
+      if (!unit.object.userData.offGround) at.y = this.heightAt(at.x, at.z)
+      // earth thrown up while a vehicle digs in or comes out of the ground
+      if (seconds > 0 && unit.changingPosture && unit.object.visible) this.effects.dig(at)
       // on to the next waypoint
       const waypoints = unit.object.userData.waypoints as THREE.Vector3[] | undefined
       if (seconds > 0 && !unit.walking && waypoints?.length && !unit.object.userData.dead) this.walk(unit, waypoints.shift()!)
@@ -443,6 +722,7 @@ export class Battlefield {
       if (seconds > 0) this.engineEffects(ship.object, seconds)
     }
     this.updateDeploying(seconds)
+    this.updateTunnels(seconds)
     this.growTiberium(seconds)
     this.groundTime.value = (this.groundTime.value + seconds) % 1000
     this.effects.update(seconds, this.renderer.getDrawingBufferSize(new THREE.Vector2()).y / (this.camera.top - this.camera.bottom))
@@ -547,7 +827,7 @@ export class Battlefield {
     if (!hit) {
       // between a building's parts (its pad's edge, a gap under a pipe) the ray misses
       // the model: a click on its foundation still means the building, not the ground
-      const ground = this.raycaster.ray.intersectPlane(this.groundPlane, new THREE.Vector3())
+      const ground = this.pickGround(this.raycaster.ray)
       return ground ? this.selectables.find((object) => {
         const f = object.userData.footprint as Footprint | undefined
         return f && ground.x >= f.x && ground.x < f.x + f.w && ground.z >= f.z && ground.z < f.z + f.h
@@ -568,7 +848,7 @@ export class Battlefield {
     const rect = this.renderer.domElement.getBoundingClientRect()
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
     this.raycaster.setFromCamera(ndc, this.camera)
-    const point = this.raycaster.ray.intersectPlane(this.groundPlane, new THREE.Vector3())
+    const point = this.pickGround(this.raycaster.ray)
     if (!point) return undefined
     const u = point.dot(this.screenRight)
     const v = point.dot(this.screenDown)
@@ -1053,7 +1333,8 @@ export class Battlefield {
       const waypoints = (object.userData.waypoints ?? []) as THREE.Vector3[]
       let [x0, y0] = toScreen(object.position)
       for (const point of destination ? [destination, ...waypoints] : waypoints) {
-        const [x1, y1] = toScreen(point)
+        // on the ground there, also partway up a slope (the points of a route carry no height)
+        const [x1, y1] = toScreen(point.clone().setY(this.heightAt(point.x, point.z)))
         dashes(x0, y0, x1, y1, shift)
         segment(x1 - 6, y1, x1, y1 - 3, 2, green)
         segment(x1, y1 - 3, x1 + 6, y1, 2, green)
@@ -1142,23 +1423,42 @@ export class Battlefield {
     return point && [Math.round(point.x - w / 2), Math.round(point.z - h / 2)] as [number, number]
   }
 
-  /** Whether a foundation lies on the map, on free ground and close enough to the base */
-  canPlace(x: number, z: number, w: number, h: number, adjacent: number) {
+  /** Whether one cell can be built on: on the map, level, free of buildings, Tiberium and units (but `except`) */
+  private cellFree(cx: number, cz: number, except?: THREE.Object3D) {
     // all four corners on the map (the map is a rectangle in screen axes)
-    for (const [cx, cz] of [[x, z], [x + w, z], [x, z + h], [x + w, z + h]] as const) {
-      const corner = new THREE.Vector3(cx, 0, cz)
+    for (const [x, z] of [[cx, cz], [cx + 1, cz], [cx, cz + 1], [cx + 1, cz + 1]] as const) {
+      const corner = new THREE.Vector3(x, 0, z)
       const u = corner.dot(this.screenRight)
       const v = corner.dot(this.screenDown)
       if (u < this.bounds.u[0] || u > this.bounds.u[1] || v < this.bounds.v[0] || v > this.bounds.v[1]) return false
     }
-    const overlaps = (f: Footprint) => x < f.x + f.w && f.x < x + w && z < f.z + f.h && f.z < z + h
-    if (this.footprints.some(overlaps)) return false
-    // not on Tiberium
-    for (let cx = x; cx < x + w; cx++) {
-      for (let cz = z; cz < z + h; cz++) {
-        if (this.tiberium.has(`${cx},${cz}`)) return false
-      }
+    if (this.terrain.flatLevel(cx, cz, 1, 1) === undefined) return false
+    if (this.footprints.some(f => cx >= f.x && cx < f.x + f.w && cz >= f.z && cz < f.z + f.h)) return false
+    if (this.tiberium.has(`${cx},${cz}`)) return false
+    // a unit standing on it, own or enemy (not one in the air): as far round as it is big
+    return !this.units.some(({ object }) => {
+      if (object === except || object.userData.dead || object.userData.offGround) return false
+      const radius = ((object.userData.frameSize?.radius as number | undefined) ?? 0) * UNIT_BLOCK_SHARE
+      const at = object.position
+      const dx = Math.max(cx - at.x, 0, at.x - (cx + 1))
+      const dz = Math.max(cz - at.z, 0, at.z - (cz + 1))
+      return Math.hypot(dx, dz) < radius || (dx === 0 && dz === 0)
+    })
+  }
+
+  /**
+   * Whether a foundation lies on the map, on free ground and close enough to the base.
+   * `free` gets for each cell (x first, then z) whether it can be built on; `except` is
+   * a unit that may stand there (the MCV that unfolds there).
+   */
+  canPlace(x: number, z: number, w: number, h: number, adjacent: number, { free = [], except }: { free?: boolean[], except?: THREE.Object3D } = {}) {
+    free.length = 0
+    for (let i = 0; i < w; i++) {
+      for (let j = 0; j < h; j++) free.push(this.cellFree(x + i, z + j, except))
     }
+    if (free.includes(false)) return false
+    // all on one level: not on a ramp, not across a cliff
+    if (this.terrain.flatLevel(x, z, w, h) === undefined) return false
     // gap in cells to the nearest building of the base
     const gap = (f: Footprint) => Math.max(f.x - (x + w), x - (f.x + f.w), f.z - (z + h), z - (f.z + f.h), 0)
     // only the player's own base counts
@@ -1171,20 +1471,25 @@ export class Battlefield {
     this.cancelPlacement()
     const preview = new THREE.Group()
     const geometry = new THREE.PlaneGeometry(0.92, 0.92).rotateX(-Math.PI / 2)
-    const material = new THREE.MeshBasicMaterial({ color: 0x3cff4a, transparent: true, opacity: 0.45, depthWrite: false })
+    const material = (color: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, depthWrite: false })
+    const materials = { free: material(0xffffff), blocked: material(0xff3a2a) }
     for (let i = 0; i < w; i++) {
       for (let j = 0; j < h; j++) {
-        const cell = new THREE.Mesh(geometry, material)
+        const cell = new THREE.Mesh(geometry, materials.free)
         cell.position.set(i + 0.5, 0.02, j + 0.5)
         preview.add(cell)
       }
     }
     preview.visible = false
     this.scene.add(preview)
-    this.placement = { w, h, adjacent, preview, valid: false }
+    this.placement = { w, h, adjacent, preview, materials, valid: false }
   }
 
-  /** Moves the preview under the cursor; green if it may be placed there, red if not. */
+  /**
+   * Moves the preview under the cursor: white the cells that can be built on, red those
+   * that cannot (a unit in the way, a building, Tiberium, a slope); all red if the
+   * structure may not go there as a whole (too far from the base, across a cliff).
+   */
   updatePlacement(clientX: number, clientY: number) {
     const placement = this.placement
     if (!placement) return
@@ -1192,10 +1497,14 @@ export class Battlefield {
     placement.cell = cell
     placement.preview.visible = !!cell
     if (!cell) return
-    placement.preview.position.set(cell[0], 0, cell[1])
-    placement.valid = this.canPlace(cell[0], cell[1], placement.w, placement.h, placement.adjacent)
-    const material = (placement.preview.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial
-    material.color.set(placement.valid ? 0x3cff4a : 0xff3a2a)
+    placement.preview.position.set(cell[0], this.heightAt(cell[0] + 0.5, cell[1] + 0.5), cell[1])
+    const free: boolean[] = []
+    placement.valid = this.canPlace(cell[0], cell[1], placement.w, placement.h, placement.adjacent, { free })
+    const anyBlocked = free.includes(false)
+    placement.preview.children.forEach((child, i) => {
+      const ok = placement.valid || (anyBlocked && free[i])
+      ;(child as THREE.Mesh).material = ok ? placement.materials.free : placement.materials.blocked
+    })
   }
 
   /** Where the structure would be placed (its lower corner cell), if it may be placed there */
@@ -1208,7 +1517,8 @@ export class Battlefield {
     this.scene.remove(this.placement.preview)
     const cell = this.placement.preview.children[0] as THREE.Mesh | undefined
     cell?.geometry.dispose()
-    ;(cell?.material as THREE.Material | undefined)?.dispose()
+    this.placement.materials.free.dispose()
+    this.placement.materials.blocked.dispose()
     this.placement = undefined
   }
 
@@ -1218,7 +1528,8 @@ export class Battlefield {
    * that rises out of the ground.
    */
   async addStructure(id: string, x: number, z: number, w: number, h: number, url?: string, houseColour = 0xd8b43a, owner: Owner = 'player') {
-    const centre = new THREE.Vector3(x + w / 2, 0, z + h / 2)
+    // on its level (the foundation is flat, see canPlace)
+    const centre = new THREE.Vector3(x + w / 2, (this.terrain.flatLevel(x, z, w, h) ?? 0) * LEVEL_HEIGHT, z + h / 2)
     const footprint: Footprint = { x, z, w, h, owner, wall: WALLS.has(id) }
     this.footprints.push(footprint)
     const object = url ? await this.addBuilding(url, centre, houseColour) : this.addPlaceholder(id, centre, w, h, houseColour)
@@ -1362,7 +1673,7 @@ export class Battlefield {
   deployCell(unit: Unit): [number, number] | undefined {
     const x = Math.floor(unit.object.position.x) - 1
     const z = Math.floor(unit.object.position.z) - 1
-    return this.canPlace(x, z, 3, 3, Infinity) ? [x, z] : undefined
+    return this.canPlace(x, z, 3, 3, Infinity, { except: unit.object }) ? [x, z] : undefined
   }
 
   /**
@@ -1420,8 +1731,8 @@ export class Battlefield {
    */
   async addDropship(url: string, from: THREE.Vector3, flight: DropshipFlight, houseColour = 0xd8b43a) {
     const gltf = await this.loadModel(url, houseColour)
-    gltf.scene.position.copy(from).setY(0)
-    const ship = new Dropship(gltf.scene, gltf.animations, flight)
+    gltf.scene.position.copy(from)
+    const ship = new Dropship(gltf.scene, gltf.animations, flight, (x, z) => this.heightAt(x, z))
     ship.onGone = () => {
       this.scene.remove(gltf.scene)
       this.aircraft.splice(this.aircraft.indexOf(ship), 1)
@@ -1452,7 +1763,7 @@ export class Battlefield {
         if (/^Stage\d[ABC]$/.test(node.name) && !node.name.endsWith(variant)) others.push(node)
       })
       for (const node of others) node.removeFromParent()
-      object.position.set(x + 0.5, 0, z + 0.5)
+      object.position.set(x + 0.5, this.heightAt(x + 0.5, z + 0.5), z + 0.5)
       object.rotation.y = Math.floor(Math.random() * 4) * Math.PI / 2
       object.userData.variant = variant
       if (kind === 'blue') this.paintBlue(object)
@@ -1696,7 +2007,7 @@ export class Battlefield {
       })
       if ((mesh.material as THREE.Material[]).length === 1) mesh.material = (mesh.material as THREE.Material[])[0]!
     })
-    object.position.copy(at)
+    object.position.copy(at).setY(this.heightAt(at.x, at.z))
     object.userData.kind = 'unit' // can be picked with the selection box
     const unit = new Unit(object, gltf.animations)
     // In its first pose (a new skeleton's bone matrices are all zero, the body would
@@ -1737,27 +2048,161 @@ export class Battlefield {
    * side the walls (sandbags) of its enemies are no obstacle, it drives over them
    */
   private free(x: number, z: number, crusher?: Owner) {
-    const centre = new THREE.Vector3(x + 0.5, 0, z + 0.5)
-    const u = centre.dot(this.screenRight)
-    const v = centre.dot(this.screenDown)
-    if (u < this.bounds.u[0] || u > this.bounds.u[1] || v < this.bounds.v[0] || v > this.bounds.v[1]) return false
+    if (!this.onMap(x, z)) return false
     return !this.footprints.some(f => x >= f.x && x < f.x + f.w && z >= f.z && z < f.z + f.h
       && !(crusher && f.wall && f.owner !== crusher))
   }
 
-  /** The map for pathfinding: cells on the map and not under a building */
-  readonly nav: NavMap = { free: (x, z) => this.free(x, z) }
+  /**
+   * Where a unit can stand at or near `at`: the point itself if its cell is on the map,
+   * free and not rock (a cliff; `flat`: flat ground, no slope or ramp either), else the
+   * middle of the nearest such cell (up to OPEN_SEARCH cells away)
+   */
+  openSpot(at: THREE.Vector3, flat = false) {
+    const open = (x: number, z: number) => this.free(x, z) && (flat ? this.terrain.cell(x, z) === Cell.Flat : this.terrain.cell(x, z) !== Cell.Rock)
+    const x0 = Math.floor(at.x)
+    const z0 = Math.floor(at.z)
+    if (open(x0, z0)) return at.clone()
+    for (let r = 1; r <= OPEN_SEARCH; r++) {
+      let best: THREE.Vector3 | undefined
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r || !open(x0 + dx, z0 + dz)) continue
+          const spot = new THREE.Vector3(x0 + dx + 0.5, 0, z0 + dz + 0.5)
+          if (!best || spot.distanceToSquared(at) < best.distanceToSquared(at)) best = spot
+        }
+      }
+      if (best) return best
+    }
+    return at.clone()
+  }
+
+  /** Whether a cell's middle is on the map */
+  private onMap(x: number, z: number) {
+    const centre = new THREE.Vector3(x + 0.5, 0, z + 0.5)
+    const u = centre.dot(this.screenRight)
+    const v = centre.dot(this.screenDown)
+    return u >= this.bounds.u[0] && u <= this.bounds.u[1] && v >= this.bounds.v[0] && v <= this.bounds.v[1]
+  }
+
+  /** Whether one can step from a cell to its neighbour: not over a cliff or up a ramp's side */
+  private readonly step = (x: number, z: number, dx: number, dz: number) => this.terrain.passable(x, z, dx, dz)
+
+  /** The map for pathfinding: cells on the map and not under a building, steps not over cliffs */
+  readonly nav: NavMap = { free: (x, z) => this.free(x, z), step: this.step }
 
   /** The map for one unit's way: a crusher's leads over enemy walls */
   navFor(object: THREE.Object3D): NavMap {
     if (!this.crusher(object)) return this.nav
     const owner = (object.userData.owner ?? 'player') as Owner
-    return { free: (x, z) => this.free(x, z, owner) }
+    return { free: (x, z) => this.free(x, z, owner), step: this.step }
   }
 
   /** Sends a unit to a point on the shortest way round the buildings. */
   walk(unit: Unit, to: THREE.Vector3) {
-    unit.followPath(findPath(this.navFor(unit.object), unit.object.position, to))
+    const object = unit.object
+    // under the ground: on to the new place
+    const tunnel = this.tunnels.find(t => t.unit === unit)
+    if (tunnel) {
+      // coming up already: from there
+      if (tunnel.phase === 'up') tunnel.next = to
+      else tunnel.to = this.openSpot(to, true)
+      return
+    }
+    // dug in: out of the ground first
+    if (unit.posture === POSTURES.dig.posture || unit.changingPosture) {
+      void unit.change(POSTURES.dig.out, undefined).then(() => {
+        if (!object.userData.dead) this.walk(unit, to)
+      })
+      return
+    }
+    // the subterranean APC goes far under the ground, where the ground lets it dig
+    if (TUNNELLERS.has(object.userData.id) && object.position.distanceTo(to) > TUNNEL_MIN && this.canDig(object.position)) {
+      this.burrow(unit, to)
+      return
+    }
+    unit.followPath(findPath(this.navFor(object), object.position, to))
+  }
+
+  /** Units under the ground (the subterranean APC): where they come up again */
+  private readonly tunnels: { unit: Unit, to: THREE.Vector3, phase: 'down' | 'moving' | 'up', next?: THREE.Vector3 }[] = []
+
+  /**
+   * Whether a vehicle can dig in (or into the ground) at a point: its cell is flat, on
+   * the map and free – not on a slope, a ramp or a cliff
+   */
+  canDig(at: THREE.Vector3) {
+    const x = Math.floor(at.x)
+    const z = Math.floor(at.z)
+    return this.free(x, z) && this.terrain.cell(x, z) === Cell.Flat
+  }
+
+  /** Whether a unit digs in where it stands (the Tick Tank, clip Deploy) */
+  static digsIn(object: THREE.Object3D) {
+    return DIGGERS.has(object.userData.id)
+  }
+
+  /**
+   * A Tick Tank digs in where it stands (or comes out again, if it is dug in): it
+   * stands nose down in the ground, its turret out of its tail. Returns false if the
+   * ground there does not let it (a slope, a ramp).
+   */
+  toggleDigIn(unit: Unit) {
+    if (!Battlefield.digsIn(unit.object) || unit.changingPosture) return false
+    if (unit.posture === POSTURES.dig.posture) {
+      void unit.change(POSTURES.dig.out, undefined)
+      return true
+    }
+    if (!this.canDig(unit.object.position)) return false
+    unit.stop()
+    void unit.change(POSTURES.dig.in, POSTURES.dig.posture)
+    return true
+  }
+
+  /**
+   * The subterranean APC digs straight down where it stands, goes under the ground in
+   * a straight line to the flat cell nearest `to` and comes up there.
+   */
+  private burrow(unit: Unit, to: THREE.Vector3) {
+    const object = unit.object
+    const tunnel: (typeof this.tunnels)[number] = { unit, to: this.openSpot(to, true), phase: 'down' }
+    this.tunnels.push(tunnel)
+    void unit.change(POSTURES.tunnel.in, POSTURES.tunnel.posture).then(() => {
+      if (object.userData.dead) return
+      // out of sight and out of reach
+      object.userData.underground = true
+      object.visible = false
+      tunnel.phase = 'moving'
+    })
+  }
+
+  private updateTunnels(seconds: number) {
+    for (const tunnel of [...this.tunnels]) {
+      const { unit } = tunnel
+      const object = unit.object
+      if (object.userData.dead) {
+        this.tunnels.splice(this.tunnels.indexOf(tunnel), 1)
+        continue
+      }
+      if (tunnel.phase !== 'moving') continue
+      const way = tunnel.to.clone().sub(object.position).setY(0)
+      const step = unit.speed * TUNNEL_SPEED * seconds
+      if (way.length() > step) {
+        object.position.addScaledVector(way.normalize(), step)
+        object.rotation.y = Math.atan2(way.x, way.z)
+        continue
+      }
+      // there: up again
+      object.position.x = tunnel.to.x
+      object.position.z = tunnel.to.z
+      tunnel.phase = 'up'
+      object.visible = true
+      void unit.change(POSTURES.tunnel.out, undefined).then(() => {
+        object.userData.underground = false
+        this.tunnels.splice(this.tunnels.indexOf(tunnel), 1)
+        if (tunnel.next && !object.userData.dead) this.walk(unit, tunnel.next)
+      })
+    }
   }
 
   /** All buildings on the map */

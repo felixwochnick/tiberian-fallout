@@ -20,7 +20,8 @@ export default defineNuxtConfig({
         { name: 'theme-color', content: '#000000' },
       ],
       link: [
-        { rel: 'icon', href: '/favicon.ico' },
+        { rel: 'icon', href: '/favicon.ico', sizes: '48x48' },
+        { rel: 'icon', href: '/icon.svg', type: 'image/svg+xml' },
         { rel: 'apple-touch-icon', href: '/apple-touch-icon-180x180.png' },
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },

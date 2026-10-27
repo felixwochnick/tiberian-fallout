@@ -2,6 +2,8 @@
 import { createSkirmish } from '~/composables/useSkirmish'
 import type { Field } from '~/lib/game/field'
 import { MODELS } from '~/lib/game/models'
+import type * as THREE from 'three'
+import type { FlatZone } from '~/lib/game/terrain'
 import { tiberiumField } from '~/lib/game/tiberium'
 
 /**
@@ -42,6 +44,17 @@ function start({ battlefield, addUnit }: Field) {
   const [mapW, mapH] = battlefield.mapSize
   const field = battlefield.mapPoint(mapW / 2 + TIBERIUM_OFFSET[0], mapH / 2 + TIBERIUM_OFFSET[1])
   const blueField = battlefield.mapPoint(mapW / 2 + BLUE_TIBERIUM_OFFSET[0], mapH / 2 + BLUE_TIBERIUM_OFFSET[1])
+  const spots = settings.players.filter(p => p.ai !== null).map((_, i) => {
+    const [fu, fv] = START_SPOTS[i % START_SPOTS.length]!
+    return battlefield.mapPoint(fu * mapW, fv * mapH).round()
+  })
+  // a new landscape every game; level round every start and the Tiberium fields
+  const around = (at: THREE.Vector3, r: number): FlatZone => ({ x: Math.floor(at.x) - r, z: Math.floor(at.z) - r, w: 2 * r + 1, h: 2 * r + 1 })
+  battlefield.shapeTerrain({
+    seed: Math.floor(Math.random() * 2 ** 31),
+    flat: [around(battlefield.centre, 6), ...spots.map(spot => around(spot, 6)),
+      around(field, TIBERIUM_RADIUS + 1), around(blueField, Math.ceil(BLUE_TIBERIUM_RADIUS) + 1)],
+  })
   battlefield.addTiberium(MODELS.TIB!, [
     ...tiberiumField(Math.floor(field.x), Math.floor(field.z), TIBERIUM_RADIUS),
     ...tiberiumField(Math.floor(blueField.x), Math.floor(blueField.z), BLUE_TIBERIUM_RADIUS, 'blue'),
@@ -49,8 +62,7 @@ function start({ battlefield, addUnit }: Field) {
   addUnit('MCV', battlefield.centre.clone().round(), houseColour(human.value), 'player', human.value?.side)
     .catch(error => console.error('MCV konnte nicht geladen werden', error))
   settings.players.filter(p => p.ai !== null).forEach((player, i) => {
-    const [fu, fv] = START_SPOTS[i % START_SPOTS.length]!
-    const spot = battlefield.mapPoint(fu * mapW, fv * mapH).round()
+    const spot = spots[i]!
     addUnit('MCV', spot, houseColour(player), 'enemy', player.side)
       .then((mcv) => { mcv.userData.player = player.name })
       .catch(error => console.error('MCV konnte nicht geladen werden', error))

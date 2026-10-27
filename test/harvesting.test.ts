@@ -40,6 +40,7 @@ it('harvests, docks, unloads and goes back to work', () => {
       return true
     },
     walk(unit: Unit, to: THREE.Vector3) { unit.walkTo(to) },
+    heightAt: () => 0,
     structuresOf: () => [refinery],
     effects: { exhaust() {}, harvestDust() {} },
   }

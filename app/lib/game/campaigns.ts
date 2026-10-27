@@ -12,6 +12,8 @@ export interface MissionContext {
   base: THREE.Vector3
   /** Puts an enemy soldier (Nod) on the map, `at` in cells from the base */
   spawnEnemy: (id: string, dx: number, dz: number) => Promise<THREE.Object3D>
+  /** A unit that can dig in (the Tick Tank) does so where it stands, if the ground lets it */
+  digIn: (object: THREE.Object3D) => void
   /** Sends enemies towards a point (cells from the base), fighting on the way */
   attackMove: (objects: THREE.Object3D[], dx: number, dz: number) => void
   /** EVA */
@@ -72,15 +74,19 @@ export interface Campaign {
   missions: Mission[]
 }
 
-/** A wave of Nod soldiers: appears at `at` (cells from the base), waits `delay` seconds, then attacks the base */
+/**
+ * A wave of Nod soldiers (and vehicles, RULES.INI ids): appears at `at` (cells from
+ * the base), waits `delay` seconds, then attacks the base
+ */
 interface Wave {
   delay: number
   at: [number, number]
   soldiers: number
+  vehicles?: string[]
 }
 
-/** Nod soldiers that stand about on the map (cells from the base) until they are found */
-type Garrison = [dx: number, dz: number, soldiers: number]
+/** Nod soldiers (and vehicles) that stand about on the map (cells from the base) until they are found */
+type Garrison = [dx: number, dz: number, soldiers: number, vehicles?: string[]]
 
 interface NodForces {
   garrisons: Garrison[]
@@ -96,10 +102,17 @@ interface NodForces {
 /** Every third soldier of a squad carries a rocket launcher (E3), the others rifles (E1) */
 const ROCKET_EVERY = 3
 
-/** A few soldiers close together, in rows of three */
-function squad(context: MissionContext, [x, z]: [number, number], soldiers: number) {
-  return Promise.all(Array.from({ length: soldiers }, (_, i) =>
-    context.spawnEnemy(i % ROCKET_EVERY === ROCKET_EVERY - 1 ? 'E3' : 'E1', x + (i % 3) * 0.7, z + Math.floor(i / 3) * 0.7)))
+/** Cells between the vehicles of a squad */
+const VEHICLE_SPACING = 1.2
+
+/** A few soldiers close together, in rows of three, and the vehicles in a row behind them */
+function squad(context: MissionContext, [x, z]: [number, number], soldiers: number, vehicles: string[] = []) {
+  const behind = z + Math.ceil(soldiers / 3) * 0.7 + 0.6
+  return Promise.all([
+    ...Array.from({ length: soldiers }, (_, i) =>
+      context.spawnEnemy(i % ROCKET_EVERY === ROCKET_EVERY - 1 ? 'E3' : 'E1', x + (i % 3) * 0.7, z + Math.floor(i / 3) * 0.7)),
+    ...vehicles.map((id, i) => context.spawnEnemy(id, x + i * VEHICLE_SPACING, behind)),
+  ])
 }
 
 /**
@@ -111,9 +124,10 @@ function fightNod(context: MissionContext, { garrisons, waves, begin, hints = []
   let time = 0
   let next = 0
   let arrived = 0
-  for (const [x, z, soldiers] of garrisons) squad(context, [x, z], soldiers)
+  // the garrisons' Tick Tanks dig in where they stand
+  for (const [x, z, soldiers, vehicles] of garrisons) void squad(context, [x, z], soldiers, vehicles).then(units => units.forEach(context.digIn))
   // the waves appear in the distance a little before they set off
-  const pending = waves.map(wave => squad(context, wave.at, wave.soldiers).finally(() => arrived++))
+  const pending = waves.map(wave => squad(context, wave.at, wave.soldiers, wave.vehicles).finally(() => arrived++))
 
   return (seconds: number): MissionResult => {
     if (time === 0) {
@@ -218,7 +232,7 @@ const bridgeheadMission: Mission = {
   briefing: [
     'Kommandant, wir errichten einen Brückenkopf in Utah, mitten im Gebiet der Bruderschaft.',
     'Ein Dropship bringt Ihnen ein MCV, ein zweites zwei Wolverines und zwei Titans. Errichten Sie mit dem MCV einen Bauhof und bauen Sie die Basis aus.',
-    'Nod wird nicht lange auf sich warten lassen. Vernichten Sie alle Nod-Truppen im Gebiet.',
+    'Nod wird nicht lange auf sich warten lassen. Unsere Aufklärung meldet neben Infanterie auch Buggys, Angriffsmotorräder, Tick Tanks und einen Untergrund-Truppentransporter. Vernichten Sie alle Nod-Truppen im Gebiet.',
   ],
   objectives: [
     'Mit dem MCV einen Bauhof errichten',
@@ -236,11 +250,11 @@ const bridgeheadMission: Mission = {
   tiberium: [{ at: [10, -2], radius: 4 }],
   map: DEMO_MAP,
   start: context => fightNod(context, {
-    garrisons: [[14, -11, 3], [-16, -8, 3], [-12, 15, 2], [22, 3, 3]],
+    garrisons: [[14, -11, 3, ['BGGY']], [-16, -8, 3, ['SAPC']], [-12, 15, 2, ['BIKE']], [22, 3, 3, ['TTNK']]],
     waves: [
-      { delay: 90, at: [18, 14], soldiers: 3 },
-      { delay: 170, at: [-17, 15], soldiers: 4 },
-      { delay: 250, at: [19, -13], soldiers: 4 },
+      { delay: 90, at: [18, 14], soldiers: 3, vehicles: ['BIKE', 'BIKE'] },
+      { delay: 170, at: [-17, 15], soldiers: 4, vehicles: ['BGGY', 'TTNK'] },
+      { delay: 250, at: [19, -13], soldiers: 4, vehicles: ['TTNK', 'BGGY', 'BIKE'] },
     ],
     begin(context) {
       context.hint('Wählen Sie das MCV aus und klicken Sie es noch einmal an, um den Bauhof zu errichten.')

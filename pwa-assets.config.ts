@@ -5,9 +5,10 @@ export default defineConfig({
   headLinkOptions: { preset: '2023' },
   preset: {
     ...minimal2023Preset,
-    // dark ground like the icon, so the maskable and Apple icons have no white edge
-    maskable: { ...minimal2023Preset.maskable, resizeOptions: { background: '#020604' } },
-    apple: { ...minimal2023Preset.apple, resizeOptions: { background: '#020604' } },
+    // the system rounds these itself: full size on the icon's own dark ground, so its
+    // rounded corners disappear into it (the emblem stays inside the maskable safe zone)
+    maskable: { ...minimal2023Preset.maskable, padding: 0, resizeOptions: { background: '#020604' } },
+    apple: { ...minimal2023Preset.apple, padding: 0, resizeOptions: { background: '#020604' } },
   },
   images: ['public/icon.svg'],
 })

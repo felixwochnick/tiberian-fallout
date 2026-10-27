@@ -11,7 +11,11 @@ import * as THREE from 'three'
 export interface NavMap {
   /** Whether a cell can be walked on (on the map and not under a building) */
   free: (x: number, z: number) => boolean
+  /** Whether one can step from a cell to its neighbour (dx, dz) – not over a cliff; default: yes */
+  step?: (x: number, z: number, dx: number, dz: number) => boolean
 }
+
+const canStep = (map: NavMap, x: number, z: number, dx: number, dz: number) => !map.step || map.step(x, z, dx, dz)
 
 /** Search budget, so an unreachable target cannot freeze the game */
 const MAX_NODES = 40000
@@ -87,11 +91,20 @@ function nearestFree(map: NavMap, x: number, z: number) {
 export function lineFree(map: NavMap, a: THREE.Vector3, b: THREE.Vector3) {
   const distance = Math.hypot(b.x - a.x, b.z - a.z)
   const steps = Math.max(1, Math.ceil(distance / 0.2))
-  for (let i = 1; i < steps; i++) {
+  let [cx, cz] = cell(a)
+  for (let i = 1; i <= steps; i++) {
     const t = i / steps
     const x = a.x + (b.x - a.x) * t
     const z = a.z + (b.z - a.z) * t
-    if (!map.free(Math.floor(x), Math.floor(z))) return false
+    // from cell to cell only where one can step (no cliff in between)
+    const [nx, nz] = [Math.floor(x), Math.floor(z)]
+    if (nx !== cx || nz !== cz) {
+      if (Math.abs(nx - cx) > 1 || Math.abs(nz - cz) > 1 || !canStep(map, cx, cz, nx - cx, nz - cz)) return false
+      cx = nx
+      cz = nz
+    }
+    if (i === steps) break
+    if (!map.free(nx, nz)) return false
     // keep a little distance to walls: the unit's body must not graze a corner
     for (const [ox, oz] of [[0.18, 0], [-0.18, 0], [0, 0.18], [0, -0.18]]) {
       if (!map.free(Math.floor(x + ox!), Math.floor(z + oz!))) return false
@@ -136,7 +149,7 @@ export function findPath(map: NavMap, from: THREE.Vector3, to: THREE.Vector3): T
         if (!dx && !dz) continue
         const nx = x + dx
         const nz = z + dz
-        if (!map.free(nx, nz)) continue
+        if (!map.free(nx, nz) || !canStep(map, x, z, dx, dz)) continue
         // diagonal steps may not squeeze past a blocked corner
         if (dx && dz && (!map.free(x + dx, z) || !map.free(x, z + dz))) continue
         const cost = here + (dx && dz ? Math.SQRT2 : 1)

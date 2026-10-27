@@ -64,8 +64,8 @@ const dialog = ref<Dialog>()
 // Settings of the dialogs (stored per browser, shared with the in-game menu)
 const settings = useSettings()
 watch(settings, () => {
-  if (musicGain) musicGain.gain.value = settings.music / 100
-  if (effectsGain) effectsGain.gain.value = settings.effects / 100
+  if (musicGain) musicGain.gain.value = volumeOf('music')
+  if (effectsGain) effectsGain.gain.value = volumeOf('effects')
 })
 const aiLevels = AI_LEVELS
 const speeds = SPEEDS
@@ -257,10 +257,10 @@ onMounted(async () => {
   const store = await getAssetStore()
   ctx = new AudioContext()
   musicGain = ctx.createGain()
-  musicGain.gain.value = settings.music / 100
+  musicGain.gain.value = volumeOf('music')
   musicGain.connect(ctx.destination)
   effectsGain = ctx.createGain()
-  effectsGain.gain.value = settings.effects / 100
+  effectsGain.gain.value = volumeOf('effects')
   effectsGain.connect(ctx.destination)
   ;[startupSound, menuMusic, uiSounds] = await Promise.all([
     loadStartupSound(ctx, store).catch(() => undefined),
@@ -425,12 +425,15 @@ onBeforeUnmount(() => {
         </div>
       </MenuScroll>
 
-      <MenuScroll :open="dialog === 'options'">
+      <MenuScroll :open="dialog === 'options'" scrollable>
         <h2 class="dialog-title">
           Optionen
         </h2>
+        <MetalSlider v-model="settings.master" label="Gesamtlautstärke" :display="`${settings.master} %`" @change="sound('click')" />
         <MetalSlider v-model="settings.music" label="Musik" :display="`${settings.music} %`" />
+        <MetalSlider v-model="settings.shots" label="Schüsse" :display="`${settings.shots} %`" />
         <MetalSlider v-model="settings.effects" label="Effekte" :display="`${settings.effects} %`" @change="sound('click')" />
+        <MetalSlider v-model="settings.voices" label="Stimmen" :display="`${settings.voices} %`" />
         <div class="toggle">
           <span title="Klassisch: Linksklick wählt aus und gibt Befehle, Rechtsklick wählt ab. Modern: Linksklick wählt aus, Rechtsklick gibt Befehle.">Steuerung</span>
           <button class="metal-btn" @click="sound('click'); settings.controls = settings.controls === 'modern' ? 'classic' : 'modern'">

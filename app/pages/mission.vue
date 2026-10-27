@@ -7,6 +7,8 @@ import type { Field } from '~/lib/game/field'
 import { MODELS } from '~/lib/game/models'
 import { readMovie } from '~/lib/game/movies'
 import { tiberiumField } from '~/lib/game/tiberium'
+import type { FlatZone } from '~/lib/game/terrain'
+import type { Unit } from '~/lib/game/unit'
 import { getAssetStore } from '~/lib/storage/asset-store'
 
 /**
@@ -40,6 +42,7 @@ function start(fresh: Field) {
   if (!mission) return
   field = fresh
   const [cx, cz] = [Math.round(fresh.battlefield.centre.x), Math.round(fresh.battlefield.centre.z)]
+  fresh.battlefield.shapeTerrain({ seed: seedOf(mission.id), flat: flatZones(mission, cx, cz) })
   for (const [id, dx, dz] of mission.base) fresh.buildStructure(id, cx + dx, cz + dz, false)
   for (const { at: [dx, dz], radius } of mission.tiberium ?? []) {
     fresh.battlefield.addTiberium(MODELS.TIB!, tiberiumField(cx + dx, cz + dz, radius))
@@ -48,6 +51,30 @@ function start(fresh: Field) {
   finished = false
   checkMission = mission.start(missionContext(fresh))
   if (screen.value !== 'briefing') begin()
+}
+
+/** The same map every time for a mission: its terrain's seed from its id */
+function seedOf(id: string) {
+  let seed = 7
+  for (const char of id) seed = (seed * 31 + char.charCodeAt(0)) >>> 0
+  return seed
+}
+
+/**
+ * Where the ground stays level (cells): the base with room round it (or, without one,
+ * room for the construction yard), the Tiberium fields and where the dropships land
+ */
+function flatZones(mission: Mission, cx: number, cz: number): FlatZone[] {
+  const base = mission.base.length ? mission.base : [['', -2, -2] as const, ['', 2, 2] as const]
+  const xs = base.map(([, dx]) => cx + dx)
+  const zs = base.map(([, , dz]) => cz + dz)
+  const zones: FlatZone[] = [{ x: Math.min(...xs) - 2, z: Math.min(...zs) - 2, w: Math.max(...xs) - Math.min(...xs) + 7, h: Math.max(...zs) - Math.min(...zs) + 7 }]
+  for (const { at: [dx, dz], radius } of mission.tiberium ?? []) {
+    const r = Math.ceil(radius) + 1
+    zones.push({ x: cx + dx - r, z: cz + dz - r, w: 2 * r + 1, h: 2 * r + 1 })
+  }
+  for (const { at: [dx, dz] } of mission.reinforcements ?? []) zones.push({ x: Math.floor(cx + dx) - 2, z: Math.floor(cz + dz) - 2, w: 5, h: 5 })
+  return zones
 }
 
 /** Where a dropship lands: `at` (cells) from the middle of the base */
@@ -115,11 +142,16 @@ function missionContext({ battlefield, combat, addUnit }: Field): Parameters<Mis
   return {
     base,
     async spawnEnemy(id, dx, dz) {
-      const at = base.clone().add(new THREE.Vector3(dx, 0, dz))
+      // not on a cliff or under a building: the vehicles need room as well
+      const at = battlefield.openSpot(base.clone().add(new THREE.Vector3(dx, 0, dz)))
       const object = await addUnit(id, at, NOD_RED, 'enemy', 'nod')
       const towards = base.clone().sub(at)
       object.rotation.y = Math.atan2(towards.x, towards.z)
       return object
+    },
+    digIn(object) {
+      const unit = object.userData.unit as Unit | undefined
+      if (unit && Battlefield.digsIn(object)) battlefield.toggleDigIn(unit)
     },
     attackMove(objects, dx, dz) {
       combat.attackMove(objects.filter(alive), base.clone().add(new THREE.Vector3(dx, 0, dz)))

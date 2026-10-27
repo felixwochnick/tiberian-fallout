@@ -4,11 +4,13 @@ import { type EvaSound, loadUiSounds, type UiSound } from '~/lib/menu/audio'
 import { getAssetStore } from '~/lib/storage/asset-store'
 
 /**
- * Interface sounds of the game (clicks, radar …) on one shared audio context,
- * at the volume of the "Effekte" setting. Loaded once on first use.
+ * Sounds of the game on one shared audio context, each at the volume of its kind:
+ * "Schüsse" (shots, impacts, explosions), "Effekte" (clicks, radar, building …) and
+ * "Stimmen" (EVA, the units), all times the overall volume. Loaded once on first use.
  */
+type Bus = Exclude<VolumeKind, 'music'>
 let ctx: AudioContext | undefined
-let gain: GainNode | undefined
+let buses: Record<Bus, GainNode> | undefined
 let sounds: Partial<Record<UiSound, AudioBuffer>> = {}
 let loading: Promise<void> | undefined
 let speaking: EvaSound | undefined
@@ -24,11 +26,18 @@ export function useUiSounds() {
   const settings = useSettings()
   if (!loading) {
     ctx = new AudioContext()
-    gain = ctx.createGain()
-    gain.connect(ctx.destination)
-    watch(() => settings.effects, (value) => {
-      if (gain) gain.gain.value = value / 100
-    }, { immediate: true })
+    // detached: the volumes keep following the settings after the component that first
+    // played a sound is gone
+    const scope = effectScope(true)
+    const bus = (kind: Bus) => {
+      const node = ctx!.createGain()
+      node.connect(ctx!.destination)
+      scope.run(() => watch(() => volumeOf(kind), (value) => {
+        node.gain.value = value
+      }, { immediate: true }))
+      return node
+    }
+    buses = { shots: bus('shots'), effects: bus('effects'), voices: bus('voices') }
     loading = getAssetStore()
       .then(store => loadUiSounds(ctx!, store))
       .then((loaded) => {
@@ -37,10 +46,11 @@ export function useUiSounds() {
       .catch(() => {})
   }
 
-  /** Plays an interface sound, at `volume` (0 … 1) of the effects volume */
-  function play(name: UiSound, volume = 1) {
+  /** Plays an interface sound (or an EVA message), at `volume` (0 … 1) of the volume of its kind */
+  function play(name: UiSound, volume = 1, kind: Bus = 'effects') {
     const buffer = sounds[name]
-    if (!ctx || !gain || !buffer) return undefined
+    if (!ctx || !buses || !buffer) return undefined
+    const gain = buses[kind]
     if (!held.value) ctx.resume().catch(() => {})
     const source = ctx.createBufferSource()
     source.buffer = buffer
@@ -66,7 +76,7 @@ export function useUiSounds() {
       evaQueue.push(name)
       return
     }
-    const source = play(name)
+    const source = play(name, 1, 'voices')
     if (!source) return
     speaking = name
     source.onended = () => {
@@ -83,7 +93,7 @@ export function useUiSounds() {
   async function speakNow(name: EvaSound, fallback = 3) {
     await loading
     evaQueue.length = 0
-    const source = play(name)
+    const source = play(name, 1, 'voices')
     if (!source) {
       await new Promise(resolve => setTimeout(resolve, fallback * 1000))
       return
@@ -112,11 +122,11 @@ export function useUiSounds() {
     return voiceCache.get(name)
   }
 
-  function start(buffer: AudioBuffer) {
+  function start(buffer: AudioBuffer, kind: Bus) {
     if (!held.value) ctx!.resume().catch(() => {})
     const source = ctx!.createBufferSource()
     source.buffer = buffer
-    source.connect(gain!)
+    source.connect(buses![kind])
     source.start()
     return source
   }
@@ -127,20 +137,20 @@ export function useUiSounds() {
    */
   async function respond(files: string[]) {
     const buffer = await soundFile(files)
-    if (!buffer || !gain) return
+    if (!buffer || !buses) return
     talking?.stop()
-    talking = start(buffer)
+    talking = start(buffer, 'voices')
   }
 
-  /** A sound effect from SOUNDS.MIX (shots, death cries); several may play at once */
-  async function effect(files: string[]) {
+  /** A sound from SOUNDS.MIX at the volume of its kind (shots, death cries …); several may play at once */
+  async function effect(files: string[], kind: Bus = 'effects') {
     const buffer = await soundFile(files)
-    if (buffer && gain) start(buffer)
+    if (buffer && buses) start(buffer, kind)
   }
 
-  /** The shared audio context and the effects volume, e.g. for the sound of videos */
-  function output() {
-    return ctx && gain ? { ctx, gain } : undefined
+  /** The shared audio context and the volume of a kind of sound, e.g. for the sound of videos */
+  function output(kind: Bus = 'effects') {
+    return ctx && buses ? { ctx, gain: buses[kind] } : undefined
   }
 
   /** Pauses (or resumes) all sounds of the game on this context */

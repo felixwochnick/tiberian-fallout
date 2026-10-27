@@ -23,7 +23,6 @@ const playing = shallowRef<SpeechFile>()
 /** Length in seconds, known once a file has been played */
 const durations = reactive(new Map<SpeechFile, number>())
 
-const settings = useSettings()
 let ctx: AudioContext | undefined
 let source: AudioBufferSourceNode | undefined
 
@@ -73,7 +72,7 @@ async function play(file: SpeechFile) {
   }
   durations.set(file, buffer.duration)
   const gain = ctx.createGain()
-  gain.gain.value = settings.effects / 100
+  gain.gain.value = volumeOf('voices')
   const node = ctx.createBufferSource()
   node.buffer = buffer
   node.connect(gain).connect(ctx.destination)

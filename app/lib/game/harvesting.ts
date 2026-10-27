@@ -22,8 +22,8 @@ import type { Unit } from './unit'
  * refinery (it unloads there, full or not).
  */
 
-/** The collector's middle: this far in front of the harvester's origin (cells, see blender/HARV.py) */
-const COLLECTOR = 0.66
+/** The collector's middle: this far in front of the harvester's origin (cells, see blender/HARV.py, scaled by its SCALE) */
+const COLLECTOR = 0.56
 /** Seconds to harvest one stage of a cell (one bale) */
 const HARVEST_SECONDS = 0.5
 /** Where a harvester turns before backing into the dock: this far in front of it (cells) */
@@ -36,8 +36,8 @@ const CREDIT_AT = 0.45
 const IDLE_SECONDS = 3
 /** Seconds between two puffs of dust from the collector */
 const DUST_INTERVAL = 0.04
-/** The tips of the two exhaust stacks behind the cab (cells, the harvester's own space; see blender/HARV.py) */
-const EXHAUSTS = [new THREE.Vector3(-0.21, 0.64, 0.225), new THREE.Vector3(0.21, 0.64, 0.225)]
+/** The tips of the two exhaust stacks behind the cab (cells, the harvester's own space; see blender/HARV.py, scaled by its SCALE) */
+const EXHAUSTS = [new THREE.Vector3(-0.18, 0.54, 0.19), new THREE.Vector3(0.18, 0.54, 0.19)]
 /** How far from a cell the collector may stand and still reach it (cells) */
 const REACH = 0.8
 
@@ -142,7 +142,6 @@ export class Harvesting {
   /** Off its work: out of the dock it may stand in, down from the refinery's pad */
   private takeOff(h: Harvester) {
     this.release(h)
-    h.unit.object.position.y = 0
   }
 
   update(dt: number) {
@@ -186,7 +185,8 @@ export class Harvesting {
           return
         }
         const { at, forward } = Harvesting.dock(refinery)
-        const out = at.clone().addScaledVector(forward, DOCK_APPROACH).setY(0)
+        const out = at.clone().addScaledVector(forward, DOCK_APPROACH)
+        out.y = this.battlefield.heightAt(out.x, out.z)
         unit.drive()
         if (this.moveTowards(h, out, unit.speed * dt)) {
           this.release(h)
@@ -351,11 +351,14 @@ export class Harvesting {
   /** Where the collector is now (on the ground) */
   private collector(unit: Unit) {
     const heading = unit.object.rotation.y
-    return unit.object.position.clone().setY(0).add(new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading)).multiplyScalar(COLLECTOR))
+    const at = unit.object.position.clone().add(new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading)).multiplyScalar(COLLECTOR))
+    return at.setY(this.battlefield.heightAt(at.x, at.z))
   }
 
   /** Moves the harvester straight towards `to` (also up onto the refinery's pad); true when there. */
   private moveTowards(h: Harvester, to: THREE.Vector3, step: number) {
+    // its height is its own while it docks (the battlefield no longer keeps it on the ground)
+    h.unit.object.userData.offGround = true
     const position = h.unit.object.position
     const way = to.clone().sub(position)
     const distance = way.length()
@@ -369,6 +372,7 @@ export class Harvesting {
 
   /** The dock is free again (the harvester drove out, was sent away or destroyed) */
   private release(h: Harvester) {
+    h.unit.object.userData.offGround = false
     if (h.refinery?.userData.dockedBy === h) h.refinery.userData.dockedBy = undefined
   }
 

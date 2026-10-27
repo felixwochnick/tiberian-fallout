@@ -121,15 +121,15 @@ watch(needsResume, (lost) => {
   if (lost && !dialog.value) open()
 })
 
-watch(() => settings.effects, (value) => {
-  if (effectsGain) effectsGain.gain.value = value / 100
+watch(() => volumeOf('effects'), (value) => {
+  if (effectsGain) effectsGain.gain.value = value
 })
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   ctx = new AudioContext()
   effectsGain = ctx.createGain()
-  effectsGain.gain.value = settings.effects / 100
+  effectsGain.gain.value = volumeOf('effects')
   effectsGain.connect(ctx.destination)
   uiSounds = await loadUiSounds(ctx, await getAssetStore()).catch(() => ({}))
 })
@@ -170,10 +170,11 @@ onBeforeUnmount(() => {
         </nav>
       </MenuScroll>
 
-      <MenuScroll :open="dialog === 'options'" class="esc tall">
+      <MenuScroll :open="dialog === 'options'" class="esc tall" scrollable>
         <h2 class="dialog-title">
           Optionen
         </h2>
+        <MetalSlider v-model="settings.master" label="Gesamtlautstärke" :display="`${settings.master} %`" @change="sound('click')" />
         <MetalSlider v-model="settings.music" label="Musik" :display="`${settings.music} %`" />
         <ul class="dialog-list tracks">
           <li v-if="!music.playlist.value.length">
@@ -188,7 +189,9 @@ onBeforeUnmount(() => {
             {{ track.title }}
           </li>
         </ul>
+        <MetalSlider v-model="settings.shots" label="Schüsse" :display="`${settings.shots} %`" />
         <MetalSlider v-model="settings.effects" label="Effekte" :display="`${settings.effects} %`" @change="sound('click')" />
+        <MetalSlider v-model="settings.voices" label="Stimmen" :display="`${settings.voices} %`" />
         <MetalSlider v-model="settings.speed" label="Spieltempo" :min="0" :max="6" :display="SPEEDS[settings.speed]" @change="sound('click')" />
         <MetalSlider v-model="settings.scrollSpeed" label="Scrolltempo" :min="0" :max="6" :display="SPEEDS[settings.scrollSpeed]" @change="sound('click')" />
         <div class="toggle">
@@ -269,7 +272,8 @@ onBeforeUnmount(() => {
   width: 55%;
 }
 .tracks {
-  flex: 1.4;
+  flex: none;
+  height: 22cqh;
   font-size: 2.4cqh;
 }
 </style>

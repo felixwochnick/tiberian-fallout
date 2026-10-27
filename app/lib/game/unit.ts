@@ -38,6 +38,11 @@ const DEATH_FADE = 0.08
  * Other clips of a model (the harvester's Harvest and Unload) are played on demand
  * with perform(); drive() plays the Walk clip, also backwards, while something else
  * moves the unit (the harvester backing into its refinery).
+ *
+ * Some vehicles take up a posture (the Tick Tank dug in, "Deployed"; the subterranean
+ * APC under the ground, "Underground"): change() plays the clip into it once (Deploy,
+ * Burrow …), the unit does not move meanwhile; then the clip named like the posture is
+ * its idle loop and "Fire<Posture>" its shot, until change() leads out of it again.
  */
 export class Unit {
   private readonly mixer: THREE.AnimationMixer
@@ -47,6 +52,8 @@ export class Unit {
   private readonly lying?: THREE.AnimationAction
   private readonly crawl?: THREE.AnimationAction
   private readonly shoot?: THREE.AnimationAction
+  /** The Fire clip playing now (the posture's own, or Fire) */
+  private shot?: THREE.AnimationAction
   /** The looped animation playing now */
   private current?: THREE.AnimationAction
   private target?: THREE.Vector3
@@ -55,6 +62,10 @@ export class Unit {
   private stance: Stance = 'standing'
   /** Seconds left lying down before it stands up */
   private proneTime = 0
+  /** The posture it has taken up (its own idle and fire clips), if any */
+  private postureName?: string
+  /** The clip into or out of a posture playing now, and what follows it */
+  private changing?: { action: THREE.AnimationAction, posture?: string, done: () => void, finished: Promise<void> }
   /** Ground speed in cells per second; the model's own (feet don't slide) unless given */
   readonly speed: number
 
@@ -72,10 +83,19 @@ export class Unit {
     if (this.goProne) this.goProne.clampWhenFinished = true
     this.mixer.addEventListener('finished', (event) => {
       if (this.stance === 'dead') return
-      if (event.action === this.shoot) {
-        if (this.current === this.shoot) {
+      const changing = this.changing
+      if (changing && event.action === changing.action) {
+        this.changing = undefined
+        this.postureName = changing.posture
+        this.current = undefined
+        this.fadeFrom(changing.action, this.loop)
+        changing.done()
+        return
+      }
+      if (event.action === this.shot) {
+        if (this.current === this.shot) {
           this.current = undefined
-          this.fadeFrom(this.shoot, this.loop)
+          this.fadeFrom(this.shot, this.loop)
         }
         return
       }
@@ -97,6 +117,44 @@ export class Unit {
 
   get walking() {
     return !!this.target
+  }
+
+  /** The posture it has taken up (Deployed, Underground …), if any */
+  get posture() {
+    return this.postureName
+  }
+
+  /** Whether it is changing its posture now (it cannot move or fire meanwhile) */
+  get changingPosture() {
+    return !!this.changing
+  }
+
+  /**
+   * Plays the model's clip `clip` once (Deploy, Undeploy, Burrow, Surface …) and then
+   * takes up `posture` (undefined: none, back to Idle). It stops where it is and does
+   * not move meanwhile. Resolves when it is done; at once if the model has no such clip
+   * (it just takes up the posture). The same change asked again waits for the one on.
+   */
+  change(clip: string, posture: string | undefined): Promise<void> {
+    if (this.changing) return this.changing.finished.then(() => this.postureName === posture ? undefined : this.change(clip, posture))
+    const action = this.action(clip)
+    this.target = undefined
+    this.route = []
+    if (!action || this.stance === 'dead') {
+      this.postureName = posture
+      this.play(this.loop)
+      return Promise.resolve()
+    }
+    let done!: () => void
+    const finished = new Promise<void>((resolve) => {
+      done = resolve
+    })
+    this.changing = { action, posture, done, finished }
+    action.reset()
+    action.setLoop(THREE.LoopOnce, 1)
+    action.clampWhenFinished = true
+    this.fadeTo(action)
+    return finished
   }
 
   private action(name: string) {
@@ -152,6 +210,8 @@ export class Unit {
   /** Walks along waypoints (from pathfinding), one after the other. */
   followPath(points: THREE.Vector3[]) {
     const [first, ...rest] = points
+    // dug in or changing its posture: it does not drive (see Battlefield.walk)
+    if (this.changing || this.postureName) return
     if (!first) {
       this.stop()
       return
@@ -183,8 +243,13 @@ export class Unit {
    * Returns whether it did (the model then shows its own muzzle flash).
    */
   fire() {
-    const shoot = this.shoot
-    if (!shoot || this.stance !== 'standing' || this.target) return false
+    const shoot = this.postureName ? this.action(`Fire${this.postureName}`) : this.shoot
+    if (!shoot || this.stance !== 'standing' || this.target || this.changing) return false
+    shoot.setLoop(THREE.LoopOnce, 1)
+    // it holds its last frame while the loop fades in after it: else for a moment
+    // nothing would pose the model (a dug-in Tick Tank would fall back flat)
+    shoot.clampWhenFinished = true
+    this.shot = shoot
     // straight in, no cross-fade: the flash is on the first frames
     if (this.current && this.current !== shoot) this.current.stop()
     shoot.reset().play()
@@ -241,11 +306,13 @@ export class Unit {
     const moving = this.stance === 'standing' || this.stance === 'prone'
     if (this.target && moving) {
       const position = this.object.position
-      const way = this.target.clone().sub(position)
+      // along the ground (the battlefield sets the height)
+      const way = this.target.clone().sub(position).setY(0)
       const distance = way.length()
       const step = this.speed * (this.stance === 'prone' ? CRAWL_FACTOR : 1) * seconds
       if (distance <= step) {
-        position.copy(this.target)
+        position.x = this.target.x
+        position.z = this.target.z
         // on to the next waypoint, or arrived
         const next = this.route.shift()
         if (next) this.target = next
@@ -272,6 +339,8 @@ export class Unit {
 
   /** The looped animation for the stance and whether it moves */
   private get loop() {
+    if (this.changing) return undefined // the change plays on, the loop follows when it ends
+    if (this.postureName) return this.action(this.postureName) ?? this.idle
     if (this.stance === 'prone') return this.target ? this.crawl : this.lying
     if (this.stance === 'standing') return this.target ? this.walk : this.idle
     return undefined // diving / rising: the transition plays on, the loop follows when it ends

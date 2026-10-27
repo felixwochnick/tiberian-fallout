@@ -226,7 +226,9 @@ function onMouse(event: Event) {
 
   event.stopImmediatePropagation()
   if (event.type === 'contextmenu' || event.type === 'wheel') event.preventDefault()
-  if (event.type.startsWith('pointer') || event.type === 'mouseout') return // the mouse events below stand for them
+  // the mouse events below stand for them; the right click comes from the released button
+  // (not every browser sends "contextmenu" while the mouse is locked, and only once)
+  if (event.type.startsWith('pointer') || event.type === 'mouseout' || event.type === 'contextmenu') return
 
   if (event.type === 'mousemove') {
     x = Math.min(window.innerWidth - 1, Math.max(0, x + mouse.movementX))
@@ -261,6 +263,7 @@ function onMouse(event: Event) {
   target.dispatchEvent(new MouseEvent(type, init))
 
   if (event.type === 'mouseup') {
+    if (mouse.button === 2) target.dispatchEvent(new MouseEvent('contextmenu', init))
     setPressed(undefined)
     if (slider) {
       slider.dispatchEvent(new Event('change', { bubbles: true }))

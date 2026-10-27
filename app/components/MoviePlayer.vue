@@ -18,7 +18,11 @@ onMounted(async () => {
     return
   }
   ctx = new AudioContext()
-  playback = new VqaPlayback(bytes, canvas.value, ctx, ctx.destination)
+  // mostly spoken (briefings): at the volume of the voices
+  const gain = ctx.createGain()
+  gain.gain.value = volumeOf('voices')
+  gain.connect(ctx.destination)
+  playback = new VqaPlayback(bytes, canvas.value, ctx, gain)
   info.value = `${playback.width} × ${playback.height}, ${playback.duration.toFixed(1)} s`
   playback.done.then(() => emit('ended'))
   playback.start()

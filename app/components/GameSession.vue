@@ -64,7 +64,6 @@ function restart() {
 defineExpose({ restart })
 
 // Soundtrack: every round starts with a random track, then goes on at random (unless a theme is set)
-const settings = useSettings()
 const music = useMusicPlayer()
 
 /** The map starts below the HUD's top bar */
@@ -129,8 +128,8 @@ async function startMusic() {
   if (!props.theme || !music.playTheme(props.theme, true)) music.playRandom()
 }
 
-watch(() => settings.music, (value) => {
-  music.volume.value = value / 100
+watch(() => volumeOf('music'), (value) => {
+  music.volume.value = value
 }, { immediate: true })
 
 // only once the game can be played (see DeviceGate)

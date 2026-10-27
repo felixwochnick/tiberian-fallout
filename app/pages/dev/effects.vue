@@ -32,6 +32,9 @@ const WEAPONS: Record<string, Weapon> = {
   E3: weapon('Rocket', 1, 45, 5, { projectile: { arcing: false, homing: true }, speed: 4, spread: 0.3 }),
   SMECH: weapon('Gatling', 0.5, 4, 4),
   MMCH: weapon('Cannon', 60, 50, 6, { projectile: { arcing: false, homing: false }, speed: 9, spread: 0.5 }),
+  BGGY: weapon('MachineGun', 0.5, 8, 4),
+  BIKE: weapon('BikeRocket', 1, 45, 5, { projectile: { arcing: false, homing: true }, speed: 4, spread: 0.3 }),
+  TTNK: weapon('TickCannon', 2, 50, 5, { projectile: { arcing: false, homing: false }, speed: 9, spread: 0.4 }),
 }
 const info = (object: THREE.Object3D): BuildInfo | undefined => {
   const id = object.userData.id as string
@@ -51,6 +54,7 @@ onMounted(async () => {
   const centre = field.centre.clone().floor()
   field.lookAt(centre.clone().add(new THREE.Vector3(1, 0, 1)))
   combat = markRaw(new Combat(field, info, { fire() {}, die() {} }))
+  Object.assign(window, { combat })
   harvesting = markRaw(new Harvesting(field, () => ({ capacity: () => 28, value: kind => kind === 'blue' ? 50 : 25, earn: (_, c) => credits.value += c })))
   running = true
   let last = performance.now()
@@ -84,6 +88,8 @@ onMounted(async () => {
   }
   await squad(['E1', 'E2', 'E3', 'ENGINEER', 'SMECH'], -3, 4.5, 'player', 0xd8b43a)
   await squad(['E1', 'E2', 'E3', 'ENGINEER', 'MMCH'], 1.5, 6.5, 'enemy', 0xc0302a, 'nod')
+  // Nod's vehicles, a cell and more apart (squad() packs soldiers closer)
+  for (const [i, id] of ['BGGY', 'BIKE', 'SAPC', 'TTNK'].entries()) await squad([id], 4 + (i % 2) * 1.3, 2.5 + Math.floor(i / 2) * 1.3, 'enemy', 0xc0302a, 'nod')
 
   // a dropship lands now and then
   const fly = async () => {

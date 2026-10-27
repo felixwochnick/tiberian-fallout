@@ -1,15 +1,16 @@
 <script setup lang="ts">
 /**
  * Dialog of the main menu: a translucent sheet that unrolls like a scroll
- * between two chrome pillars (and rolls up again when it closes).
+ * between two chrome pillars (and rolls up again when it closes). With
+ * `scrollable` a long content scrolls on the sheet instead of being squeezed.
  */
-defineProps<{ open: boolean }>()
+defineProps<{ open: boolean, scrollable?: boolean }>()
 </script>
 
 <template>
   <Transition name="scroll" :duration="500">
     <section v-if="open" class="scroll" @click.stop>
-      <div class="sheet">
+      <div class="sheet" :class="{ scrollable }">
         <slot />
       </div>
       <div v-for="side in ['left', 'right']" :key="side" class="pillar" :class="side" aria-hidden="true">
@@ -49,6 +50,15 @@ defineProps<{ open: boolean }>()
   border-top: 1px solid rgba(170, 230, 240, 0.55);
   border-bottom: 1px solid rgba(170, 230, 240, 0.35);
   backdrop-filter: blur(1.5px);
+}
+
+.sheet.scrollable {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(201, 242, 90, 0.7) transparent;
+}
+.sheet.scrollable > :deep(*) {
+  flex-shrink: 0;
 }
 
 /* ---- chrome pillars ---- */

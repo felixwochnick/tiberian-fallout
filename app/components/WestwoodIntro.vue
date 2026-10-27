@@ -34,7 +34,7 @@ const now = () => (ctx && ctx.state === 'running' ? ctx.currentTime : performanc
 function frame() {
   if (!running || !intro) return
   time.value = Number.isFinite(frozenAt) ? frozenAt : now() - startedAt
-  if (gain) gain.gain.value = 1 - fade(WESTWOOD_TIMELINE.soundOut)
+  if (gain) gain.gain.value = (1 - fade(WESTWOOD_TIMELINE.soundOut)) * volumeOf('effects')
   if (blackout.value < 1) intro.render(time.value) // black after the flash, only the sound goes on
   if (time.value >= WESTWOOD_TIMELINE.end) finish()
   else requestAnimationFrame(frame)

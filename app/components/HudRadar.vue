@@ -194,7 +194,8 @@ watch(open, (online) => {
 const movieCanvas = ref<HTMLCanvasElement>()
 let playback: VqaPlayback | undefined
 function startMovie(bytes: Uint8Array) {
-  const out = sounds.output()
+  // a spoken message: at the volume of the voices
+  const out = sounds.output('voices')
   if (!movieCanvas.value || !out) return
   try {
     playback = new VqaPlayback(bytes, movieCanvas.value, out.ctx, out.gain)

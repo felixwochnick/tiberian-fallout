@@ -24,6 +24,8 @@ const SCORCH_SECONDS = 12
 
 export class Effects {
   readonly particles: Particles
+  /** Height of the ground at a point (the battlefield's terrain) */
+  heightAt: (x: number, z: number) => number = () => 0
   private readonly scorches: { mesh: THREE.Mesh, time: number }[] = []
   private readonly scorchGeometry = new THREE.CircleGeometry(0.5, 20).rotateX(-Math.PI / 2)
   private readonly scorchTexture: THREE.Texture
@@ -116,7 +118,7 @@ export class Effects {
    */
   crush(at: THREE.Vector3, wall: boolean) {
     const p = this.particles
-    const ground = at.clone().setY(0.04)
+    const ground = at.clone().setY(this.heightAt(at.x, at.z) + 0.04)
     for (let i = 0; i < (wall ? 8 : 3); i++) {
       p.emit({ position: ground.clone().add(scatter(wall ? 0.25 : 0.08).setY(0)), velocity: scatter(random(0.2, 0.6), 0.6),
                life: random(0.8, 1.5), size: [wall ? 0.2 : 0.1, random(0.5, wall ? 0.9 : 0.4)], colour: [0xd8c8a0, 0xb0a080],
@@ -125,6 +127,23 @@ export class Effects {
     for (let i = 0; i < (wall ? 10 : 6); i++) {
       p.emit({ position: ground, velocity: scatter(random(0.6, 1.4), 0.7), life: random(0.4, 0.7), size: [0.045, 0.035],
                colour: wall ? [0x8a7a58, 0x6a5c40] : [0x5a1810, 0x3a100a], gravity: 5, drag: 0.5, sprite: 'smoke' })
+    }
+  }
+
+  /**
+   * A vehicle digging into or out of the ground at `at`: brown earth and clods thrown
+   * up round it, a cloud of dust; `amount` 0 … 1 for how hard (call it every frame)
+   */
+  dig(at: THREE.Vector3, amount = 1) {
+    if (Math.random() > 0.3 + 0.7 * amount) return
+    const p = this.particles
+    const ground = at.clone().setY(this.heightAt(at.x, at.z) + 0.03)
+    p.emit({ position: ground.clone().add(scatter(0.25).setY(0)), velocity: scatter(random(0.15, 0.4), 0.6), life: random(1.0, 1.8),
+             size: [0.2, random(0.6, 1.0)], colour: [0xa89070, 0x8a7458], alpha: [0.65, 0], fadeIn: 0.12, drag: 1.3, gravity: -0.06,
+             spin: random(-1, 1), sprite: 'smoke' })
+    for (let i = 0; i < 2; i++) {
+      p.emit({ position: ground.clone().add(scatter(0.15).setY(0)), velocity: scatter(random(0.6, 1.3), 0.75), life: random(0.4, 0.8),
+               size: [0.05, 0.04], colour: [0x6a5236, 0x4a3a26], gravity: 5, drag: 0.4, sprite: 'smoke' })
     }
   }
 
@@ -161,13 +180,13 @@ export class Effects {
                delay: random(0.05, 0.25), life: random(1.6, 2.8), size: [s * 0.5, s * random(1.4, 2.0)],
                colour: [0x4a4440, 0x8a8580], alpha: [0.6, 0], fadeIn: 0.15, drag: 1.2, gravity: -0.25, spin: random(-0.6, 0.6), sprite: 'smoke' })
     }
-    if (at.y < 0.6) this.scorch(at, s * 1.4)
+    if (at.y - this.heightAt(at.x, at.z) < 0.6) this.scorch(at, s * 1.4)
   }
 
   /** A dark mark on the ground where something exploded */
   scorch(at: THREE.Vector3, diameter: number) {
     const mesh = new THREE.Mesh(this.scorchGeometry, this.scorchMaterial.clone())
-    mesh.position.set(at.x, 0.006, at.z)
+    mesh.position.set(at.x, this.heightAt(at.x, at.z) + 0.006, at.z)
     mesh.rotation.y = Math.random() * Math.PI * 2
     mesh.scale.setScalar(diameter)
     mesh.renderOrder = 1
@@ -195,7 +214,7 @@ export class Effects {
   harvestDust(at: THREE.Vector3, across: THREE.Vector3, kind: 'green' | 'blue' = 'green') {
     const p = this.particles
     const blue = kind === 'blue'
-    const spot = () => at.clone().addScaledVector(across, random(-0.22, 0.22)).setY(random(0.02, 0.08))
+    const spot = () => at.clone().addScaledVector(across, random(-0.22, 0.22)).setY(at.y + random(0.02, 0.08))
     // dust thrown up by the drum, billowing and drifting
     p.emit({ position: spot(), velocity: scatter(random(0.15, 0.4), 0.7), life: random(1.0, 1.8), size: [0.2, random(0.6, 0.95)],
             colour: [0xddd0b0, 0xb8ab90], alpha: [0.7, 0], fadeIn: 0.12, drag: 1.2, gravity: -0.1, spin: random(-1, 1), sprite: 'smoke' })
@@ -208,7 +227,7 @@ export class Effects {
                colour: blue ? [0xa0e0ff, 0x2070e0] : [0xc8ff80, 0x40c020], gravity: 4, spin: random(-12, 12), additive: true, sprite: 'shard' })
     }
     if (Math.random() < 0.5) {
-      p.emit({ position: spot().setY(0.12), velocity: scatter(0.12, 0.9), life: random(0.5, 0.9), size: [0.2, 0.45],
+      p.emit({ position: spot().setY(at.y + 0.12), velocity: scatter(0.12, 0.9), life: random(0.5, 0.9), size: [0.2, 0.45],
                colour: blue ? [0x50a0ff, 0x103080] : [0x60ff40, 0x208010], alpha: [0.3, 0], fadeIn: 0.2, gravity: -0.2, additive: true })
     }
   }

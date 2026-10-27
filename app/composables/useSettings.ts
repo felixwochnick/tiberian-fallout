@@ -28,8 +28,15 @@ export interface SkirmishPlayer {
 }
 
 const settings = reactive({
-  music: 80,
-  effects: 80,
+  /** Overall volume (percent): multiplies the four below */
+  master: 50,
+  music: 100,
+  /** Shots, impacts and explosions */
+  shots: 100,
+  /** Clicks, building, the dropship, the radar and everything else */
+  effects: 100,
+  /** EVA, the units' responses and death cries */
+  voices: 100,
   aiLevel: 1,
   /** Players of a skirmish; the first one is the human player */
   players: [
@@ -57,6 +64,14 @@ const settings = reactive({
   keys: { ...DEFAULT_KEYS } as Record<KeyAction, string>,
 })
 let loaded = false
+
+export type VolumeKind = 'music' | 'shots' | 'effects' | 'voices'
+
+/** Volume of one kind of sound (0 … 1): its own setting times the overall volume */
+export function volumeOf(kind: VolumeKind) {
+  const settings = useSettings()
+  return (settings.master / 100) * (settings[kind] / 100)
+}
 
 export function useSettings() {
   if (!loaded) {

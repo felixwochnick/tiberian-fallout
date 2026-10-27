@@ -157,6 +157,8 @@ export type UnitVoice = 'select' | 'move' | 'attack' | 'die'
 const CONSTRUCTION_YARDS = ['GACNST', 'NACNST']
 /** These crush whatever RULES.INI says: the Titan and the heavy vehicles */
 const CRUSHERS = new Set(['MMCH', 'HARV', 'MCV'])
+/** These have no weapon (the subterranean APC is a troop carrier) */
+const UNARMED = ['SAPC']
 /** Walls are crushable unless RULES.INI says otherwise */
 const CRUSHABLE_WALLS = new Set(['GASAND'])
 
@@ -265,8 +267,18 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
     { id: 'MMCH', name: 'Titan' },
     { id: 'HARV', name: 'Sammler' },
     { id: 'MCV', name: 'MBF' },
+    // Nod's vehicles, which the missions send against the player
+    { id: 'BGGY', name: 'Buggy' },
+    { id: 'BIKE', name: 'Angriffsmotorrad' },
+    { id: 'TTNK', name: 'Tick Tank' },
+    { id: 'SAPC', name: 'Untergrund-APC' },
   ]) {
     if (!info.has(option.id)) add(option, false)
+  }
+  // the subterranean APC only carries troops, whatever RULES.INI gives it
+  for (const id of UNARMED) {
+    const unarmed = info.get(id)
+    if (unarmed) unarmed.weapon = undefined
   }
   // a building that has no explosion of its own sounds like the vehicles blowing up
   // (failing that, like the explosions of the warheads)

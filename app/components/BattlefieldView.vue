@@ -52,13 +52,16 @@ function frame(now: number) {
   const seconds = Math.min(0.1, (now - last) / 1000) // no jump after a stall
   last = now
   const active = !props.paused && !needsResume()
-  if (active) combat?.update(seconds, SPEED_FACTORS[settings.speed] ?? 1)
-  if (active) harvesting?.update(seconds * (SPEED_FACTORS[settings.speed] ?? 1))
-  if (active) repairs?.update(seconds * (SPEED_FACTORS[settings.speed] ?? 1))
-  if (active && skirmish) tickMissionDisplay(skirmish, seconds * (SPEED_FACTORS[settings.speed] ?? 1))
-  if (active) emit('tick', seconds * (SPEED_FACTORS[settings.speed] ?? 1))
+  // the game speed: everything in the game runs on game seconds (the edge scroll does not)
+  const speed = SPEED_FACTORS[settings.speed] ?? 1
+  const gameSeconds = seconds * speed
+  if (active) combat?.update(seconds, speed)
+  if (active) harvesting?.update(gameSeconds)
+  if (active) repairs?.update(gameSeconds)
+  if (active && skirmish) tickMissionDisplay(skirmish, gameSeconds)
+  if (active) emit('tick', gameSeconds)
   if (active && skirmish) {
-    skirmish.production.tick(seconds, (SPEED_FACTORS[settings.speed] ?? 1) * powerFactor(skirmish), skirmish.credits)
+    skirmish.production.tick(seconds, speed * powerFactor(skirmish), skirmish.credits)
     // out of money: EVA says so, at most every few seconds
     if (skirmish.production.starved) {
       skirmish.production.starved = false
@@ -84,7 +87,7 @@ function frame(now: number) {
       // a button of the sidebar is on: its cursor, crossed out where it cannot be used
       if (skirmish?.mode) cursor = modeCursor(skirmish.mode, hovered, at.x, at.y)
       // over the selected MCV: unfold it here (or not, if there is no room)
-      else if (hovered && isDeployable(hovered)) cursor = battlefield.deployCell(hovered.userData.unit as Unit) ? 'deploy' : 'deploy-blocked'
+      else if (hovered && isDeployable(hovered)) cursor = canDeploy(hovered) ? 'deploy' : 'deploy-blocked'
       // a harvester over its refinery: drive in and unload
       else if (hovered) cursor = canUnloadAt(hovered) ? 'enter' : combat?.canAttack(battlefield.selection, hovered) ? 'attack' : 'select'
       // a harvester over Tiberium: harvest it (the attack cursor, like in the original)
@@ -98,7 +101,7 @@ function frame(now: number) {
   const arriving = escorted.find(ship => ship.arriving)
   if (arriving) battlefield.lookAt(arriving.object.position)
   escorted.splice(0, escorted.length, ...escorted.filter(ship => ship.arriving))
-  battlefield.render(props.frozen)
+  battlefield.render(props.frozen, SPEED_FACTORS[settings.speed] ?? 1)
   requestAnimationFrame(frame)
 }
 
@@ -180,9 +183,10 @@ function onClick(event: MouseEvent) {
   const object = battlefield.objectAt(event.clientX, event.clientY)
   // classic controls: a left click on an enemy attacks it, on an own refinery sends the harvesters in
   if (object && settings.controls === 'classic' && (unloadAt(object) || attack(object))) return
-  // a second click on the selected MCV deploys it into a construction yard
+  // a second click on the selected MCV deploys it into a construction yard, on a Tick Tank digs it in (or out)
   if (object && isDeployable(object)) {
-    deployMcv(object)
+    if (Battlefield.digsIn(object)) digIn(object)
+    else deployMcv(object)
     return
   }
   if (object) {
@@ -366,9 +370,26 @@ function respond(voice: UnitVoice) {
 
 let delivered = 0
 
-/** The selected MCV of the player: a click on it unfolds it */
+/** The selected MCV or Tick Tank of the player: a click on it unfolds it (digs it in or out) */
 function isDeployable(object: THREE.Object3D) {
-  return object === battlefield?.selected && object.userData.id === 'MCV' && Battlefield.own(object) && !!object.userData.unit
+  return object === battlefield?.selected && (object.userData.id === 'MCV' || Battlefield.digsIn(object)) && Battlefield.own(object)
+    && !!object.userData.unit
+}
+
+/** Whether it can deploy where it stands: the MCV on 3 × 3 free flat cells, the Tick Tank on flat ground (or it is dug in) */
+function canDeploy(object: THREE.Object3D) {
+  const unit = object.userData.unit as Unit
+  if (Battlefield.digsIn(object)) return !!unit.posture || battlefield!.canDig(object.position)
+  return !!battlefield!.deployCell(unit)
+}
+
+/** Digs a Tick Tank in where it stands, or out again; not on a slope or a ramp */
+function digIn(object: THREE.Object3D) {
+  if (!battlefield!.toggleDigIn(object.userData.unit as Unit)) {
+    sounds.play('evaCannotPlace')
+    return
+  }
+  sounds.play('click')
 }
 
 /** Unfolds the MCV into a construction yard where it stands, if the 3 × 3 cells are free. */
@@ -430,7 +451,7 @@ async function dropship(ids: string[], at: THREE.Vector3, landed?: () => void) {
       const unit = await battlefield.addUnit(MODELS[id] ?? UNIT_MODEL, exit, colour, 'player', props.side)
       unit.object.userData.id = id
       battlefield.walk(unit, exit.clone().addScaledVector(away, id === 'MCV' ? 2 : 1.2).addScaledVector(side, (i - (ids.length - 1) / 2) * 0.7))
-      await new Promise(resolve => setTimeout(resolve, 600))
+      await new Promise(resolve => setTimeout(resolve, 600 / (SPEED_FACTORS[settings.speed] ?? 1)))
     }
   }
 }
@@ -619,13 +640,13 @@ onMounted(() => {
     battlefield,
     object => skirmish?.rules?.info.get(object.userData.id),
     {
-      fire: (_, info) => sounds.effect(info.weapon?.reports ?? []),
-      impact: weapon => sounds.effect(weapon.impactReports),
-      blast: (_, info, delay) => setTimeout(() => sounds.effect(info.explosionReports), delay * 1000),
+      fire: (_, info) => sounds.effect(info.weapon?.reports ?? [], 'shots'),
+      impact: weapon => sounds.effect(weapon.impactReports, 'shots'),
+      blast: (_, info, delay) => setTimeout(() => sounds.effect(info.explosionReports, 'shots'), delay * 1000 / (SPEED_FACTORS[settings.speed] ?? 1)),
       die(victim, info) {
-        sounds.effect(info.voices.die)
+        sounds.effect(info.voices.die, 'voices')
         // a vehicle blows up (Explosion=)
-        sounds.effect(info.explosionReports)
+        sounds.effect(info.explosionReports, 'shots')
         if (Battlefield.own(victim)) sounds.speak('evaUnitLost')
       },
       // EVA warns when a building or a harvester of the player is attacked, not again for every shot

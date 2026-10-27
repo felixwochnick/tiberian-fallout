@@ -20,8 +20,14 @@ export const MODELS: Record<string, string> = {
   SMECH: '/models/SMECH.glb',
   MMCH: '/models/MMCH.glb',
   DSHP: '/models/DSHP.glb',
+  BGGY: '/models/BGGY.glb',
+  BIKE: '/models/BIKE.glb',
+  SAPC: '/models/SAPC.glb',
+  TTNK: '/models/TTNK.glb',
   /** Tiberium on one cell: nodes Stage1A … Stage3C (growth stage 1–3, variant A–C), show one */
   TIB: '/models/TIB.glb',
+  /** Rock for the cliffs: nodes Straight0 … 3 (one cell edge), Outer0/1 and Inner0/1 (corners) */
+  CLIFF: '/models/CLIFF.glb',
 }
 
 /** Units without a model of their own yet use the light infantry's */
@@ -55,10 +61,11 @@ const NOD_SATURATION = 0.3
  *    (red or blue at the gold's lightness look much darker).
  * For Nod the uniform is dark armour, the house colour stays on the accents: materials
  * with the extra nodColour (armour, helmet, packs) take that colour, the shades become
- * near black.
+ * near black – but for those with the extra nodAccent (the red blotches in the
+ * camouflage of Nod's vehicles), which stay shades of the house colour.
  */
 export function applyHouseColour(mat: THREE.MeshStandardMaterial, houseColour: number, side: Side = 'gdi') {
-  const shade = mat.userData as { remapLightness?: number, remapSaturation?: number, remapLuminance?: number, nodColour?: string }
+  const shade = mat.userData as { remapLightness?: number, remapSaturation?: number, remapLuminance?: number, nodColour?: string, nodAccent?: boolean }
   if (side === 'nod' && shade.nodColour) {
     mat.color.set(shade.nodColour)
     return
@@ -71,7 +78,8 @@ export function applyHouseColour(mat: THREE.MeshStandardMaterial, houseColour: n
   const saturation = s * (shade.remapSaturation ?? 1)
   const lightness = l * shade.remapLightness
   if (side === 'nod') {
-    mat.color.setHSL(h, saturation * NOD_SATURATION, NOD_LIGHTNESS.base + lightness * NOD_LIGHTNESS.range, THREE.SRGBColorSpace)
+    // the accent blotches of Nod's vehicles keep their shade of the house colour
+    if (!shade.nodAccent) mat.color.setHSL(h, saturation * NOD_SATURATION, NOD_LIGHTNESS.base + lightness * NOD_LIGHTNESS.range, THREE.SRGBColorSpace)
     return
   }
   mat.color.setHSL(h, saturation, lightness, THREE.SRGBColorSpace)

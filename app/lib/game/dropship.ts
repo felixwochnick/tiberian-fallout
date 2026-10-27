@@ -12,6 +12,11 @@ const WRECK_SECONDS = 8
 const TURN_SPEED = 1.8
 /** Seconds into the Crash clip when the ship hits the ground (frame 62 at 30 fps) */
 const IMPACT = 62 / 30
+/** How far ahead (cells) it looks for higher ground to climb over */
+const LOOK_AHEAD = 4
+/** How fast it climbs over higher ground and sinks again behind it (cells per second) */
+const CLIMB = 2.5
+const SINK = 1.2
 
 type State = 'arriving' | 'landing' | 'unloading' | 'waiting' | 'takingOff' | 'leaving' | 'crashing' | 'gone'
 
@@ -32,7 +37,9 @@ export interface DropshipFlight {
  * The GDI dropship (model DSHP.glb): flies in at its cruising height, lands, lets the
  * cargo out over its ramp, takes off and flies away. The model's clips carry the
  * height and the engines (Fly, Land, Landed, TakeOff, Crash, and Lights all the time);
- * this moves it over the ground and plays them in turn.
+ * this moves it over the ground and plays them in turn. The clips' heights are above
+ * the ship's own position, which follows the ground (`groundAt`): it climbs early
+ * enough to clear a plateau ahead and sinks back down behind it.
  */
 export class Dropship {
   private readonly mixer: THREE.AnimationMixer
@@ -45,7 +52,8 @@ export class Dropship {
   /** Called when something happens that makes a sound */
   onSound?: (sound: DropshipSound) => void
 
-  constructor(readonly object: THREE.Object3D, clips: THREE.AnimationClip[], private readonly flight: DropshipFlight) {
+  constructor(readonly object: THREE.Object3D, clips: THREE.AnimationClip[], private readonly flight: DropshipFlight,
+    private readonly groundAt: (x: number, z: number) => number = () => 0) {
     this.mixer = new THREE.AnimationMixer(object)
     for (const clip of clips) {
       const action = this.mixer.clipAction(clip)
@@ -59,6 +67,7 @@ export class Dropship {
     this.mixer.addEventListener('finished', event => this.finished(event.action))
     this.play('Fly')
     this.face(flight.to, Infinity)
+    object.position.y = this.groundAhead(flight.to)
     this.mixer.update(0)
   }
 
@@ -87,16 +96,21 @@ export class Dropship {
         // full speed, slowing down over the last cells
         const speed = SPEED * Math.min(1, Math.max(0.2, distance / BRAKE))
         if (distance <= speed * seconds) {
-          position.copy(this.flight.to)
+          position.setX(this.flight.to.x).setZ(this.flight.to.z)
           this.state = 'landing'
           this.play('Land')
         }
         else {
           position.addScaledVector(way, (speed * seconds) / distance)
           this.face(this.flight.to, seconds)
+          this.follow(this.groundAhead(this.flight.to), seconds)
         }
         break
       }
+      case 'landing':
+        // still coming down from higher ground it flew over
+        this.follow(this.groundAt(position.x, position.z), seconds)
+        break
       case 'waiting':
         this.timer -= seconds
         if (this.timer <= 0) {
@@ -113,6 +127,7 @@ export class Dropship {
         else {
           position.addScaledVector(way, (speed * seconds) / distance)
           this.face(this.flight.leave, seconds)
+          this.follow(this.groundAhead(this.flight.leave), seconds)
         }
         break
       }
@@ -120,6 +135,8 @@ export class Dropship {
         // the clip spins it down and lets it slide; the wreck burns a while
         if (this.timer < IMPACT && this.timer + seconds >= IMPACT) this.onSound?.('impact')
         this.timer += seconds
+        // down onto the ground below it
+        this.follow(this.groundAt(position.x, position.z), seconds)
         if (this.timer > WRECK_SECONDS) this.gone()
         break
     }
@@ -133,7 +150,7 @@ export class Dropship {
       this.play('Landed')
       const exit = new THREE.Vector3()
       ;(this.object.getObjectByName('CargoExit') ?? this.object).getWorldPosition(exit)
-      exit.y = 0
+      exit.y = this.groundAt(exit.x, exit.z)
       Promise.resolve(this.flight.unload(exit)).catch(() => {}).finally(() => {
         if (this.state !== 'unloading') return
         this.state = 'waiting'
@@ -157,6 +174,29 @@ export class Dropship {
     if (name === 'Crash') this.timer = 0
     else if (name === 'Land') this.onSound?.('land')
     else if (name === 'TakeOff') this.onSound?.('takeOff')
+  }
+
+  /**
+   * The highest ground on its way towards `target` over the next LOOK_AHEAD cells (not
+   * past the target), so it starts climbing before it gets to a cliff
+   */
+  private groundAhead(target: THREE.Vector3) {
+    const position = this.object.position
+    const way = target.clone().sub(position).setY(0)
+    const reach = Math.min(LOOK_AHEAD, way.length())
+    way.normalize()
+    let highest = this.groundAt(position.x, position.z)
+    for (let d = 0.5; d <= reach; d += 0.5) {
+      highest = Math.max(highest, this.groundAt(position.x + way.x * d, position.z + way.z * d))
+    }
+    return highest
+  }
+
+  /** Rises (quickly) or sinks (slowly) towards the height `ground` */
+  private follow(ground: number, seconds: number) {
+    const position = this.object.position
+    const step = ground - position.y
+    position.y += step > 0 ? Math.min(step, CLIMB * seconds) : Math.max(step, -SINK * seconds)
   }
 
   /** Turns the nose (+Z) towards a point. */
