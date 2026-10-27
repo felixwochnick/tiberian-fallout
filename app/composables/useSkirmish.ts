@@ -21,6 +21,10 @@ export interface Skirmish {
   production: Production
   /** A finished structure is being placed on the map */
   placing?: BuildInfo
+  /** The player's special weapons, charging or ready (for the sidebar) */
+  specials: Special[]
+  /** A special weapon waits for the player to pick its target on the map (its id) */
+  targeting?: string
   /** Units that left their factory, to be put on the map by the battlefield */
   arrivals: BuildInfo[]
   /**
@@ -37,6 +41,19 @@ export interface Skirmish {
 }
 
 export type BaseMode = 'repair' | 'sell' | 'power' | 'waypoint'
+
+/** A special weapon in the sidebar */
+export interface Special {
+  id: string
+  name: string
+  /** Its cameo (SidebarImage= of the rules) */
+  cameo: string
+  /** 0 … 1 */
+  progress: number
+  ready: boolean
+  /** The firestorm is on */
+  active: boolean
+}
 
 export interface Hint {
   id: number
@@ -97,6 +114,8 @@ export function createSkirmish(startCredits: number, side: Side = 'gdi') {
       () => sounds.speak('evaConstructionComplete'),
     ),
     placing: undefined,
+    specials: [],
+    targeting: undefined,
     arrivals: [],
     control: false,
     hints: [],

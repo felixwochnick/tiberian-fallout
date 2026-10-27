@@ -61,7 +61,7 @@ export type Owner = 'player' | 'enemy'
 export type PlacementFit = (x: number, z: number) => number | undefined
 
 /** Structures that join up with their neighbours (see connectWalls) */
-const WALLS = new Set(['GASAND', 'GAWALL', 'NAWALL'])
+const WALLS = new Set(['GASAND', 'GAWALL', 'NAWALL', 'GAFSDF'])
 /**
  * What joins up with what (see connectWalls), like in the original: walls with walls of
  * their kind; GDI's concrete wall also with the component tower and the gate, which
@@ -74,6 +74,7 @@ const JOINS: Record<string, string[]> = {
   GAGATE_A: ['GAWALL', 'GASAND', 'GACTWR'],
   GAGATE_B: ['GAWALL', 'GASAND', 'GACTWR'],
   NAWALL: ['NAWALL', 'NAGATE_A', 'NAGATE_B'],
+  GAFSDF: ['GAFSDF'],
   NAGATE_A: ['NAWALL'],
   NAGATE_B: ['NAWALL'],
 }
@@ -84,6 +85,8 @@ const JOINS: Record<string, string[]> = {
 const SAND_ARMS: Record<string, string> = { GASAND: 'Sand' }
 /** Walls a crusher drives over (the sandbags; concrete stops it) */
 const CRUSHABLE_WALLS = new Set(['GASAND'])
+/** How much of a cloaked unit its own side (or a sensor) sees */
+const CLOAKED_OPACITY = 0.35
 /** Most cells of pavement on a map */
 const PAVEMENT_MAX = 4096
 
@@ -344,9 +347,9 @@ const POSTURES = {
   tunnel: { in: 'Burrow', posture: 'Underground', out: 'Surface' },
 } as const
 /** Units that dig in or set up where they stand (Deploy/Deployed/Undeploy) */
-const DIGGERS = new Set(['TTNK', 'ART2', 'LPST'])
+const DIGGERS = new Set(['TTNK', 'ART2', 'LPST', 'JUGG', 'LIMPET', 'SGEN'])
 /** Units that go under the ground to get somewhere */
-const TUNNELLERS = new Set(['SAPC'])
+const TUNNELLERS = new Set(['SAPC', 'SUBTANK'])
 /** Farther than this (cells) the subterranean APC goes under the ground; nearer it drives */
 const TUNNEL_MIN = 8
 /** How many soldiers the transports carry (Passengers=) */
@@ -391,7 +394,7 @@ export class Battlefield {
   /** Dropships in the air or on the ground */
   readonly aircraft: Dropship[] = []
   /** MCVs on their way to deploy: they drive onto the middle of their foundation and turn first */
-  private readonly deploying: { unit: Unit, x: number, z: number, url: string, houseColour: number, footprint: Footprint, resolve: (yard?: THREE.Object3D) => void }[] = []
+  private readonly deploying: { unit: Unit, x: number, z: number, url: string, houseColour: number, footprint: Footprint, resolve: (yard?: THREE.Object3D) => void, id: string }[] = []
   /** Unit models, loaded once and cloned for every unit */
   private readonly unitModels = new Map<string, Promise<GLTF>>()
   /** Buildings and units that can be selected, for picking with the mouse */
@@ -1768,6 +1771,8 @@ export class Battlefield {
     object.userData.side = side
     object.userData.footprint = footprint
     this.structures.set(id, [...(this.structures.get(id) ?? []), object])
+    // a firestorm wall's fields show only while the firestorm is on
+    if (id === 'GAFSDF') object.traverse(node => node.name.startsWith('Field') && (node.visible = false))
     if (JOINS[id]) this.joinAround(footprint)
     if (WALLS.has(id)) {
       // walls cannot be clicked or picked with a box (Selectable=no in RULES.INI)
@@ -1831,6 +1836,50 @@ export class Battlefield {
         }
       }
     }
+  }
+
+  /**
+   * Switches the firestorm of `owner` on or off: its wall sections (GAFSDF) show their
+   * walls of energy (Field…) towards the joined sections, and nothing passes them
+   */
+  setFirestorm(owner: Owner, on: boolean) {
+    for (const section of this.structuresOf('GAFSDF')) {
+      if (section.userData.owner !== owner || section.userData.firestorm === on) continue
+      section.userData.firestorm = on
+      const arms = (section.userData.arms ?? {}) as Record<string, THREE.Object3D>
+      for (const dir of ['XP', 'XN', 'ZP', 'ZN']) {
+        const field = section.getObjectByName(`Field${dir}`)
+        if (field) field.visible = on && !!arms[`Arm${dir}`]?.parent
+      }
+    }
+  }
+
+  /** Whether a point is on a cell of a firestorm wall that is on (of an owner other than `owner`) */
+  inFirestorm(at: THREE.Vector3, owner: Owner) {
+    const piece = this.structureOn(Math.floor(at.x), Math.floor(at.z))
+    if (piece?.userData.id === 'GAFSDF' && piece.userData.firestorm && piece.userData.owner !== owner) return true
+    return false
+  }
+
+  /**
+   * How something cloaked is seen: its own side sees it see-through, the enemy not at all –
+   * unless a sensor or a unit next to it sees it (`detected`), then see-through as well
+   */
+  showCloaked(object: THREE.Object3D, cloaked: boolean, detected: boolean) {
+    const look = !cloaked ? 'plain' : Battlefield.own(object) || detected ? 'faint' : 'gone'
+    if (object.userData.cloakLook === look || (!object.userData.cloakLook && look === 'plain')) return
+    object.userData.cloakLook = look
+    object.visible = look !== 'gone'
+    object.traverse((node) => {
+      const mesh = node as THREE.Mesh
+      if (!mesh.isMesh) return
+      for (const mat of [mesh.material].flat() as THREE.MeshStandardMaterial[]) {
+        mat.userData.opaque ??= { transparent: mat.transparent, opacity: mat.opacity }
+        mat.transparent = look === 'faint' || mat.userData.opaque.transparent
+        mat.opacity = look === 'faint' ? CLOAKED_OPACITY : mat.userData.opaque.opacity
+        mat.needsUpdate = true
+      }
+    })
   }
 
   /** The buildings of a kind on the map */
@@ -1920,10 +1969,24 @@ export class Battlefield {
    * The cells (lower corner) a mobile construction vehicle would unfold onto: the
    * 3 × 3 cells around it, if they are on the map and free.
    */
-  deployCell(unit: Unit): [number, number] | undefined {
-    const x = Math.floor(unit.object.position.x) - 1
-    const z = Math.floor(unit.object.position.z) - 1
-    return this.canPlace(x, z, 3, 3, Infinity, { except: unit.object }) ? [x, z] : undefined
+  deployCell(unit: Unit, w = 3, h = 3): [number, number] | undefined {
+    const x = Math.floor(unit.object.position.x) - Math.floor((w - 1) / 2)
+    const z = Math.floor(unit.object.position.z) - Math.floor((h - 1) / 2)
+    return this.canPlace(x, z, w, h, Infinity, { except: unit.object }) ? [x, z] : undefined
+  }
+
+  /** A free place for an upgrade on a building (its next empty …Slot node), if there is one */
+  freeSlot(structure: THREE.Object3D) {
+    const slots: THREE.Object3D[] = []
+    structure.traverse((node) => {
+      if (/Slot\d+$/.test(node.name) && !node.userData.upgrade) slots.push(node)
+    })
+    return slots.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))[0]
+  }
+
+  /** The building standing on a cell, if any */
+  buildingOn(x: number, z: number) {
+    return this.structureOn(x, z)
   }
 
   /**
@@ -1932,16 +1995,16 @@ export class Battlefield {
    * yard, whose Build clip starts with exactly this vehicle there and unfolds the yard.
    * Resolves with the yard, or undefined if there is no room.
    */
-  deploy(unit: Unit, url: string, houseColour = 0xd8b43a) {
-    const cell = this.deployCell(unit)
+  deploy(unit: Unit, url: string, houseColour = 0xd8b43a, id = 'GACNST', w = 3, h = 3) {
+    const cell = this.deployCell(unit, w, h)
     if (!cell) return Promise.resolve(undefined)
     // the cells are taken from now on
     const [x, z] = cell
-    const footprint: Footprint = { x, z, w: 3, h: 3, owner: (unit.object.userData.owner ?? 'player') as Owner }
+    const footprint: Footprint = { x, z, w, h, owner: (unit.object.userData.owner ?? 'player') as Owner }
     this.footprints.push(footprint)
-    unit.walkTo(new THREE.Vector3(x + 1.5, 0, z + 1.5))
+    unit.walkTo(new THREE.Vector3(x + w / 2, 0, z + h / 2))
     return new Promise<THREE.Object3D | undefined>((resolve) => {
-      this.deploying.push({ unit, x, z, url, houseColour, footprint, resolve })
+      this.deploying.push({ unit, x, z, url, houseColour, footprint, resolve, id })
     })
   }
 
@@ -1967,7 +2030,7 @@ export class Battlefield {
       const owner = (unit.object.userData.owner ?? 'player') as Owner
       const wasSelected = this.selection.includes(unit.object)
       this.remove(unit.object)
-      this.addStructure('GACNST', job.x, job.z, 3, 3, job.url, job.houseColour, owner, unit.object.userData.side ?? 'gdi').then((yard) => {
+      this.addStructure(job.id, job.x, job.z, job.footprint.w, job.footprint.h, job.url, job.houseColour, owner, unit.object.userData.side ?? 'gdi').then((yard) => {
         if (wasSelected) this.select(yard)
         job.resolve(yard)
       }, () => job.resolve(undefined))
@@ -2384,6 +2447,8 @@ export class Battlefield {
   /** Sends a unit to a point on the shortest way round the buildings. */
   walk(unit: Unit, to: THREE.Vector3) {
     const object = unit.object
+    // lamed by an electromagnetic pulse (see Combat.pulse)
+    if (object.userData.empSeconds > 0) return
     // aircraft and jumpjets fly there, straight over everything
     if (this.flight.has(unit)) {
       this.flight.flyTo(unit, to)

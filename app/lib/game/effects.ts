@@ -22,6 +22,8 @@ function scatter(speed: number, up = 0) {
 /** Game seconds a laser beam is seen (LaserDuration=15 frames) and its thickness (cells) */
 const BEAM_SECONDS = 1
 const BEAM_WIDTH = 0.025
+/** Game seconds the ion cannon's column of light stands */
+const ION_SECONDS = 0.8
 /** Seconds a scorch mark stays on the ground, fading out at the end */
 const SCORCH_SECONDS = 12
 
@@ -231,6 +233,56 @@ export class Effects {
     this.beams.push({ line, time: BEAM_SECONDS })
     for (const at of [from, to]) {
       this.particles.emit({ position: at, life: 0.25, size: [0.2, 0.05], colour: [0xffffff, colour], alpha: [1, 0], additive: true })
+    }
+  }
+
+  /**
+   * The ion cannon: a column of blue light comes down from the sky onto `at`, rings of
+   * light run out over the ground, then the blast (`radius` in cells)
+   */
+  ionStrike(at: THREE.Vector3, radius: number) {
+    const material = new THREE.MeshBasicMaterial({ color: 0x8fd8ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+    const column = new THREE.Mesh(this.beamGeometry, material)
+    column.scale.set(0.35, 0.35, 30)
+    column.position.copy(at).setY(at.y + 15)
+    column.lookAt(at)
+    this.scene.add(column)
+    this.beams.push({ line: column, time: ION_SECONDS * 2 })
+    const p = this.particles
+    for (let i = 0; i < 3; i++) {
+      p.emit({ position: at, delay: i * 0.25, life: 0.9, size: [radius * 0.4, radius * 2.4], colour: [0xe0f6ff, 0x3a8cff], alpha: [0.9, 0], additive: true })
+    }
+    for (let i = 0; i < 40; i++) {
+      p.emit({ position: at.clone().setY(at.y + Math.random() * 3), velocity: scatter(0.6, 2), delay: Math.random() * 0.8, life: random(0.5, 1),
+               size: [0.06, 0.02], colour: [0xffffff, 0x4aa0ff], gravity: 1, additive: true, sprite: 'spark' })
+    }
+    for (let i = 0; i < 4; i++) this.explosion(at.clone().add(scatter(radius * 0.4).setY(0)), radius * 0.6, 0.6 + i * 0.12)
+  }
+
+  /** An electromagnetic pulse at `at`: a blue ball bursts, a ring of crackling light runs out to `radius` */
+  empBurst(at: THREE.Vector3, radius: number) {
+    const p = this.particles
+    p.emit({ position: at, life: 0.4, size: [0.6, radius * 2.2], colour: [0xd8f0ff, 0x2a6aff], alpha: [0.8, 0], additive: true })
+    for (let i = 0; i < 60; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const way = new THREE.Vector3(Math.cos(angle), 0.05, Math.sin(angle))
+      p.emit({ position: at.clone().setY(at.y + 0.1), velocity: way.multiplyScalar(radius * random(1.6, 2.2)), life: random(0.4, 0.6),
+               size: [0.12, 0.04], colour: [0xffffff, 0x3a7aff], drag: 1.5, additive: true, sprite: 'spark' })
+    }
+  }
+
+  /** Crackling blue sparks round something lamed by a pulse (call now and then) */
+  empSparks(at: THREE.Vector3) {
+    this.particles.emit({ position: at.clone().add(scatter(0.2, 0.5)), velocity: scatter(0.3, 0.6), life: 0.25, size: [0.05, 0.01],
+                          colour: [0xffffff, 0x4a8aff], additive: true, sprite: 'spark' })
+  }
+
+  /** A cloud of poison gas (the chemical missile's Gas warhead): green, slow, low over the ground */
+  gasCloud(at: THREE.Vector3, radius: number) {
+    for (let i = 0; i < 30; i++) {
+      this.particles.emit({ position: at.clone().add(scatter(radius * 0.6).setY(0.1)), velocity: scatter(0.15, 0.1), delay: Math.random() * 1.5,
+                            life: random(4, 7), size: [radius * 0.4, radius * 0.9], colour: [0x9adf3a, 0x4a7a1a], alpha: [0.45, 0], fadeIn: 0.3,
+                            drag: 0.5, spin: random(-0.3, 0.3), sprite: 'smoke' })
     }
   }
 

@@ -117,7 +117,9 @@ export function useUiSounds() {
         const blob = await store.get(name)
         return blob ? (await MixArchive.open(blob, name)).openNested(nested).catch(() => undefined) : undefined
       }
-      return (await Promise.all([open('TIBSUN.MIX', 'SOUNDS.MIX'), open('EXPAND01.MIX', 'SOUNDS01.MIX')]))
+      // after the sounds the speech, for EVA's announcements that have no name of their own
+      return (await Promise.all([open('TIBSUN.MIX', 'SOUNDS.MIX'), open('EXPAND01.MIX', 'SOUNDS01.MIX'),
+        open('TIBSUN.MIX', 'SPEECH01.MIX'), open('EXPAND01.MIX', 'E01VOX01.MIX')]))
         .filter((mix): mix is MixArchive => !!mix)
     })
     const name = `${file.toUpperCase()}.AUD`

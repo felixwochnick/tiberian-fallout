@@ -3,6 +3,7 @@ import { Battlefield } from '../game/battlefield'
 import type { Combat } from '../game/combat'
 import type { Harvesting } from '../game/harvesting'
 import { BUILD_OPTIONS, type BuildInfo, canBuild } from '../game/cameos'
+import { MODELS } from '../game/models'
 import type { Unit } from '../game/unit'
 import { basePower, type Skirmish } from '~/composables/useSkirmish'
 import type { AgentCommands } from './link'
@@ -29,6 +30,12 @@ export interface AgentContext {
   /** Like a click on the selected MCV, Tick Tank or transport; false if it cannot here */
   deploy: (object: THREE.Object3D) => boolean
   sell: (object: THREE.Object3D) => boolean
+  /** Dev test: puts a unit down at once (`owner`: player or enemy) */
+  spawn: (id: string, at: THREE.Vector3, owner: 'player' | 'enemy') => Promise<THREE.Object3D>
+  /** Dev test: a structure (or upgrade, pavement) of the player at once, without building it */
+  instant: (info: BuildInfo, cell: [number, number]) => Promise<void>
+  /** Dev test: the special weapons are charged */
+  charge: () => void
   repair: (object: THREE.Object3D) => boolean
   switchPower: (object: THREE.Object3D) => boolean
 }
@@ -361,6 +368,27 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
     sell(ref: Ref) {
       if (!ctx.sell(find(ref))) throw new Error('Kann nicht verkauft werden')
       return { sold: Number(ref) }
+    },
+
+    /** Test: a unit put down at once (owner player or enemy) */
+    async spawn(id: string, x: number, z: number, owner: 'player' | 'enemy' = 'player') {
+      if (!MODELS[String(id).toUpperCase()]) throw new Error(`Kein Modell für ${id}`)
+      const object = await ctx.spawn(String(id).toUpperCase(), ground(x, z), owner)
+      return { spawned: refOf(object) }
+    },
+
+    /** Test: a structure of the player at once (its lower corner at x, z; an upgrade onto the building there) */
+    async instant(id: string, x: number, z: number) {
+      const info = skirmish.rules?.info.get(String(id).toUpperCase())
+      if (!info) throw new Error(`${id} unbekannt`)
+      await ctx.instant(info, [Math.floor(x), Math.floor(z)])
+      return { placed: info.id }
+    },
+
+    /** Test: all special weapons ready */
+    charge() {
+      ctx.charge()
+      return { charged: skirmish.specials.map(s => s.id) }
     },
 
     /** Starts or stops repairing a building */

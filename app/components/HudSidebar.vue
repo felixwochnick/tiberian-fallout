@@ -60,6 +60,16 @@ const sounds = useUiSounds()
  * building starts or goes on after a hold; units are queued.
  */
 function build(option: BuildOption) {
+  // a special weapon: when ready (or the firestorm while on) it waits for its target
+  const special = specialOf(option)
+  if (special) {
+    if (!skirmish || !(special.ready || special.active)) return
+    sounds.play('click')
+    skirmish.placing = undefined
+    skirmish.mode = undefined
+    skirmish.targeting = skirmish.targeting === special.id ? undefined : special.id
+    return
+  }
   const info = infoOf(option)
   if (!skirmish || !info) return
   const job = jobOf(option)
@@ -105,10 +115,20 @@ const available = (options: BuildOption[], structure: boolean) =>
     : options
 /** The human player's side's options */
 const options = computed(() => BUILD_OPTIONS[skirmish?.side ?? 'gdi'])
+/** The special weapons come first in the structures' column, like in the original (ids SW:…) */
+const SPECIAL = 'SW:'
+const specialOf = (option: BuildOption) => option.id.startsWith(SPECIAL) ? skirmish?.specials.find(s => SPECIAL + s.id === option.id) : undefined
 const columns = computed(() => ({
-  structures: available(options.value.structures, true),
+  structures: [...(skirmish?.specials ?? []).map(s => ({ id: SPECIAL + s.id, name: s.name })), ...available(options.value.structures, true)],
   units: available(options.value.units, false),
 }))
+// their pictures (SidebarImage=) as they come
+watch(() => skirmish?.specials.map(s => s.id).join(), async () => {
+  const missing = Object.fromEntries((skirmish?.specials ?? []).filter(s => !cameos.value.has(SPECIAL + s.id)).map(s => [SPECIAL + s.id, s.cameo]))
+  if (!Object.keys(missing).length) return
+  const loaded = await getAssetStore().then(store => loadCameos(store, [], skirmish?.side, missing)).catch(() => new Map<string, string>())
+  cameos.value = new Map([...cameos.value, ...loaded])
+})
 // fewer options: keep the scroll position within the list
 watch(columns, () => {
   scrollColumn('structures', 0)
@@ -121,7 +141,8 @@ watch(columns, () => {
  */
 let known: Set<string> | undefined
 watch(columns, (now) => {
-  const ids = [...now.structures, ...now.units].map(o => o.id)
+  // (special weapons do not count: EVA says when they are ready)
+  const ids = [...now.structures, ...now.units].map(o => o.id).filter(id => !id.startsWith(SPECIAL))
   if (!rules.value) return
   if (known && ids.some(id => !known!.has(id))) sounds.speak('evaNewOptions')
   known = new Set(ids)
@@ -334,6 +355,14 @@ onBeforeUnmount(() => {
                 class="clock"
                 :style="{ '--done': `${jobOf(option)!.progress * 360}deg` }"
               />
+              <!-- a special weapon charging: the same clock -->
+              <span
+                v-if="specialOf(option) && !specialOf(option)!.ready && !specialOf(option)!.active"
+                class="clock"
+                :style="{ '--done': `${specialOf(option)!.progress * 360}deg` }"
+              />
+              <span v-if="specialOf(option)?.active" class="status ready">Aktiv</span>
+              <span v-else-if="specialOf(option)?.ready" class="status ready">{{ skirmish?.targeting === specialOf(option)!.id ? 'Ziel wählen' : 'Bereit' }}</span>
               <span v-if="queued(option) > 1" class="count">{{ queued(option) }}</span>
               <span v-if="jobOf(option)?.state === 'ready'" class="status ready">{{ placingId === option.id ? 'Platzieren' : 'Bereit' }}</span>
               <span v-else-if="jobOf(option)?.state === 'paused'" class="status">Angehalten</span>

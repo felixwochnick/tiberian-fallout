@@ -7,6 +7,7 @@ import { Repairs } from '~/lib/game/repairs'
 import { MODELS, UNIT_FALLBACK, type Side } from '~/lib/game/models'
 import { type BuildInfo, DEFAULT_SURVIVORS, DEFAULT_UPKEEP, type UnitVoice } from '~/lib/game/cameos'
 import type { Unit } from '~/lib/game/unit'
+import { type SuperWeaponCharge, SuperWeapons } from '~/lib/game/superweapons'
 import type { Field } from '~/lib/game/field'
 import type { Dropship, DropshipSound } from '~/lib/game/dropship'
 import { cursorScale, type CursorKind } from '~/lib/input/cursor'
@@ -78,6 +79,7 @@ function frame(now: number) {
       }
     }
     for (const info of skirmish.arrivals.splice(0)) deliver(info)
+    tickSpecials(gameSeconds)
   }
   syncPlacement()
   updatePowerLabel()
@@ -91,8 +93,10 @@ function frame(now: number) {
     if (cursor === 'default' && at.inside && !skirmish?.placing && document.elementFromPoint(at.x, at.y)?.closest('.battlefield')) {
       // the cursor shows what the order button would do on the ground
       const hovered = battlefield.objectAt(at.x, at.y)
+      // a special weapon waits for its target
+      if (skirmish?.targeting) cursor = 'attack'
       // a button of the sidebar is on: its cursor, crossed out where it cannot be used
-      if (skirmish?.mode) cursor = modeCursor(skirmish.mode, hovered, at.x, at.y)
+      else if (skirmish?.mode) cursor = modeCursor(skirmish.mode, hovered, at.x, at.y)
       // Ctrl: fire at whatever is under the cursor; Alt: move there, whatever is there
       else if (modifiers.ctrl && hovered && combat?.canAttack(battlefield.selection, hovered, true)) cursor = 'attack'
       else if (modifiers.alt && battlefield.canMove && battlefield.groundAt(at.x, at.y)) cursor = 'move'
@@ -181,6 +185,14 @@ function onClick(event: MouseEvent) {
     return
   }
   if (props.paused || !battlefield) return
+  // a special weapon waits for its target: there it goes
+  if (skirmish?.targeting) {
+    const ground = battlefield.groundAt(event.clientX, event.clientY)
+    const charge = superWeapons?.charges.find(c => c.type.id === skirmish!.targeting)
+    skirmish.targeting = undefined
+    if (ground && charge?.ready) fireSpecial(charge, ground)
+    return
+  }
   // placing a structure: a left click puts it down (with both control schemes)
   if (skirmish?.placing) {
     place()
@@ -222,6 +234,11 @@ function onClick(event: MouseEvent) {
 function onRightClick(event: MouseEvent) {
   event.preventDefault()
   if (props.paused || !battlefield) return
+  // a right click puts a special weapon back (it stays ready)
+  if (skirmish?.targeting) {
+    skirmish.targeting = undefined
+    return
+  }
   // placing a structure: a right click stops placing (it stays ready in the sidebar)
   if (skirmish?.placing) {
     skirmish.placing = undefined
@@ -487,7 +504,7 @@ let delivered = 0
  */
 function isDeployable(object: THREE.Object3D) {
   const transport = Battlefield.capacity(object) > 0 && Battlefield.passengers(object).length > 0
-  return object === battlefield?.selected && (object.userData.id === 'MCV' || Battlefield.digsIn(object) || transport)
+  return object === battlefield?.selected && (!!DEPLOYS_INTO[object.userData.id] || Battlefield.digsIn(object) || transport)
     && Battlefield.own(object) && !!object.userData.unit
 }
 
@@ -528,7 +545,8 @@ function canDeploy(object: THREE.Object3D) {
   const unit = object.userData.unit as Unit
   if (Battlefield.capacity(object)) return battlefield!.canUnload(object)
   if (Battlefield.digsIn(object)) return !!unit.posture || battlefield!.canDig(object.position)
-  return !!battlefield!.deployCell(unit)
+  const into = DEPLOYS_INTO[object.userData.id]
+  return !!into && !!battlefield!.deployCell(unit, into.w, into.h)
 }
 
 /** Digs a Tick Tank in where it stands, or out again; not on a slope or a ramp */
@@ -541,21 +559,30 @@ function digIn(object: THREE.Object3D) {
 }
 
 /** Unfolds the MCV into a construction yard where it stands, if the 3 × 3 cells are free. */
+/** What vehicles unfold into (DeploysInto=): the MCV into the construction yard, Firestorm's mobile war factories into a war factory */
+const DEPLOYS_INTO: Record<string, { id: string, w: number, h: number }> = {
+  MCV: { id: 'GACNST', w: 3, h: 3 },
+  MOBWARG: { id: 'GAWEAP', w: 4, h: 3 },
+  MOBWARN: { id: 'NAWEAP', w: 4, h: 3 },
+}
+
 function deployMcv(object: THREE.Object3D) {
   const unit = object.userData.unit as Unit | undefined
-  if (!battlefield || !unit) return
-  if (!battlefield.deployCell(unit)) {
+  const into = DEPLOYS_INTO[object.userData.id]
+  if (!battlefield || !unit || !into) return
+  if (!battlefield.deployCell(unit, into.w, into.h)) {
     sounds.play('evaCannotPlace')
     return
   }
   sounds.play('click')
-  battlefield.deploy(unit, MODELS.GACNST!, props.colour)
-    .then((yard) => {
-      if (!yard) return
-      skirmish?.buildings.push('GACNST')
+  battlefield.deploy(unit, MODELS[into.id]!, props.colour, into.id, into.w, into.h)
+    .then((building) => {
+      if (!building) return
+      skirmish?.buildings.push(into.id)
+      if (FACTORY_IDS.has(into.id)) building.userData.abilities = ['rally']
       buildSound() // it unfolds now
     })
-    .catch(error => console.error('Bauhof konnte nicht aufgebaut werden', error))
+    .catch(error => console.error(`${into.id} konnte nicht aufgebaut werden`, error))
 }
 
 /** Dropships on their way in: the camera follows them until they are down */
@@ -609,6 +636,165 @@ let lastFundsWarning = -Infinity
 const ATTACK_WARNING_INTERVAL = 30
 let lastBaseAttack = -Infinity
 let lastHarvesterAttack = -Infinity
+let superWeapons: SuperWeapons | undefined
+/** Every so often the lamed things crackle */
+let empSparkTime = 0
+
+/**
+ * The player's special weapons charge (with enough power, if they need it) and show in
+ * the sidebar; EVA says when one is ready. One the player clicked in the sidebar that
+ * needs no target (the firestorm, the hunter seeker) goes off at once.
+ */
+function tickSpecials(seconds: number) {
+  const rules = skirmish?.rules
+  if (!skirmish || !rules || !battlefield) return
+  superWeapons ??= new SuperWeapons(rules.superWeapons)
+  superWeapons.sync(onlineBuildings(skirmish))
+  for (const charge of superWeapons.tick(seconds, powerFactor(skirmish) >= 1)) sounds.effect(charge.type.readyVoice, 'voices')
+  const charges = superWeapons.charges
+  if (skirmish.specials.length !== charges.length || skirmish.specials.some((s, i) => s.id !== charges[i]!.type.id)) {
+    skirmish.specials = charges.map(c => ({ id: c.type.id, name: c.type.name, cameo: c.type.cameo, progress: 0, ready: false, active: false }))
+  }
+  charges.forEach((charge, i) => {
+    const special = skirmish.specials[i]!
+    special.progress = Math.round(charge.progress * 100) / 100
+    special.ready = charge.ready
+    special.active = charge.active
+  })
+  const waiting = charges.find(c => c.type.id === skirmish.targeting)
+  if (waiting && !waiting.type.targeted) {
+    skirmish.targeting = undefined
+    if (waiting.ready || waiting.active) fireSpecial(waiting)
+  }
+  const firestorm = charges.some(c => c.type.kind === 'Firestorm' && c.active)
+  battlefield.setFirestorm('player', firestorm)
+  // the firestorm burns what tries to pass it
+  if (firestorm) {
+    for (const unit of battlefield.units) {
+      if (!Battlefield.own(unit.object) && !unit.object.userData.dead && battlefield.inFirestorm(unit.object.position, 'enemy')) {
+        combat?.blast(unit.object.position, 1000, 0.3)
+      }
+    }
+  }
+  // things lamed by a pulse crackle
+  empSparkTime -= seconds
+  if (empSparkTime <= 0) {
+    empSparkTime = 0.15
+    for (const object of [...battlefield.units.map(u => u.object), ...battlefield.structureObjects]) {
+      if (object.userData.empSeconds > 0 && !object.userData.dead) battlefield.effects.empSparks(object.position)
+    }
+  }
+}
+
+/** The player's building that gives a special weapon (the nearest to `point`, if given) */
+function specialSource(charge: SuperWeaponCharge, point?: THREE.Vector3) {
+  const own = battlefield!.structureObjects.filter(o => charge.type.buildings.includes(o.userData.id) && Battlefield.own(o) && !o.userData.dead)
+  if (!point) return own[0]
+  return own.sort((a, b) => a.position.distanceTo(point) - b.position.distanceTo(point))[0]
+}
+
+/** Game seconds to milliseconds of real time at the game speed */
+const later = (seconds: number, then: () => void) => setTimeout(then, (seconds * 1000) / (SPEED_FACTORS[settings.speed] ?? 1))
+
+/** Cells round the target the ion cannon hurts, the pulse lames, the gas poisons */
+const ION_RADIUS = 2
+const EMP_RADIUS = 4
+const GAS_RADIUS = 2.5
+/** Game seconds a pulse lames (Damage= of EMPulseWeapon is in frames) */
+const EMP_FRAMES = 1200
+/** Damage of the hunter seeker (it destroys what it reaches) and of the chemical missile's blast and gas */
+const SEEKER_DAMAGE = 2000
+const CHEM_DAMAGE = 100
+const GAS_DAMAGE = 15
+
+/**
+ * Fires a special weapon, as in the original: the ion cannon strikes from the sky, the
+ * EMP cannon fires a pulse that lames vehicles and buildings, the missile silo sends the
+ * chemical missile (blast and poison gas), the hunter seeker flies to an enemy building
+ * and destroys it, drop pods bring soldiers down, the firestorm is switched on or off.
+ */
+function fireSpecial(charge: SuperWeaponCharge, point?: THREE.Vector3) {
+  if (!battlefield || !combat || !skirmish?.rules) return
+  const source = specialSource(charge, point)
+  superWeapons!.use(charge)
+  const rules = skirmish.rules
+  switch (charge.type.kind) {
+    case 'IonCannon': {
+      if (!point) return
+      // the uplink lines up its dish
+      const uplink = battlefield.structuresOf('GAPLUG').find(Battlefield.own)
+      for (const node of uplink ? [uplink] : []) {
+        node.traverse(child => child.userData.mixer && child !== node && battlefield!.playClip(child, 'Fire'))
+      }
+      sounds.effect(['ION1'], 'shots')
+      later(0.8, () => {
+        battlefield?.effects.ionStrike(point, ION_RADIUS)
+        later(0.5, () => combat?.blast(point, rules.specials.ionDamage, ION_RADIUS))
+      })
+      return
+    }
+    case 'EMPulse': {
+      if (!point || !source) return
+      battlefield.playClip(source, 'Fire')
+      sounds.effect(['PLSECAN2'], 'shots')
+      // the pulse flies over in an arc (Lobber=)
+      const flight = Math.max(0.6, source.position.distanceTo(point) / 8)
+      later(flight, () => {
+        battlefield?.effects.empBurst(point, EMP_RADIUS)
+        combat?.pulse(point, EMP_RADIUS, EMP_FRAMES / 15)
+      })
+      return
+    }
+    case 'ChemMissile': {
+      if (!point || !source) return
+      battlefield.playClip(source, 'Open', { hold: true })
+      sounds.effect(['ICBM1'], 'shots')
+      later(1.5, () => battlefield?.playClip(source, 'Open', { reverse: true }))
+      later(1.2 + source.position.distanceTo(point) / 10, () => {
+        battlefield?.effects.explosion(point, 1.6)
+        battlefield?.effects.gasCloud(point, GAS_RADIUS)
+        combat?.blast(point, CHEM_DAMAGE, GAS_RADIUS)
+        // the gas lingers and poisons who stays in it
+        for (let i = 1; i <= 6; i++) later(i, () => combat?.blast(point, GAS_DAMAGE, GAS_RADIUS, { wall: false }))
+      })
+      return
+    }
+    case 'HunterSeeker': {
+      // it picks an enemy building (else a unit) and flies to it
+      const targets = battlefield.structureObjects.filter(o => !Battlefield.own(o) && !o.userData.dead && o.userData.owner !== 'neutral' && !Battlefield.isWall(o))
+      const units = battlefield.units.map(u => u.object).filter(o => !Battlefield.own(o) && !o.userData.dead)
+      const target = targets[Math.floor(Math.random() * targets.length)] ?? units[0]
+      if (!target || !source) return
+      later(1 + source.position.distanceTo(target.position) / 6, () => {
+        if (target.userData.dead) return
+        battlefield?.effects.explosion(target.position.clone().setY(target.position.y + 0.3), 1.4)
+        combat?.blast(target.position, SEEKER_DAMAGE, 1)
+      })
+      return
+    }
+    case 'DropPod': {
+      if (!point) return
+      const [min, max] = rules.specials.dropPods
+      const count = min + Math.floor(Math.random() * (max - min + 1))
+      for (let i = 0; i < count; i++) {
+        const at = battlefield.openSpot(point.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2.4, 0, (Math.random() - 0.5) * 2.4)))
+        later(0.3 + i * 0.25, () => {
+          if (!battlefield) return
+          battlefield.effects.explosion(at, 0.4)
+          sounds.effect(rules.audio.get('DROPPOD') ?? [], 'shots')
+          const id = i % 3 === 2 ? 'E2' : 'E1'
+          battlefield.addUnit(MODELS[id] ?? UNIT_MODEL, at, props.colour, 'player', props.side)
+            .then((unit) => { unit.object.userData.id = id })
+            .catch(error => console.error('Landekapsel', error))
+        })
+      }
+      return
+    }
+    case 'Firestorm':
+      sounds.effect(charge.active ? ['FIRSTRM1'] : [], 'shots')
+  }
+}
+
 /** Seconds a war factory's door stays open after a vehicle has come out */
 const DOOR_OPEN_SECONDS = 2
 
@@ -630,6 +816,9 @@ async function deliver(info: BuildInfo) {
     clearTimeout(factory.userData.doorTimer)
     factory.userData.doorTimer = setTimeout(() => battlefield?.playClip(factory, 'Open', { reverse: true }), (opens + DOOR_OPEN_SECONDS) * 1000 / (SPEED_FACTORS[settings.speed] ?? 1))
   }
+  // the vehicle appears once the door is open (else it would poke through the closed door)
+  if (opens) await new Promise(resolve => later(opens, () => resolve(undefined)))
+  if (!battlefield || factory.userData.dead) return
   const unit = await battlefield.addUnit(MODELS[info.id] ?? UNIT_MODEL, door, props.colour, 'player', props.side)
   unit.object.userData.id = info.id
   unit.object.rotation.y = Math.atan2(out.x, out.z)
@@ -661,9 +850,7 @@ async function deliver(info: BuildInfo) {
       if (!unit.object.userData.dead) onwards()
     }, 100)
   }
-  // out of the war factory once the door is open
-  if (opens) setTimeout(leave, opens * 1000 / (SPEED_FACTORS[settings.speed] ?? 1))
-  else leave()
+  leave()
 }
 
 /** The first point from `door` along `out` that is off the building's foundation (half a cell beyond its edge) */
@@ -714,8 +901,8 @@ function placeAt(info: BuildInfo, cell: [number, number]) {
     return
   }
   if (info.powersUp) {
-    const tower = battlefield!.structureObjects.find(o => o.userData.footprint?.x === cell[0] && o.userData.footprint?.z === cell[1] && towerFor(info, o))
-    if (tower) mountGun(tower, info.id)
+    const building = upgradeTarget(info, cell[0], cell[1])
+    if (building) mountGun(building, info.id)
     return
   }
   buildStructure(info.id, cell[0], cell[1])
@@ -729,29 +916,41 @@ const PAVING = new Set(['GAPAVE'])
 
 /** Whether a gun (the Vulcan, the SAM) can go onto this building: an own component tower without one */
 function towerFor(info: BuildInfo, object: THREE.Object3D) {
-  return object.userData.id === info.powersUp && Battlefield.own(object) && !object.userData.gun && !object.userData.dead
+  return object.userData.id === info.powersUp && Battlefield.own(object) && !object.userData.dead
+    && !object.userData.gun && !!battlefield?.freeSlot(object)
 }
 
-/** The height of the top of a tower on the cell that the gun fits on, undefined if there is none */
+/** The building on a cell an upgrade fits on (with a free place), if any */
+function upgradeTarget(info: BuildInfo, x: number, z: number) {
+  const building = battlefield?.buildingOn(x, z)
+  return building && towerFor(info, building) ? building : undefined
+}
+
+/** The height of the free place on the building on the cell the upgrade fits on, undefined if there is none */
 function towerTop(info: BuildInfo, x: number, z: number) {
-  const tower = battlefield?.structuresOf(info.powersUp!).find(o => o.userData.footprint?.x === x && o.userData.footprint?.z === z && towerFor(info, o))
-  if (!tower) return undefined
-  tower.updateMatrixWorld(true)
-  const slot = tower.getObjectByName('TowerSlot1')
-  return (slot ? slot.getWorldPosition(new THREE.Vector3()).y : new THREE.Box3().setFromObject(tower).max.y) - tower.position.y
+  const building = upgradeTarget(info, x, z)
+  if (!building) return undefined
+  building.updateMatrixWorld(true)
+  const slot = battlefield!.freeSlot(building)
+  return (slot ? slot.getWorldPosition(new THREE.Vector3()).y : new THREE.Box3().setFromObject(building).max.y) - building.position.y
 }
 
-/** Mounts a gun on a component tower (its TowerSlot1): from now on the tower fires with it (see Combat) */
-async function mountGun(tower: THREE.Object3D, id: string) {
-  tower.userData.gun = true // taken while the model loads
+/**
+ * Mounts an upgrade on its building's next free place: a gun on the component tower
+ * (the tower fires with it from now on, see Combat), a turbine on the power plant, the
+ * uplink and the others on the upgrade center
+ */
+async function mountGun(building: THREE.Object3D, id: string) {
+  const armed = !!skirmish?.rules?.info.get(id)?.weapon
+  if (armed) building.userData.gun = true // taken while the model loads
   skirmish?.buildings.push(id)
   buildSound()
-  const gun = await battlefield?.addUpgrade(tower, MODELS[id]!, props.colour)
+  const upgrade = await battlefield?.addUpgrade(building, MODELS[id]!, props.colour)
     .catch(error => console.error(`${id} konnte nicht montiert werden`, error))
-  if (!gun) return
-  gun.userData.id = id
-  gun.userData.owner = tower.userData.owner
-  tower.userData.gun = gun
+  if (!upgrade) return
+  upgrade.userData.id = id
+  upgrade.userData.owner = building.userData.owner
+  if (armed) building.userData.gun = upgrade
 }
 
 let combat: Combat | undefined
@@ -927,6 +1126,10 @@ onMounted(() => {
     {
       fire: (_, info) => sounds.effect(info.weapon?.reports ?? [], 'shots'),
       impact: weapon => sounds.effect(weapon.impactReports, 'shots'),
+      // CloakSound= of [AudioVisual], for the player's own (the enemy is not heard cloaking)
+      cloak: (object) => {
+        if (Battlefield.own(object)) sounds.effect(skirmish?.rules?.audio.get('CLOAKSOUND') ?? [], 'shots')
+      },
       blast: (_, info, delay) => setTimeout(() => sounds.effect(info.explosionReports, 'shots'), delay * 1000 / (SPEED_FACTORS[settings.speed] ?? 1)),
       die(victim, info, crushed) {
         // run down: the squelch (CrushSound=) instead of the death cry
@@ -993,11 +1196,28 @@ onMounted(() => {
         if (!canDeploy(object)) return false
         if (Battlefield.capacity(object)) unloadTransport(object)
         else if (Battlefield.digsIn(object)) digIn(object)
-        else if (object.userData.id === 'MCV') deployMcv(object)
+        else if (DEPLOYS_INTO[object.userData.id]) deployMcv(object)
         else return false
         return true
       },
       sell: object => canSell(object) && (sell(object), true),
+      // dev tests: put a unit or a finished structure down at once, charge the special weapons
+      async spawn(id, at, owner) {
+        const unit = await battlefield!.addUnit(MODELS[id] ?? UNIT_MODEL, at, owner === 'player' ? props.colour : 0xb3241a, owner,
+          owner === 'player' ? props.side : props.side === 'gdi' ? 'nod' : 'gdi')
+        unit.object.userData.id = id
+        const info = skirmish?.rules?.info.get(id)
+        if (info?.category === 'aircraft') battlefield!.flight.addAircraft(unit, undefined, info.ammo)
+        else if (info?.jumpjet) battlefield!.flight.addJumpjet(unit)
+        return unit.object
+      },
+      async instant(info, cell) {
+        if (info.powersUp || PAVING.has(info.id)) placeAt(info, cell)
+        else await buildStructure(info.id, cell[0], cell[1])
+      },
+      charge() {
+        for (const charge of superWeapons?.charges ?? []) charge.progress = 0.999
+      },
       repair: object => canRepair(object) && (repair(object), true),
       switchPower: object => canSwitch(object) && (switchPower(object), true),
     }))

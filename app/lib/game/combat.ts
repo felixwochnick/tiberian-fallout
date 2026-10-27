@@ -36,6 +36,10 @@ import type { Death, Unit } from './unit'
  * sandbags they drive round.
  */
 
+/** Cells within which a unit sees a cloaked enemy right next to it */
+const DETECT_REACH = 1.5
+/** Game seconds a cloaked thing stays visible after its shot */
+const UNCLOAK_SECONDS = 2
 /** Game seconds between the shots of a burst (Burst=) */
 const BURST_GAP = 0.15
 /** The game logic runs 15 frames a second at game speed factor 1 (see SPEED_FACTORS) */
@@ -146,6 +150,8 @@ export interface CombatEffects {
   die: (victim: THREE.Object3D, info: BuildInfo, crushed?: boolean) => void
   /** A building was destroyed */
   destroyed?: (building: THREE.Object3D) => void
+  /** Something cloaked or uncloaked (sound) */
+  cloak?: (object: THREE.Object3D, cloaked: boolean) => void
   /** A projectile exploded (sound) */
   impact?: (weapon: Weapon, point: THREE.Vector3) => void
   /** One of the explosions of a building blowing up, `delay` seconds from now (sound) */
@@ -208,10 +214,15 @@ export class Combat {
    */
   private targetable(object: THREE.Object3D, weapon: Weapon, other: THREE.Object3D, force = false) {
     if (other === object || other.userData.dead || other.userData.underground) return false
+    // cloaked and not seen by a sensor nor a unit close by: it cannot be fired at
+    if (other.userData.cloaked && !other.userData.detected && Combat.hostile(object, other)) return false
     const unit = other.userData.unit as Unit | undefined
     if (weapon.damage < 0) {
+      // healing (the medic: Organic warhead, soldiers only) or repairing (the repair
+      // vehicle: Mechanical, vehicles only), as the warhead's Verses= says
       const info = this.infoOf(other)
-      return !Combat.hostile(object, other) && info?.category === 'infantry' && this.hp(other) < (info.strength ?? 100)
+      return !Combat.hostile(object, other) && !!other.userData.unit && (weapon.verses[info?.armor ?? 0] ?? 0) > 0
+        && this.hp(other) < (info?.strength ?? 100)
     }
     if (!force && !Combat.hostile(object, other)) return false
     const air = !!unit && this.battlefield.flight.airborne(unit)
@@ -271,6 +282,10 @@ export class Combat {
   update(seconds: number, speed: number) {
     const dt = seconds * speed
     this.clock += dt
+    // electromagnetic pulses wear off
+    for (const object of [...this.battlefield.units.map(u => u.object), ...this.battlefield.structureObjects]) {
+      if (object.userData.empSeconds > 0) object.userData.empSeconds = Math.max(0, object.userData.empSeconds - dt)
+    }
     /** Units whose gun was pointed at a target this frame (the others level theirs) */
     const aiming = new Set<THREE.Object3D>()
     for (const unit of [...this.battlefield.units]) {
@@ -282,6 +297,8 @@ export class Combat {
       const fighter = this.fighters.get(unit) ?? { ordered: false, cooldown: 0, chase: 0 }
       this.fighters.set(unit, fighter)
       fighter.cooldown = Math.max(0, fighter.cooldown - dt)
+      // lamed by an electromagnetic pulse: it does nothing until it wears off
+      if (object.userData.empSeconds > 0) continue
       // digging in or out: no shot meanwhile
       if (unit.changingPosture) continue
       /** Dug in (the Tick Tank): it turns its turret, but does not go after anything */
@@ -387,6 +404,7 @@ export class Combat {
       }
     }
     this.updateTowers(dt)
+    this.cloak(dt)
     for (const unit of this.battlefield.units) {
       if (aiming.has(unit.object) || unit.object.userData.dead) continue
       this.elevate(unit.object, undefined, dt)
@@ -395,6 +413,42 @@ export class Combat {
     this.crush()
     this.fly(dt)
     this.animate(dt)
+  }
+
+  /**
+   * Cloaking, like in the original: what is Cloakable= (the stealth tank; the limpet drone
+   * dug in) and what stands within CloakRadiusInCells= of its side's cloak generator (the
+   * stealth generator; the mobile one set up) is cloaked, but for a moment after each of
+   * its shots. Cloaked enemies are seen by Sensors= buildings within their sight and by
+   * units right next to them – only then can they be fired at.
+   */
+  private cloak(dt: number) {
+    const all = [...this.battlefield.units.map(u => u.object), ...this.battlefield.structureObjects].filter(o => !o.userData.dead)
+    const generators = all.filter((o) => {
+      const info = this.infoOf(o)
+      if (!info?.cloakRadius || o.userData.poweredOff || o.userData.empSeconds > 0) return false
+      return !info.cloakRadiusDeployed || !!(o.userData.unit as Unit | undefined)?.posture
+    })
+    for (const object of all) {
+      object.userData.uncloak = Math.max(0, (object.userData.uncloak ?? 0) - dt)
+      const info = this.infoOf(object)
+      const unit = object.userData.unit as Unit | undefined
+      const self = !!info?.cloakable && (!info.cloakDeployed || !!unit?.posture)
+      const covered = generators.some(g => g !== object && g.userData.owner === object.userData.owner
+        && Battlefield.reach(g.position, object) <= this.infoOf(g)!.cloakRadius)
+      const cloaked = (self || covered) && !(object.userData.uncloak > 0) && !object.userData.flyer
+      if (cloaked !== !!object.userData.cloaked) {
+        object.userData.cloaked = cloaked
+        this.effects.cloak?.(object, cloaked)
+      }
+      object.userData.detected = cloaked && all.some((other) => {
+        if (!Combat.hostile(other, object)) return false
+        const sight = this.infoOf(other)
+        const range = sight?.sensors ? sight.sight : DETECT_REACH
+        return Battlefield.reach(other.position, object) <= range
+      })
+      this.battlefield.showCloaked(object, cloaked, !!object.userData.detected)
+    }
   }
 
   /** The base defences and their targets (each keeps its own, like a unit) */
@@ -406,6 +460,8 @@ export class Combat {
    */
   private armament(object: THREE.Object3D) {
     const own = this.infoOf(object)
+    // the EMP cannon fires only when the player aims its pulse
+    if (own?.manualOnly) return undefined
     if (own?.weapon) return own
     // (true while its model is still loading)
     const gun = object.userData.gun as THREE.Object3D | true | undefined
@@ -419,7 +475,7 @@ export class Combat {
    */
   private updateTowers(dt: number) {
     for (const object of this.battlefield.structureObjects) {
-      const info = object.userData.dead || object.userData.poweredOff ? undefined : this.armament(object)
+      const info = object.userData.dead || object.userData.poweredOff || object.userData.empSeconds > 0 ? undefined : this.armament(object)
       const weapon = info?.weapon
       if (!info || !weapon) continue
       const fighter = this.towers.get(object) ?? { ordered: false, cooldown: 0, chase: 0 }
@@ -567,6 +623,8 @@ export class Combat {
 
   private fire(attacker: THREE.Object3D, target: THREE.Object3D, info: BuildInfo) {
     const weapon = info.weapon!
+    // a shot gives it away
+    attacker.userData.uncloak = UNCLOAK_SECONDS
     this.effects.fire(attacker, info)
     // the walkers fire with their own clip (barrels, recoil, muzzle flashes at the
     // guns); for the others a muzzle flash in front of the soldier
@@ -796,6 +854,42 @@ export class Combat {
       if (distance > weapon.spread) continue
       this.damage(victim, weapon, 1 - (1 - weapon.percentAtMax) * (distance / weapon.spread))
     }
+  }
+
+  /**
+   * An explosion that is no unit's shot (a superweapon): `damage` at `point`, less
+   * towards the edge of `radius` (cells); `wall`: it also breaks walls
+   */
+  blast(point: THREE.Vector3, damage: number, radius: number, { percentAtMax = 0.5, wall = true, spare }: { percentAtMax?: number, wall?: boolean, spare?: string } = {}) {
+    const weapon: Weapon = {
+      name: 'Blast', damage, rof: 1, range: 0, verses: [1, 1, 1, 1, 1], reports: [], impactReports: [], wall, speed: 0,
+      spread: radius, percentAtMax, aa: true, ag: true, burst: 1,
+    }
+    for (const victim of [...this.battlefield.units.map(u => u.object), ...this.battlefield.structureObjects]) {
+      if (victim.userData.dead || victim.userData.owner === 'neutral' || (spare && victim.userData.owner === spare)) continue
+      const distance = Battlefield.reach(point, victim)
+      if (distance > radius) continue
+      this.damage(victim, weapon, 1 - (1 - percentAtMax) * (distance / radius))
+    }
+  }
+
+  /**
+   * An electromagnetic pulse (EMEffect=): vehicles and buildings within `radius` of
+   * `point` are lamed for `seconds` – they neither move nor fire; soldiers are not hit
+   */
+  pulse(point: THREE.Vector3, radius: number, seconds: number) {
+    const hit: THREE.Object3D[] = []
+    for (const object of [...this.battlefield.units.map(u => u.object), ...this.battlefield.structureObjects]) {
+      if (object.userData.dead || Battlefield.reach(point, object) > radius) continue
+      if (this.infoOf(object)?.category === 'infantry') continue
+      object.userData.empSeconds = Math.max(object.userData.empSeconds ?? 0, seconds)
+      const unit = object.userData.unit as Unit | undefined
+      unit?.stop()
+      const fighter = unit && this.fighters.get(unit)
+      if (fighter) fighter.target = undefined
+      hit.push(object)
+    }
+    return hit
   }
 
   /** Damage times the warhead's Verses= factor for the victim's Armor=, times `share` (of an explosion). */

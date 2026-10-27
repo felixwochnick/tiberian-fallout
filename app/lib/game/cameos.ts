@@ -3,6 +3,7 @@ import { MixArchive } from '../formats/mix'
 import { decodePalette, decodeShp, frameToRgba } from '../formats/shp'
 import type { AssetStore } from '../storage/asset-store'
 import { expansionArchive, gameIni } from './gamefiles'
+import { superWeaponTypes, type SuperWeaponType } from './superweapons'
 
 /**
  * Build options of the sidebar and their cameos (the 64 × 48 build pictures).
@@ -44,6 +45,15 @@ export const BUILD_OPTIONS: Record<'gdi' | 'nod', BuildOptions> = {
       { id: 'GAGATE_B', name: 'Tor (gedreht)' },
       { id: 'GAPAVE', name: 'Betonplatten' },
       { id: 'NAPULS', name: 'EMP-Kanone' },
+      { id: 'GAPOWRUP', name: 'Turbine' },
+      { id: 'GADEPT', name: 'Service-Depot' },
+      { id: 'GAROCK', name: 'RPG-Aufsatz' },
+      { id: 'GAFIRE', name: 'Feuersturm-Generator' },
+      { id: 'GAFSDF', name: 'Feuersturm-Wand' },
+      { id: 'GAPLUG', name: 'Upgrade-Zentrum' },
+      { id: 'GAPLUG2', name: 'Seeker-Steuerung' },
+      { id: 'GAPLUG3', name: 'Ionenkanonen-Uplink' },
+      { id: 'GAPLUG4', name: 'Drop-Pod-Knoten' },
     ],
     units: [
       { id: 'E1', name: 'Leichte Infanterie' },
@@ -56,7 +66,18 @@ export const BUILD_OPTIONS: Record<'gdi' | 'nod', BuildOptions> = {
       { id: 'MMCH', name: 'Titan' },
       { id: 'APC', name: 'Amphibien-Transporter' },
       { id: 'LPST', name: 'Mobile Sensoreinheit' },
+      { id: 'HVR', name: 'Hover-MLRS' },
+      { id: 'SONIC', name: 'Disruptor' },
+      { id: 'JUGG', name: 'Juggernaut' },
+      { id: 'MOBILEMP', name: 'Mobiler EM-Puls' },
+      { id: 'LIMPET', name: 'Limpet-Drohne' },
+      { id: 'HMEC', name: 'Mammut Mk. II' },
+      { id: 'MOBWARG', name: 'Mobile Waffenfabrik' },
+      { id: 'MCV', name: 'MBF' },
+      { id: 'GHOST', name: 'Ghost Stalker' },
       { id: 'ORCA', name: 'Orca-Jäger' },
+      { id: 'ORCAB', name: 'Orca-Bomber' },
+      { id: 'TRNSPORT', name: 'Carryall' },
     ],
   },
   nod: {
@@ -76,6 +97,13 @@ export const BUILD_OPTIONS: Record<'gdi' | 'nod', BuildOptions> = {
       { id: 'NAGATE_B', name: 'Nod-Tor (gedreht)' },
       { id: 'GAPAVE', name: 'Betonplatten' },
       { id: 'NAPULS', name: 'EMP-Kanone' },
+      { id: 'NAAPWR', name: 'Fortschrittliches Kraftwerk' },
+      { id: 'NAPOST', name: 'Laserzaun' },
+      { id: 'NASTLH', name: 'Stealth-Generator' },
+      { id: 'NAOBEL', name: 'Obelisk des Lichts' },
+      { id: 'NATMPL', name: 'Tempel von Nod' },
+      { id: 'NAMISL', name: 'Raketensilo' },
+      { id: 'NAWAST', name: 'Abfallverwertung' },
     ],
     units: [
       { id: 'E1', name: 'Leichte Infanterie' },
@@ -89,7 +117,19 @@ export const BUILD_OPTIONS: Record<'gdi' | 'nod', BuildOptions> = {
       { id: 'ART2', name: 'Artillerie' },
       { id: 'SAPC', name: 'Untergrund-APC' },
       { id: 'LPST', name: 'Mobile Sensoreinheit' },
+      { id: 'STNK', name: 'Stealth-Panzer' },
+      { id: 'REPAIR', name: 'Reparaturfahrzeug' },
+      { id: 'SUBTANK', name: 'Devil\'s Tongue' },
+      { id: 'REAPER', name: 'Cyborg Reaper' },
+      { id: 'SGEN', name: 'Mobiler Stealth-Generator' },
+      { id: 'LIMPET', name: 'Limpet-Drohne' },
+      { id: 'WEED', name: 'Weed Eater' },
+      { id: 'MOBWARN', name: 'Faust von Nod' },
+      { id: 'MCV', name: 'MBF' },
+      { id: 'CYC2', name: 'Cyborg-Kommando' },
+      { id: 'MHIJACK', name: 'Mutanten-Hijacker' },
       { id: 'APACHE', name: 'Harpy' },
+      { id: 'SCRIN', name: 'Banshee' },
     ],
   },
 }
@@ -115,6 +155,10 @@ export interface BuildRules {
   survivors: Survivors
   /** The general sounds of [AudioVisual] by key (GATEUP, GATEDOWN, DIGSOUND, CLOAKSOUND …): file names */
   audio: Map<string, string[]>
+  /** The special weapons and the buildings that give them */
+  superWeapons: SuperWeaponType[]
+  /** Values of [General] and [CombatDamage] the special weapons need */
+  specials: { ionDamage: number, dropPods: [number, number] }
 }
 
 export interface Survivors {
@@ -184,6 +228,17 @@ export interface BuildInfo {
   crewed: boolean
   /** Heard when a crusher runs it down (CrushSound=: soldiers, sandbags) */
   crushSound: string[]
+  /** It cloaks itself (Cloakable=); `cloakDeployed`: only when dug in (the limpet drone) */
+  cloakable: boolean
+  cloakDeployed: boolean
+  /** It cloaks its own side round it (CloakRadiusInCells= of a CloakGenerator=, for the mobile one of what it deploys into); 0: not */
+  cloakRadius: number
+  /** Only when set up (the mobile stealth generator) */
+  cloakRadiusDeployed: boolean
+  /** It sees cloaked enemies within its sight (Sensors=) */
+  sensors: boolean
+  /** Its weapon fires only as a special weapon the player aims (EMPulseCannon=: the EMP cannon) */
+  manualOnly: boolean
   /** Hit points (Strength=) */
   strength: number
   /** Can be repaired (Repairable=, default yes) */
@@ -328,6 +383,9 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       gate: yes(section?.get('GATE')),
       crewed: yes(section?.get('CREWED')),
       crushSound: list(section?.get('CRUSHSOUND')),
+      ...cloaking(section),
+      sensors: yes(section?.get('SENSORS')),
+      manualOnly: yes(section?.get('EMPULSECANNON')),
       armor: Math.max(0, ARMOR_TYPES.indexOf((section?.get('ARMOR') ?? 'none').toLowerCase())),
       weapon: weapon && {
         name: weaponName!,
@@ -352,6 +410,17 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
           : undefined,
       },
       explosionReports: reportsOf(section?.get('EXPLOSION')),
+    }
+  }
+  /** Cloaking, also of what a unit deploys into (DeploysInto=: the limpet drone dug in, the mobile stealth generator set up) */
+  const cloaking = (section?: Map<string, string>) => {
+    const deployed = rules.get(section?.get('DEPLOYSINTO')?.toUpperCase() ?? '')
+    const generator = (s?: Map<string, string>) => yes(s?.get('CLOAKGENERATOR')) ? Number(s?.get('CLOAKRADIUSINCELLS') ?? 0) : 0
+    return {
+      cloakable: yes(section?.get('CLOAKABLE')) || yes(deployed?.get('CLOAKABLE')),
+      cloakDeployed: !yes(section?.get('CLOAKABLE')) && yes(deployed?.get('CLOAKABLE')),
+      cloakRadius: generator(section) || generator(deployed),
+      cloakRadiusDeployed: !generator(section) && !!generator(deployed),
     }
   }
   const add = (option: BuildOption, structure: boolean) => {
@@ -429,6 +498,11 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
   }
   return { prerequisites, generic, info, tiberiumValue: Number(rules.get('RIPARIUS')?.get('VALUE') ?? 25),
     blueTiberiumValue: Number(rules.get('VINIFERA')?.get('VALUE') ?? 50), upkeep,
+    superWeapons: superWeaponTypes(rules),
+    specials: {
+      ionDamage: Number(rules.get('COMBATDAMAGE')?.get('IONCANNONDAMAGE') ?? 751),
+      dropPods: [Number(general?.get('DROPPODINFANTRYMINIMUM') ?? 5), Number(general?.get('DROPPODINFANTRYMAXIMUM') ?? 8)],
+    },
     audio: new Map([...(rules.get('AUDIOVISUAL') ?? new Map())].map(([key, value]) => [key, list(value)] as [string, string[]]).filter(([, files]) => files.length)),
     survivors: {
       rate: share(general?.get('SURVIVORRATE'), DEFAULT_SURVIVORS.rate),
@@ -447,7 +521,7 @@ export function canBuild(rules: BuildRules, id: string, owned: string[], structu
 }
 
 /** Cameo pictures as data URLs, by object id; missing ones are left out. */
-export async function loadCameos(store: AssetStore, ids: string[], side: 'gdi' | 'nod' = 'gdi'): Promise<Map<string, string>> {
+export async function loadCameos(store: AssetStore, ids: string[], side: 'gdi' | 'nod' = 'gdi', images: Record<string, string> = {}): Promise<Map<string, string>> {
   const cameos = new Map<string, string>()
   const tibsun = await store.get('TIBSUN.MIX')
   if (!tibsun) return cameos
@@ -467,9 +541,10 @@ export async function loadCameos(store: AssetStore, ids: string[], side: 'gdi' |
   if (!pal) return cameos
   const palette = decodePalette(pal)
 
-  for (const id of ids) {
+  // `images`: pictures named directly (the special weapons' SidebarImage=)
+  for (const id of [...ids, ...Object.keys(images)]) {
     const image = rules.get(id)?.get('IMAGE') ?? id
-    const cameo = art.get(image)?.get('CAMEO') ?? art.get(id)?.get('CAMEO')
+    const cameo = images[id] ?? art.get(image)?.get('CAMEO') ?? art.get(id)?.get('CAMEO')
     if (!cameo) continue
     let bytes = await sidebar?.read(`${cameo}.SHP`) ?? await conquer?.read(`${cameo}.SHP`)
     for (const mix of extra) bytes ??= await mix?.read(`${cameo}.SHP`)
