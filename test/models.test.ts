@@ -46,6 +46,11 @@ const buildings = readdirSync(MODELS).filter(file => file.endsWith('.glb')).filt
 
 describe('all models', () => {
   const all = readdirSync(MODELS).filter(file => file.endsWith('.glb'))
+  it.each(all)('%s: no part is blown up at rest', (file) => {
+    const model = gltf(file) as Gltf & { nodes: { name?: string, scale?: number[] }[] }
+    const blown = model.nodes.filter(node => Math.max(...(node.scale ?? [1]).map(Math.abs)) > MAX_SCALE).map(node => node.name)
+    expect(blown).toEqual([])
+  })
   it.each(all)('%s: no clip blows a part up', (file) => {
     const model = gltf(file)
     const blown: string[] = []
