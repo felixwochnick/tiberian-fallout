@@ -1,9 +1,10 @@
 """
 Tiberian Fallout – GDI amphibious APC (APC), after Tiberian Sun.
 
-A boxy amphibious troop carrier on six big wheels, three a side, tucked under the
-wide upper hull: a boat-like bow under a long sloped glacis with vision blocks, a flat
-roof with a raised troop compartment at the back (two hatches, periscopes, grab rails,
+A low, flat amphibious troop carrier on six big wheels, three a side, under the wide
+upper hull that overhangs them: a boat-like bow rising under a long overhang to the
+sloped glacis with four big blue windows, a flat roof with a low troop compartment at
+the back (two hatches, periscopes, grab rails,
 an antenna), small square windows along the slanted flanks, a folded trim vane on the
 glacis, two water-jet outlets low at the back and the big rear ramp between the tail
 lights. The hull is in the light camouflage of the buildings, tinted with the house
@@ -38,21 +39,22 @@ import nodvehicle as nod  # noqa: E402
 OUT = os.path.join(nod.PROJECT, 'public', 'models', 'APC.glb')
 BLEND = os.path.join(HERE, 'APC.blend')
 
-WHEEL_RADIUS = 0.075
-WHEEL_X = 0.265
-WHEEL_WIDTH = 0.065
-AXLES = (-0.27, 0.0, 0.27)
+WHEEL_RADIUS = 0.1
+WHEEL_X = 0.262
+WHEEL_WIDTH = 0.085
+AXLES = (-0.25, 0.04, 0.31)
 WALK_FRAMES = 26
 WALK_SPEED = 2 * math.pi * WHEEL_RADIUS / (WALK_FRAMES / kit.FPS)
 UNLOAD_FRAMES = 24
 # the hull: the wide upper part over the wheels (sides slanted in), the glacis from
 # its front edge up to the roof
-SPONSON = (0.19, 0.31)        # bottom of the upper hull (z), its half width there
-ROOF = (0.37, 0.27)           # the roof (z), its half width
-FRONT = (-0.5, -0.3)          # the glacis: bottom edge (y), top edge (y)
-BACK = 0.44
-RAMP_HINGE = Vector((0, 0.452, 0.09))
-RAMP_HEIGHT = 0.26
+SPONSON = (0.215, 0.32)       # bottom of the upper hull (z), its half width there
+ROOF = (0.35, 0.28)           # the roof (z), its half width
+FRONT = (-0.54, -0.3)         # the glacis: bottom edge (y), top edge (y)
+BACK = 0.46
+BELLY = (0.065, -0.4)         # the belly's bottom (z) and where the bow starts to rise (y)
+RAMP_HINGE = Vector((0, BACK + 0.012, 0.09))
+RAMP_HEIGHT = 0.24
 RAMP_OPEN = math.radians(-110)  # down: its top edge on the ground
 SCALE = 1.0
 
@@ -87,6 +89,11 @@ def glacis(t, out=0.0):
 GLACIS_TILT = math.atan2(ROOF[0] - SPONSON[0], FRONT[1] - FRONT[0]) - math.pi / 2  # a thin plate's tilt (about x) onto it
 
 
+def bow_y(z):
+    """The front of the belly's rising bow (y) at height z."""
+    return BELLY[1] + (FRONT[0] - 0.01 - BELLY[1]) * (z - BELLY[0]) / (SPONSON[0] + 0.01 - BELLY[0])
+
+
 def side_x(z):
     """The upper hull's half width at height z (its flanks lean in)."""
     return SPONSON[1] + (ROOF[1] - SPONSON[1]) * (z - SPONSON[0]) / (ROOF[0] - SPONSON[0])
@@ -103,15 +110,15 @@ def hull(m, root):
     shell = kit.merge('Hull', [
         # the bow and belly between the wheels, boat-like in front
         kit.hexahedron('Belly', m['sand'], (
-            (-0.18, -0.38, 0.06), (0.18, -0.38, 0.06), (0.18, BACK, 0.06), (-0.18, BACK, 0.06),
+            (-0.18, BELLY[1], BELLY[0]), (0.18, BELLY[1], BELLY[0]), (0.18, BACK, BELLY[0]), (-0.18, BACK, BELLY[0]),
             (-0.2, FRONT[0] - 0.01, z0 + 0.01), (0.2, FRONT[0] - 0.01, z0 + 0.01), (0.2, BACK, z0 + 0.01), (-0.2, BACK, z0 + 0.01)), bevel=0.012),
         kit.hexahedron('Upper', m['sand'], (
             (-w0, FRONT[0], z0), (w0, FRONT[0], z0), (w0, BACK, z0), (-w0, BACK, z0),
             (-w1, FRONT[1], z1), (w1, FRONT[1], z1), (w1, BACK - 0.01, z1), (-w1, BACK - 0.01, z1)), bevel=0.014),
-        # the raised troop compartment at the back
+        # the low raised troop compartment at the back
         kit.hexahedron('Compartment', m['sand'], (
-            (-0.21, -0.04, z1 - 0.01), (0.21, -0.04, z1 - 0.01), (0.21, 0.42, z1 - 0.01), (-0.21, 0.42, z1 - 0.01),
-            (-0.19, 0.0, z1 + 0.06), (0.19, 0.0, z1 + 0.06), (0.19, 0.41, z1 + 0.06), (-0.19, 0.41, z1 + 0.06)), bevel=0.01),
+            (-0.21, -0.06, z1 - 0.01), (0.21, -0.06, z1 - 0.01), (0.21, 0.44, z1 - 0.01), (-0.21, 0.44, z1 - 0.01),
+            (-0.19, -0.02, z1 + 0.05), (0.19, -0.02, z1 + 0.05), (0.19, 0.43, z1 + 0.05), (-0.19, 0.43, z1 + 0.05)), bevel=0.01),
     ])
     return camo(shell, root)
 
@@ -119,7 +126,7 @@ def hull(m, root):
 def details(m):
     z0, _ = SPONSON
     z1, w1 = ROOF
-    top = z1 + 0.06
+    top = z1 + 0.05
     parts = [
         # roof: a house-colour plate on the compartment, two hatches, periscopes, rails
         box('RoofPlate', m['remap'], (0.3, 0.3, 0.008), (0, 0.22, top + 0.002), bevel=0.003),
@@ -139,39 +146,40 @@ def details(m):
         cylinder('AntennaBase', m['dark'], 0.012, 0.02, (0.2, 0.36, top + 0.008), segments=8, bevel=0),
     ]
     # the glacis: vision blocks, the folded trim vane, headlights
-    for k, x in enumerate((-0.16, -0.06, 0.06, 0.16)):
-        p, _ = glacis(0.86, 0.004)
-        parts.append(box(f'Vision{k}', m['glass'], (0.06, 0.008, 0.022), (x, p.y, p.z), bevel=0.002, rotation=(GLACIS_TILT, 0, 0)))
-    p, _ = glacis(0.42, 0.01)
-    parts += [box('TrimVane', m['steel'], (0.46, 0.012, 0.11), (0, p.y, p.z), bevel=0.004, rotation=(GLACIS_TILT, 0, 0)),
-              *[box(f'TrimVaneRib{k}', m['steel_light'], (0.012, 0.012, 0.1), (x, p.y - 0.008, p.z + 0.006), bevel=0.002, rotation=(GLACIS_TILT, 0, 0))
+    for k, x in enumerate((-0.165, -0.055, 0.055, 0.165)):
+        p, _ = glacis(0.74, 0.004)
+        parts += [box(f'Vision{k}', m['glass'], (0.085, 0.008, 0.05), (x, p.y, p.z), bevel=0.003, rotation=(GLACIS_TILT, 0, 0)),
+                  box(f'VisionFrame{k}', m['steel'], (0.097, 0.006, 0.062), (x, p.y + 0.002, p.z), bevel=0.003, rotation=(GLACIS_TILT, 0, 0))]
+    p, _ = glacis(0.3, 0.008)
+    parts += [box('TrimVane', m['steel'], (0.46, 0.012, 0.06), (0, p.y, p.z), bevel=0.004, rotation=(GLACIS_TILT, 0, 0)),
+              *[box(f'TrimVaneRib{k}', m['steel_light'], (0.012, 0.012, 0.05), (x, p.y - 0.008, p.z + 0.004), bevel=0.002, rotation=(GLACIS_TILT, 0, 0))
                 for k, x in enumerate((-0.15, 0.0, 0.15))]]
     for s in (-1, 1):
-        p, n = glacis(0.12, 0.0)
+        p, n = glacis(0.1, 0.0)
         parts += [
             *detail.lamp(f'Headlight{s}', m['dark'], m['lamp_white'], (s * 0.23, p.y - 0.006, p.z + 0.004), (0, -1, 0.3), 0.016),
-            box(f'TowHook{s}', m['steel'], (0.03, 0.04, 0.03), (s * 0.12, FRONT[0] + 0.005, 0.15), bevel=0.005),
+            box(f'TowHook{s}', m['steel'], (0.03, 0.04, 0.03), (s * 0.12, bow_y(0.15) - 0.006, 0.15), bevel=0.005),
             # house-colour stripes along the lower edge of the flanks
-            box(f'Stripe{s}', m['remap'], (0.008, BACK - FRONT[0] - 0.06, 0.03), (s * (side_x(0.215) + 0.002), (FRONT[0] + BACK) / 2 + 0.02, 0.215),
+            box(f'Stripe{s}', m['remap'], (0.008, BACK - FRONT[0] - 0.06, 0.03), (s * (side_x(z0 + 0.025) + 0.002), (FRONT[0] + BACK) / 2 + 0.02, z0 + 0.025),
                 bevel=0.002, rotation=(0, -s * SIDE_TILT, 0)),
             # mud flaps behind the wheels
-            *[box(f'MudFlap{s}{k}', m['dark'], (0.06, 0.006, 0.06), (s * WHEEL_X, y + WHEEL_RADIUS + 0.02, 0.15), bevel=0.002)
+            *[box(f'MudFlap{s}{k}', m['dark'], (0.06, 0.006, 0.06), (s * WHEEL_X, y + WHEEL_RADIUS + 0.025, z0 - 0.04), bevel=0.002)
               for k, y in enumerate(AXLES)],
             # the water jets low at the back, tail lights beside the ramp
-            cylinder(f'Jet{s}', m['steel'], 0.035, 0.05, (s * 0.24, BACK + 0.01, 0.12), rotation=(math.pi / 2, 0, 0), segments=14),
-            cylinder(f'JetMouth{s}', m['dark'], 0.026, 0.052, (s * 0.24, BACK + 0.012, 0.12), rotation=(math.pi / 2, 0, 0), segments=14, bevel=0),
-            *detail.lamp(f'TailLight{s}', m['dark'], m['lamp_red'], (s * 0.235, BACK + 0.004, 0.33), (0, 1, 0), 0.013),
+            cylinder(f'Jet{s}', m['steel'], 0.034, 0.05, (s * 0.25, BACK + 0.01, z0 + 0.045), rotation=(math.pi / 2, 0, 0), segments=14),
+            cylinder(f'JetMouth{s}', m['dark'], 0.025, 0.052, (s * 0.25, BACK + 0.012, z0 + 0.045), rotation=(math.pi / 2, 0, 0), segments=14, bevel=0),
+            *detail.lamp(f'TailLight{s}', m['dark'], m['lamp_red'], (s * 0.25, BACK + 0.004, z1 - 0.03), (0, 1, 0), 0.013),
             box(f'RampHinge{s}', m['steel'], (0.05, 0.03, 0.03), (s * 0.13, RAMP_HINGE.y, RAMP_HINGE.z), bevel=0.004),
         ]
         # windows along the flanks
-        for k, y in enumerate((-0.12, 0.08, 0.26)):
-            z = 0.29
-            parts += [box(f'Window{s}{k}', m['glass'], (0.008, 0.06, 0.05), (s * (side_x(z) + 0.002), y, z), bevel=0.003, rotation=(0, -s * SIDE_TILT, 0)),
-                      box(f'WindowFrame{s}{k}', m['steel'], (0.006, 0.074, 0.064), (s * side_x(z), y, z), bevel=0.003, rotation=(0, -s * SIDE_TILT, 0))]
-        parts += detail.rivets(f'SideRivets{s}', m['steel_light'], (s * (side_x(0.35) + 0.002), -0.25, 0.35), (s * (side_x(0.35) + 0.002), 0.4, 0.35), 10,
+        for k, y in enumerate((-0.11, 0.1, 0.28)):
+            z = (z0 + z1) / 2 + 0.005
+            parts += [box(f'Window{s}{k}', m['glass'], (0.008, 0.07, 0.045), (s * (side_x(z) + 0.002), y, z), bevel=0.003, rotation=(0, -s * SIDE_TILT, 0)),
+                      box(f'WindowFrame{s}{k}', m['steel'], (0.006, 0.084, 0.058), (s * side_x(z), y, z), bevel=0.003, rotation=(0, -s * SIDE_TILT, 0))]
+        parts += detail.rivets(f'SideRivets{s}', m['steel_light'], (s * (side_x(z1 - 0.018) + 0.002), -0.25, z1 - 0.018), (s * (side_x(z1 - 0.018) + 0.002), 0.42, z1 - 0.018), 10,
                                axis='X')
     # the doorway behind the ramp (shows when it is down)
-    parts.append(box('Doorway', m['dark'], (0.32, 0.01, 0.24), (0, BACK + 0.001, 0.22), bevel=0))
+    parts.append(box('Doorway', m['dark'], (0.3, 0.01, 0.21), (0, BACK + 0.001, 0.215), bevel=0))
     return kit.merge('HullDetails', parts)
 
 
@@ -215,4 +223,4 @@ def build():
 
 
 if __name__ == '__main__':
-    nod.main(build, OUT, BLEND, {'Idle': [0], 'Unload': [12]}, scale=1.4, target=(0, 0, 0.2))
+    nod.main(build, OUT, BLEND, {'Idle': [0], 'Walk': [6], 'Unload': [12]}, scale=1.4, target=(0, 0, 0.2))

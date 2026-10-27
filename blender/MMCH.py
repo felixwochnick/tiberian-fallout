@@ -1,11 +1,12 @@
 """
 Tiberian Fallout – GDI Titan (MMCH), after Tiberian Sun.
 
-A big walker: a wide, flat, faceted torso in desert camouflage with a lit vision
-slit in its chin, a small cupola on the roof, a sensor box with a lit window at the
-back right and two tall whip antennas. The long cannon lies along the left side on
-its mount, an equipment pod with a searchlight on the right; house-colour panels on
-both. Two heavy legs: armoured thighs and shins (house-colour shin plates), big knee
+A tall walker, about 1.3 times the Wolverine's height: a compact, faceted torso in
+desert camouflage on long legs (as on the original's cameo), a lit vision slit in its
+chin, a small cupola on the roof, a sensor box with a lit window and a red beacon at
+the back and two whip antennas. The long cannon lies along its right side (-x, upper
+left on screen) on its mount, an equipment pod with a searchlight on the other side;
+house-colour panels on both. Two long legs: armoured thighs and shins (house-colour shin plates), big knee
 joints with pistons, broad feet with three toes and a heel spur.
 
 Rig: empties, no armature (see walker.py): Body → torso and guns, Hip → Knee → Ankle.
@@ -19,7 +20,7 @@ Animations (glTF clips, merged from the NLA tracks of the same name)
 
 Run headless:
 
-    Blender -b --factory-startup --python blender/MMCH.py [-- --preview <dir>]
+    blender -b --factory-startup --python blender/MMCH.py [-- --preview <dir>]
 
 Units: 1 = one map cell. Blender Z is up; the walker looks along -Y (glTF +Z). The
 origin is on the ground between its feet.
@@ -29,7 +30,7 @@ import os
 import sys
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -41,18 +42,24 @@ PROJECT = os.path.dirname(HERE)
 OUT = os.path.join(PROJECT, 'public', 'models', 'MMCH.glb')
 BLEND = os.path.join(HERE, 'MMCH.blend')
 
-HIP_Z = 0.58
+# The torso is modelled as before (hips at TORSO_HIP, sides at x = ±0.25) and then
+# narrowed and lifted onto the longer legs (reshape): slender legs and a compact body
+# as on the original's cameo.
+TORSO_HIP = 0.58
+LIFT = 0.07                             # the torso is raised by this onto the longer legs
+NARROW = 0.84                           # and narrowed (x) by this
+HIP_Z = TORSO_HIP + LIFT
 HIP_X = 0.12
-THIGH = 0.28
-SHIN = 0.27
+THIGH = 0.33
+SHIN = 0.31
 WALK_FRAMES = 48
-SWING = 0.28
+SWING = 0.26
 BEND = 0.65
 FIRE_FRAMES = 30
-CANNON = Vector((-0.34, -0.17, 0.74))   # the barrel's breech, on the left mount
-BARREL = 0.62
+CANNON = Vector((-0.3, -0.17, 0.74 + LIFT))   # the barrel's breech, on the mount at the right (-x)
+BARREL = 0.56
 LOW, TOP = 0.6, 0.88                    # the torso's bottom and roof
-SCALE = 1.15                            # the whole walker: bigger than the Wolverine, as in the original
+SCALE = 0.86                            # the whole walker: about 1.3 times the Wolverine's height
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -98,7 +105,7 @@ def torso(m, root):
             (-0.22, -0.23, LOW + 0.07), (0.22, -0.23, LOW + 0.07), (0.22, 0.2, LOW + 0.07), (-0.22, 0.2, LOW + 0.07)), bevel=0.012),
     ]), root)
     parts = [
-        box('Pelvis', m['pod_dark'], (0.3, 0.2, 0.1), (0, 0.01, HIP_Z + 0.02), bevel=0.012),
+        box('Pelvis', m['pod_dark'], (0.3, 0.2, 0.1), (0, 0.01, TORSO_HIP + 0.02), bevel=0.012),
         box('Roof', m['sand_light'], (0.36, 0.26, 0.02), (0, 0.04, TOP + 0.008), bevel=0.006),
         # the vision slit in the chin, lit from inside, under a brow
         box('Slit', m['window'], (0.26, 0.04, 0.03), (0, chin_front(LOW + 0.045) - 0.002, LOW + 0.045), bevel=0.004),
@@ -111,9 +118,12 @@ def torso(m, root):
         box('Sensor', m['pod_dark'], (0.12, 0.1, 0.17), (0.12, 0.12, TOP + 0.09), bevel=0.012),
         box('SensorWindow', m['window'], (0.08, 0.01, 0.1), (0.12, 0.068, TOP + 0.1), bevel=0.003),
         box('SensorBand', m['remap'], (0.125, 0.105, 0.025), (0.12, 0.12, TOP + 0.02), bevel=0.004),
+        # the red beacon on the sensor box (the red dot on the original's cameo)
+        cylinder('BeaconBase', m['steel'], 0.022, 0.012, (0.08, 0.1, TOP + 0.181), segments=12, bevel=0.002),
+        sphere('Beacon', m['lamp_red'], 0.018, (0.08, 0.1, TOP + 0.192), 12),
         # two whip antennas at the back
-        beam('AntennaL', m['steel'], (-0.15, 0.17, TOP), (-0.16, 0.19, TOP + 0.5), 0.007),
-        beam('AntennaR', m['steel'], (0.17, 0.17, TOP + 0.17), (0.18, 0.19, TOP + 0.58), 0.007),
+        beam('AntennaL', m['steel'], (-0.15, 0.17, TOP), (-0.16, 0.19, TOP + 0.3), 0.007),
+        beam('AntennaR', m['steel'], (0.17, 0.17, TOP + 0.17), (0.18, 0.19, TOP + 0.4), 0.007),
         # house-colour band round the torso, vents on the back
         box('BandFront', m['remap'], (0.4, 0.014, 0.03), (0, -0.2 + 0.07 / 0.22 * 0.08 - 0.004, LOW + 0.13), bevel=0.003),
         box('VentBack', m['dark'], (0.26, 0.014, 0.08), (0, back(LOW + 0.14), LOW + 0.14), bevel=0.003),
@@ -121,7 +131,14 @@ def torso(m, root):
     for k in range(4):  # vent ribs
         parts.append(box(f'VentRib{k}', m['steel'], (0.26, 0.016, 0.008), (0, back(LOW + 0.14) + 0.006, LOW + 0.11 + k * 0.02), bevel=0))
     parts += torso_details(m)
-    return shell, kit.merge('TorsoDetails', parts)
+    return reshape(shell), reshape(kit.merge('TorsoDetails', parts))
+
+
+def reshape(obj):
+    """Narrows the torso part (x) and lifts it onto the legs."""
+    to_world = Matrix.Translation(obj.location)
+    obj.data.transform(to_world.inverted() @ Matrix.Translation((0, 0, LIFT)) @ Matrix.Diagonal((NARROW, 1, 1, 1)) @ to_world)
+    return obj
 
 
 def torso_details(m):
@@ -152,9 +169,9 @@ def torso_details(m):
         parts.append(box(f'SmokeRack{s}', m['pod_dark'], (0.085, 0.03, 0.02), (s * 0.145, -0.11, TOP + 0.005), bevel=0.003))
         # lights under the chin, plates hanging over the hips
         parts += detail.lamp(f'ChinLight{s}', m['dark'], m['lamp_white'], (s * 0.1, chin_front(LOW + 0.025) - 0.004, LOW + 0.025), (0, -1, 0), 0.014)
-        parts.append(box(f'HipPlate{s}', m['sand_light'], (0.12, 0.015, 0.1), (s * 0.15, -0.178, HIP_Z - 0.01), bevel=0.004,
+        parts.append(box(f'HipPlate{s}', m['sand_light'], (0.12, 0.015, 0.1), (s * 0.15, -0.178, TORSO_HIP - 0.01), bevel=0.004,
                          rotation=(math.radians(6), 0, 0)))
-        parts += detail.rivets(f'HipPlateRivets{s}', m['steel'], (s * 0.11, -0.187, HIP_Z + 0.025), (s * 0.19, -0.187, HIP_Z + 0.025), 3)
+        parts += detail.rivets(f'HipPlateRivets{s}', m['steel'], (s * 0.11, -0.187, TORSO_HIP + 0.025), (s * 0.19, -0.187, TORSO_HIP + 0.025), 3)
     # roof: a hand rail round the back, an ammunition box, antenna bases
     roof = TOP + 0.018
     parts += detail.rail('RoofRail', m['steel_light'], [(-0.18, 0.0, roof), (-0.18, 0.17, roof), (0.04, 0.17, roof)], 0.04)
@@ -211,19 +228,19 @@ def cannon(m, body):
 
 def pod(m):
     """The equipment pod on the right with a searchlight."""
-    x = 0.32
+    x, lift = 0.28, LIFT
     parts = [
-        box('Pod', m['pod_dark'], (0.1, 0.28, 0.15), (x, 0.0, 0.74), bevel=0.014),
-        cylinder('PodArm', m['steel'], 0.05, 0.1, (x - 0.07, 0.0, 0.74), rotation=(0, math.pi / 2, 0), segments=14),
-        box('PodPanel', m['remap'], (0.012, 0.2, 0.08), (x + 0.052, 0.0, 0.74), bevel=0.003),
-        cylinder('Searchlight', m['steel'], 0.035, 0.05, (x, -0.16, 0.76), rotation=(math.pi / 2, 0, 0), segments=14),
-        cylinder('SearchlightGlass', m['lamp_white'], 0.027, 0.01, (x, -0.186, 0.76), rotation=(math.pi / 2, 0, 0), segments=14, bevel=0),
-        box('PodRack', m['steel'], (0.08, 0.1, 0.03), (x, 0.06, 0.83), bevel=0.004),
-        *detail.grille('PodVent', m['steel'], m['dark'], (x + 0.052, 0.1, 0.74), 0.05, 0.06, 'X', 3, 0.006),
-        *detail.rivets('PodRivets', m['steel_light'], (x + 0.052, -0.12, 0.8), (x + 0.052, 0.12, 0.8), 6, axis='X'),
+        box('Pod', m['pod_dark'], (0.1, 0.28, 0.15), (x, 0.0, 0.74 + lift), bevel=0.014),
+        cylinder('PodArm', m['steel'], 0.05, 0.1, (x - 0.07, 0.0, 0.74 + lift), rotation=(0, math.pi / 2, 0), segments=14),
+        box('PodPanel', m['remap'], (0.012, 0.2, 0.08), (x + 0.052, 0.0, 0.74 + lift), bevel=0.003),
+        cylinder('Searchlight', m['steel'], 0.035, 0.05, (x, -0.16, 0.76 + lift), rotation=(math.pi / 2, 0, 0), segments=14),
+        cylinder('SearchlightGlass', m['lamp_white'], 0.027, 0.01, (x, -0.186, 0.76 + lift), rotation=(math.pi / 2, 0, 0), segments=14, bevel=0),
+        box('PodRack', m['steel'], (0.08, 0.1, 0.03), (x, 0.06, 0.83 + lift), bevel=0.004),
+        *detail.grille('PodVent', m['steel'], m['dark'], (x + 0.052, 0.1, 0.74 + lift), 0.05, 0.06, 'X', 3, 0.006),
+        *detail.rivets('PodRivets', m['steel_light'], (x + 0.052, -0.12, 0.8 + lift), (x + 0.052, 0.12, 0.8 + lift), 6, axis='X'),
     ]
     for k in range(4):  # a rack of rocket tubes under the searchlight
-        tx, tz = x - 0.022 + 0.044 * (k % 2), 0.695 + 0.03 * (k // 2)
+        tx, tz = x - 0.022 + 0.044 * (k % 2), 0.695 + lift + 0.03 * (k // 2)
         parts += [cylinder(f'RocketTube{k}', m['steel'], 0.014, 0.03, (tx, -0.145, tz), rotation=(math.pi / 2, 0, 0), segments=10, bevel=0),
                   cylinder(f'RocketHole{k}', m['dark'], 0.01, 0.004, (tx, -0.16, tz), rotation=(math.pi / 2, 0, 0), segments=10, bevel=0)]
     return kit.merge('Pod', parts)
