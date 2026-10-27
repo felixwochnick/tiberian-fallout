@@ -1,26 +1,32 @@
 """
 Tiberian Fallout – Nod power plant (NAPOWR), after Tiberian Sun.
 
-A dark, ribbed reactor cone on a wide round platform (foundation 2 × 2 cells): the
-cone wears two red bands under its domed cap, a cable runs from the cap down to the
-platform. The platform is light, stained concrete on a dark drum, ringed by red
-blades that stick out sharp and low over the ground, more red blades stand up on its
-deck round the cone's foot; two generator blocks sit on the deck at the front right.
-Glowing vents at the cone's foot, red beacons on the cap.
+A tall, barely tapering reactor cone (top ~0.75 × the foot) of mid grey concrete with
+dark ribs, standing on a wide oval platform (foundation 2 × 2 cells) that reaches out
+furthest towards the front (-Y, lower left on screen). The cone is open on top: a
+dark shaft inside a light lip, two thick red bands right under the rim, glowing from
+within. The platform is light beige-grey stained concrete on a dark drum; six long red
+blades jut out from its edge, slanting down to the ground, four small red fins stand
+on its deck round the cone's foot. On the right (+X/+Y, screen right) a thick pipe
+arcs from the cone's flank down to a generator on the deck's edge.
 
 Materials (see nodstructure.py): Nod_* baked concrete, NodPlate*/NodSteel dark plate
 (extra nodColour), Remap the house colour, Lamp* emissive, Glow* additive.
 
+Nodes: NodPowerPlant (root) – PlatformGroup (Deck, blades, fins, generator, pipe) and
+ConeGroup (Cone with ribs, bands, ShaftGlow, BandGlow, lamps).
+
 Animations (glTF clips, merged from the NLA tracks of the same name)
     Build    one-shot, 2.4 s: the platform rises out of the ground, the blades shoot
-             out, the cone rises, bands, cap, cable and generators appear, the lights
-             come on
-    Idle     loop, 2 s: the vents at the foot glow up and fade (the reactor's pulse),
-             the beacons on the cap blink in turn, the generator lamps flicker
+             out, the cone rises out of the deck, the generator comes up, the pipe
+             grows down to it, the lamps come on
+    Idle     loop, 2 s: the reactor glows up and fades in the open top and round the
+             red bands (the original's NAPOWR_A overlay), the white lamps on the cone
+             and the generator's lamp blink
 
-Run headless (builds, saves the .blend, exports the GLB):
+Run headless (builds, bakes, saves the .blend, exports the GLB):
 
-    blender -b --factory-startup --python blender/NAPOWR.py [-- --preview 0,30,72 <dir>]
+    blender -b --factory-startup --python blender/NAPOWR.py [-- --preview <dir>]
 
 Units: 1 = one map cell. Blender Z is up; -Y is the front (glTF +Z). The cells of the
 foundation are centred at (±0.5, ±0.5); seen in the game, (-0.5, 0.5) is the top one.
@@ -29,204 +35,282 @@ import math
 import os
 import sys
 
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402
 import nodstructure as nod  # noqa: E402
 
-OUT = os.path.join(nod.PROJECT, 'public', 'models', 'NAPOWR.glb')
-BLEND = os.path.join(HERE, 'NAPOWR.blend')
 BUILD_END = 72
 
-DECK = 0.17             # top of the platform
-DECK_RADIUS = 0.8
-CONE_FOOT = 0.46
-CONE_TOP = 0.25
-CONE_HEIGHT = 1.12      # above the deck
-CABLE_DIR = Vector((1, 1, 0)).normalized()   # the cable runs down on the right (screen)
+DECK = 0.16             # top of the platform
+DECK_RX = 0.8           # the oval platform's half widths …
+DECK_RY = 0.86
+DECK_SHIFT = -0.08      # … shifted to the front (-Y)
+CONE_FOOT = 0.39
+CONE_TOP = 0.29
+CONE_HEIGHT = 1.2       # above the deck
+PIPE_ANGLE = math.radians(30)   # the pipe and the generator: screen right
+CONE_CONCRETE = '#9a9b9c'
+DECK_CONCRETE = '#b2ad9f'
 
 box, cylinder, sphere, beam = kit.box, kit.cylinder, kit.sphere, kit.beam
 
 
 def cone_radius(z):
-    """Radius of the cone at a height z above the deck (slightly curved flank)."""
+    """Radius of the cone at a height z above the deck (straight flank)."""
     t = max(0.0, min(1.0, z / CONE_HEIGHT))
-    return CONE_FOOT + (CONE_TOP - CONE_FOOT) * (t ** 0.85)
+    return CONE_FOOT + (CONE_TOP - CONE_FOOT) * t
+
+
+def deck_edge(a):
+    """Point on the deck's oval edge in direction `a` (radians), on the ground plane."""
+    d = Vector((math.cos(a), math.sin(a), 0))
+    # ray from the cone's axis (0, 0) to the shifted ellipse
+    ay, by = d.y, -DECK_SHIFT
+    qa = (d.x / DECK_RX) ** 2 + (ay / DECK_RY) ** 2
+    qb = 2 * ay * by / DECK_RY ** 2
+    qc = (by / DECK_RY) ** 2 - 1
+    t = (-qb + math.sqrt(qb * qb - 4 * qa * qc)) / (2 * qa)
+    return d * t
+
+
+def oval(obj):
+    """Stretches a round lathe (radius 1 = DECK_RX) to the deck's oval and shifts it."""
+    obj.data.transform(Matrix.Translation((0, DECK_SHIFT, 0)) @ Matrix.Diagonal((1, DECK_RY / DECK_RX, 1, 1)))
+    return obj
 
 
 def platform(m, root):
-    """The stained concrete deck on its footing, and its dark drum, seams and rim
-    (returned apart: the concrete is baked); origin on the ground."""
+    """The stained concrete deck and its dark drum and rim (returned apart: the
+    concrete is baked); origin on the ground."""
     deck = nod.concrete('Deck', [
-        cylinder('Footing', m['steel'], 0.72, 0.04, (0, 0, 0.02), segments=40, bevel=0.006),
-        nod.lathe('DeckTop', m['steel'], ((DECK_RADIUS, DECK - 0.05), (DECK_RADIUS + 0.02, DECK - 0.02), (DECK_RADIUS - 0.02, DECK),
-                                          (0.2, DECK + 0.005)), (0, 0, 0), 48),
-    ], root, nod.LIGHT)
+        oval(nod.lathe('DeckTop', m['steel'], ((DECK_RX - 0.01, DECK - 0.045), (DECK_RX + 0.015, DECK - 0.02), (DECK_RX - 0.02, DECK),
+                                               (0.3, DECK + 0.004)), (0, 0, 0), 56)),
+    ], root, DECK_CONCRETE)
     parts = [
-        cylinder('Drum', m['nplate_dark'], 0.66, 0.11, (0, 0, 0.095), segments=40, bevel=0.006),
-        nod.lathe('DeckUnder', m['nplate'], ((0.66, 0.13), (DECK_RADIUS, DECK - 0.05)), (0, 0, 0), 48),
-        cylinder('DeckRim', m['nsteel'], DECK_RADIUS + 0.025, 0.02, (0, 0, DECK - 0.035), segments=48, bevel=0),
-        # dirt round the foot, like the original's sandy edge
-        cylinder('Dirt', m['dirt'], 0.86, 0.012, (0, 0, 0.006), segments=40, bevel=0),
+        oval(cylinder('Drum', m['nplate_dark'], DECK_RX * 0.8, 0.12, (0, 0, 0.06), segments=48, bevel=0.006)),
+        oval(nod.lathe('DeckUnder', m['nplate'], ((DECK_RX * 0.8, 0.115), (DECK_RX - 0.01, DECK - 0.045)), (0, 0, 0), 56)),
+        oval(cylinder('DeckRim', m['nsteel'], DECK_RX + 0.02, 0.018, (0, 0, DECK - 0.032), segments=56, bevel=0)),
+        oval(cylinder('Dirt', m['dirt'], DECK_RX + 0.08, 0.012, (0, 0, 0.006), segments=48, bevel=0)),
     ]
-    for k in range(12):  # radial seams
-        a = 2 * math.pi * (k + 0.5) / 12
-        d = Vector((math.cos(a), math.sin(a), 0))
-        parts.append(beam(f'Seam{k}', m['nplate_dark'], d * (CONE_FOOT + 0.04) + Vector((0, 0, DECK + 0.006)),
-                          d * (DECK_RADIUS - 0.04) + Vector((0, 0, DECK + 0.003)), 0.014, 0.008))
+    for i in range(10):  # radial seams on the deck
+        a = 2 * math.pi * (i + 0.5) / 10
+        edge = deck_edge(a)
+        d = edge.normalized()
+        parts.append(beam(f'Seam{i}', m['nplate'], d * (CONE_FOOT + 0.06) + Vector((0, 0, DECK + 0.004)),
+                          edge - d * 0.05 + Vector((0, 0, DECK + 0.002)), 0.016, 0.008))
+    # stains: flat dirty patches on the deck
+    for i, (x, y, r) in enumerate(((-0.55, -0.42, 0.11), (0.1, -0.78, 0.09), (-0.6, 0.25, 0.08), (0.52, -0.38, 0.07))):
+        parts.append(cylinder(f'Stain{i}', m['dirt'], r, 0.004, (x, y, DECK + 0.002), segments=12, bevel=0))
     return deck, kit.merge('DeckDetails', parts)
 
 
-def blades(m):
-    """Red blades round the platform's edge (low, sharp) and on the deck (standing);
-    each its own object, origin at its root (they pop out from there)."""
-    out = []
-    for k in range(8):
-        a = 2 * math.pi * (k + 0.25) / 8
-        d = Vector((math.cos(a), math.sin(a), 0))
-        root = d * (DECK_RADIUS - 0.08) + Vector((0, 0, DECK - 0.05))
-        parts = [nod.spike(f'Blade{k}', m['remap'], root, d, 0.48, 0.15, 0.05, droop=0.12),
-                 box(f'BladeClamp{k}', m['nplate_dark'], (0.09, 0.15, 0.06), root + Vector((0, 0, 0.01)), bevel=0.006,
-                     rotation=(0, 0, a))]
-        out.append(kit.merge(f'Blade{k}', parts, root))
-    for k in range(6):
-        a = 2 * math.pi * (k + 0.5) / 6 + 0.2
-        d = Vector((math.cos(a), math.sin(a), 0))
-        root = d * (CONE_FOOT + 0.06) + Vector((0, 0, DECK))
-        fin = kit.hexahedron(f'Fin{k}', m['remap'], (
-            root + d * -0.02 + Vector((-d.y, d.x, 0)) * 0.018, root + d * 0.2 + Vector((-d.y, d.x, 0)) * 0.012,
-            root + d * 0.2 - Vector((-d.y, d.x, 0)) * 0.012, root + d * -0.02 - Vector((-d.y, d.x, 0)) * 0.018,
-            root + Vector((-d.y, d.x, 0)) * 0.012 + Vector((0, 0, 0.26)), root + d * 0.06 + Vector((-d.y, d.x, 0)) * 0.006 + Vector((0, 0, 0.05)),
-            root + d * 0.06 - Vector((-d.y, d.x, 0)) * 0.006 + Vector((0, 0, 0.05)), root - Vector((-d.y, d.x, 0)) * 0.012 + Vector((0, 0, 0.26)),
-        ), bevel=0.003)
-        out.append(kit.merge(f'Fin{k}', [fin], root))
-    return out
+def blade(m, i, a):
+    """A long red blade jutting out of the deck's edge in direction `a`, slanting down
+    to the ground, with its clamp; origin at its root."""
+    edge = deck_edge(a)
+    d = edge.normalized()
+    root = edge - d * 0.1 + Vector((0, 0, DECK - 0.04))
+    parts = [nod.spike(f'Blade{i}', m['remap'], root, d, 0.7, 0.17, 0.05, droop=0.19),
+             box(f'BladeClamp{i}', m['nplate_dark'], (0.11, 0.16, 0.07), root + Vector((0, 0, 0.012)), bevel=0.006, rotation=(0, 0, a))]
+    return kit.merge(f'Blade{i}', parts, root)
+
+
+def fin(m, i, a):
+    """A small red fin standing on the deck, leaning out; origin at its foot."""
+    d = Vector((math.cos(a), math.sin(a), 0))
+    s = Vector((-d.y, d.x, 0))
+    root = d * (CONE_FOOT + 0.12) + Vector((0, 0, DECK))
+    up = Vector((0, 0, 1))
+    shape = kit.hexahedron(f'Fin{i}', m['remap'], (
+        root - d * 0.04 + s * 0.016, root + d * 0.12 + s * 0.012, root + d * 0.12 - s * 0.012, root - d * 0.04 - s * 0.016,
+        root + d * 0.05 + s * 0.008 + up * 0.22, root + d * 0.08 + s * 0.006 + up * 0.05,
+        root + d * 0.08 - s * 0.006 + up * 0.05, root + d * 0.05 - s * 0.008 + up * 0.22,
+    ), bevel=0.003)
+    return kit.merge(f'Fin{i}', [shape], root)
+
+
+def band(name, mat, base, profile, segments=32):
+    """A ring round the cone (no caps over the open top): `profile` (radius, height)
+    is a closed outline, swept round the vertical through `base`."""
+    loop = list(profile) + [profile[0]]
+    sections = [[base + Vector((math.cos(a) * r, math.sin(a) * r, z)) for r, z in loop]
+                for a in (2 * math.pi * k / segments for k in range(segments + 1))]
+    obj = nod.loft(name, sections, lambda i, k: mat)
+    for poly in obj.data.polygons:
+        poly.use_smooth = False
+    return obj
 
 
 def cone(m, root):
-    """The reactor cone (concrete, returned first) and its dark ribs; origin on the deck."""
+    """The reactor cone (concrete, returned first) and its ribs, bands and open top;
+    origin on the deck."""
     base = Vector((0, 0, DECK))
-    profile = [(cone_radius(z), z) for z in (0, 0.15, 0.35, 0.55, 0.75, 0.95, CONE_HEIGHT)]
-    shell = nod.concrete('Cone', [nod.lathe('ConeShell', m['steel'], profile, base, 32)], root, nod.GREY, base)
-    parts = []
-    for k in range(16):
-        a = 2 * math.pi * k / 16
-        d = Vector((math.cos(a), math.sin(a), 0))
-        lo, hi = 0.05, CONE_HEIGHT - 0.2
-        parts.append(beam(f'Rib{k}', m['nplate'], base + d * (cone_radius(lo) + 0.008) + Vector((0, 0, lo)),
-                          base + d * (cone_radius(hi) + 0.008) + Vector((0, 0, hi)), 0.035, 0.022))
-    parts.append(cylinder('ConeFoot', m['nplate_dark'], CONE_FOOT + 0.03, 0.06, base + Vector((0, 0, 0.03)), segments=32, bevel=0.006))
-    return shell, kit.merge('ConeRibs', parts, base)
-
-
-def crown(m):
-    """Red bands and the domed cap with its vent ring; origin at the cone's top."""
-    top = Vector((0, 0, DECK + CONE_HEIGHT))
-    parts = []
-    for i, z in enumerate((-0.17, -0.08)):
-        parts.append(cylinder(f'Band{i}', m['remap'], cone_radius(CONE_HEIGHT + z) + 0.028, 0.05, top + Vector((0, 0, z)), segments=32, bevel=0.006))
-    parts += [
-        cylinder('CapRing', m['nplate_dark'], CONE_TOP + 0.02, 0.04, top + Vector((0, 0, 0.0)), segments=32, bevel=0.006),
-        nod.lathe('Cap', m['nplate_dark'], ((CONE_TOP, 0), (CONE_TOP - 0.01, 0.05), (0.19, 0.1), (0.12, 0.14), (0.0, 0.155)), top, 24),
-        cylinder('CapVent', m['dark'], 0.07, 0.02, top + Vector((0, 0, 0.15)), segments=16, bevel=0),
-    ]
-    for k in range(8):
-        a = 2 * math.pi * k / 8
-        d = Vector((math.cos(a), math.sin(a), 0))
-        parts.append(box(f'CapSlot{k}', m['dark'], (0.012, 0.05, 0.03), top + d * (CONE_TOP - 0.03) + Vector((0, 0, 0.06)), bevel=0,
-                         rotation=(0, math.radians(-30), a)))
-    return kit.merge('Crown', parts, top)
-
-
-def cable(m):
-    """The cable from the cap down to the deck on the right, with its clamps."""
-    top = Vector((0, 0, DECK + CONE_HEIGHT + 0.04)) + CABLE_DIR * (CONE_TOP + 0.02)
-    foot = CABLE_DIR * (DECK_RADIUS - 0.12) + Vector((0, 0, DECK))
-    mid = CABLE_DIR * (cone_radius(0.5) + 0.12) + Vector((0, 0, DECK + 0.55))
-    parts = [beam('CableUp', m['nsteel'], top, mid, 0.022), beam('CableDown', m['nsteel'], mid, foot + Vector((0, 0, 0.04)), 0.022),
-             box('CableFoot', m['nplate_dark'], (0.1, 0.1, 0.06), foot + Vector((0, 0, 0.03)), bevel=0.008),
-             box('CableTop', m['nplate_dark'], (0.06, 0.06, 0.05), top, bevel=0.006)]
-    return kit.merge('Cable', parts, foot)
-
-
-def generator(m, name, centre, angle):
-    """A generator block on the deck: dark housing, red stripe, grille, lamp spot; origin at its foot."""
-    centre = Vector(centre)
-    rot = (0, 0, angle)
+    lip = CONE_HEIGHT
+    profile = [(cone_radius(z), z) for z in (0, 0.3, 0.6, 0.9, lip)] + [(CONE_TOP - 0.05, lip), (CONE_TOP - 0.06, lip - 0.12)]
+    shell = nod.concrete('Cone', [nod.lathe('ConeShell', m['steel'], profile, base, 32)], root, CONE_CONCRETE, base)
     parts = [
-        box(f'{name}Housing', m['nplate_dark'], (0.2, 0.13, 0.11), centre + Vector((0, 0, 0.055)), bevel=0.012, rotation=rot),
-        box(f'{name}Top', m['nsteel'], (0.16, 0.1, 0.03), centre + Vector((0, 0, 0.125)), bevel=0.008, rotation=rot),
-        box(f'{name}Stripe', m['remap'], (0.205, 0.135, 0.018), centre + Vector((0, 0, 0.085)), bevel=0, rotation=rot),
-        cylinder(f'{name}Drum', m['nplate'], 0.04, 0.17, centre + Vector((0, 0, 0.17)), rotation=(0, math.pi / 2, angle), segments=12),
+        # the dark shaft inside the open top
+        cylinder('Shaft', m['dark'], CONE_TOP - 0.055, 0.01, base + Vector((0, 0, lip - 0.115)), segments=32, bevel=0),
+        cylinder('ConeFoot', m['nplate_dark'], CONE_FOOT + 0.03, 0.06, base + Vector((0, 0, 0.03)), segments=32, bevel=0.006),
     ]
-    return kit.merge(name, parts, centre)
+    for k in range(10):  # dark ribs from the foot up to the bands
+        a = 2 * math.pi * (k + 0.5) / 10
+        d = Vector((math.cos(a), math.sin(a), 0))
+        lo, hi = 0.06, lip - 0.2
+        parts.append(beam(f'Rib{k}', m['nplate'], base + d * (cone_radius(lo) + 0.006) + Vector((0, 0, lo)),
+                          base + d * (cone_radius(hi) + 0.006) + Vector((0, 0, hi)), 0.024, 0.016))
+    for i, z in enumerate((lip - 0.17, lip - 0.075)):  # the two thick red bands right under the rim
+        lo, hi = z - 0.035, z + 0.035
+        parts.append(band(f'Band{i}', m['remap'], base, ((cone_radius(lo) - 0.01, lo), (cone_radius(lo) + 0.022, lo), (cone_radius(lo) + 0.032, lo + 0.01),
+                                                        (cone_radius(hi) + 0.032, hi - 0.01), (cone_radius(hi) + 0.022, hi), (cone_radius(hi) - 0.01, hi))))
+    z = lip - 0.122
+    parts.append(band('BandGap', m['nplate_dark'], base, ((cone_radius(z) - 0.01, z - 0.013), (cone_radius(z) + 0.018, z - 0.013),
+                                                         (cone_radius(z) + 0.018, z + 0.013), (cone_radius(z) - 0.01, z + 0.013))))
+    return shell, kit.merge('ConeDetails', parts, base)
+
+
+def pipe_points():
+    """The pipe from the cone's flank down to the generator (a quadratic curve)."""
+    d = Vector((math.cos(PIPE_ANGLE), math.sin(PIPE_ANGLE), 0))
+    start = d * (cone_radius(0.85) + 0.02) + Vector((0, 0, DECK + 0.85))
+    foot = deck_edge(PIPE_ANGLE) - d * 0.12 + Vector((0, 0, DECK + 0.13))
+    control = d * (CONE_FOOT + 0.3) + Vector((0, 0, DECK + 0.75))
+    return start, control, foot
+
+
+def bezier(a, c, b, t):
+    return (1 - t) ** 2 * a + 2 * (1 - t) * t * c + t * t * b
+
+
+def tube(name, mat, points, radius, segments=10):
+    """A tube along a polyline (one cylinder per segment, overlapping a little)."""
+    parts = []
+    for k, (a, b) in enumerate(zip(points, points[1:])):
+        part = cylinder(f'{name}_{k}', mat, radius, (b - a).length + radius * 0.6, (a + b) / 2, segments=segments, bevel=0)
+        part.rotation_mode = 'QUATERNION'
+        part.rotation_quaternion = (b - a).to_track_quat('Z', 'Y')
+        parts.append(part)
+    return parts
+
+
+def pipe(m):
+    """The thick pipe and a thin cable beside it, with clamps; origin at the cone."""
+    start, control, foot = pipe_points()
+    n = 14
+    points = [bezier(start, control, foot, k / n) for k in range(n + 1)]
+    side = Vector((-math.sin(PIPE_ANGLE), math.cos(PIPE_ANGLE), 0)) * 0.07
+    thin = [p + side + Vector((0, 0, 0.01)) for p in points]
+    parts = tube('Pipe', m['nsteel'], points, 0.042) + tube('Cable', m['nplate_dark'], thin, 0.016, 8)
+    for t in (0.0, 0.3, 0.62):
+        p, q = bezier(start, control, foot, t), bezier(start, control, foot, t + 0.03)
+        ring = cylinder(f'Clamp{t}', m['nplate_dark'], 0.056, 0.04, p, segments=10, bevel=0)
+        ring.rotation_mode = 'QUATERNION'
+        ring.rotation_quaternion = (q - p).to_track_quat('Z', 'Y')
+        parts.append(ring)
+    return kit.merge('Pipe', parts, start)
+
+
+def generator(m):
+    """The generator on the deck's edge at the pipe's foot; origin at its foot."""
+    d = Vector((math.cos(PIPE_ANGLE), math.sin(PIPE_ANGLE), 0))
+    at = deck_edge(PIPE_ANGLE) - d * 0.12 + Vector((0, 0, DECK))
+    rot = (0, 0, PIPE_ANGLE + math.pi / 2)
+    parts = [
+        box('GenBase', m['nplate_dark'], (0.3, 0.2, 0.05), at + Vector((0, 0, 0.025)), bevel=0.008, rotation=rot),
+        cylinder('GenDrum', m['nplate'], 0.07, 0.24, at + Vector((0, 0, 0.11)), rotation=(math.pi / 2, 0, PIPE_ANGLE + math.pi / 2),
+                 segments=16, bevel=0.006),
+        box('GenStripe', m['remap'], (0.03, 0.16, 0.16), at + Vector((0, 0, 0.11)), bevel=0.004, rotation=rot),
+        cylinder('GenCap', m['nsteel'], 0.05, 0.06, at + Vector((0, 0, 0.17)), segments=12, bevel=0.006),
+    ]
+    for s in (-1, 1):
+        parts.append(cylinder(f'GenRib{s}', m['nplate_dark'], 0.076, 0.02, at + Vector((0, 0, 0.11)) + d.cross(Vector((0, 0, 1))) * 0.08 * s,
+                              rotation=(math.pi / 2, 0, PIPE_ANGLE + math.pi / 2), segments=16, bevel=0))
+    return kit.merge('Generator', parts, at)
+
+
+def ring_glow(m, centre, radius, height, segments=32):
+    """An open glowing band (a tube without caps) round `centre`; origin there."""
+    ring = [Vector((math.cos(a) * radius, math.sin(a) * radius, 0)) for a in (2 * math.pi * k / segments for k in range(segments + 1))]
+    sections = [[centre + p + Vector((0, 0, dz)) for p in ring] for dz in (-height / 2, height / 2)]
+    obj = nod.loft('BandGlow', sections, lambda i, k: m['glow_red'])
+    obj.data.transform(Matrix.Translation(-centre))
+    obj.location = centre
+    return obj
 
 
 def build():
     root = nod.start('NodPowerPlant', 'NodPowerPlant', BUILD_END)
     m = nod.materials()
+    m['glow_white'] = kit.material('GlowWhite', (0, 0, 0), 1.0, emission=kit.srgb('#fff2c8'), strength=3, alpha=0.25)
     keys = kit.keys
 
-    base, details = platform(m, root)
-    kit.parent(base, root)
-    kit.parent(details, base)
-    cone_obj, ribs = cone(m, root)
-    crown_obj = crown(m)
-    cable_obj = cable(m)
-    gens = [generator(m, 'Generator0', Vector((0.42, -0.42, DECK)), math.radians(45)),
-            generator(m, 'Generator1', Vector((0.1, -0.6, DECK)), math.radians(15))]
-
     # ---- the platform rises out of the ground
-    nod.rise(base, 0, 16, 0.25)
-    # ---- the blades shoot out
-    for i, blade in enumerate(blades(m)):
-        kit.parent(blade, base)
-        kit.pop(blade, 14 + i, 6)
-    # ---- the cone rises out of the deck, the crown on it
-    group = kit.parent(kit.empty('ConeGroup'), root)
-    kit.parent(cone_obj, group)
-    kit.parent(ribs, cone_obj)
-    keys(group, 'location', {0: Vector((0, 0, -1.3)), 12: Vector((0, 0, -1.3)), 42: Vector((0, 0, 0.012)), 46: Vector((0, 0, 0))})
-    kit.parent(crown_obj, group)
-    kit.pop(crown_obj, 42, 8)
-    kit.parent(cable_obj, base)
-    kit.grow(cable_obj, 48, 10, 2)
-    for i, g in enumerate(gens):
-        kit.parent(g, base)
-        kit.pop(g, 30 + 5 * i, 7)
+    group = kit.parent(kit.empty('PlatformGroup'), root)
+    deck, details = platform(m, root)
+    kit.parent(deck, group)
+    kit.parent(details, deck)
+    nod.rise(group, 0, 16, 0.24)
+    # ---- the blades shoot out, the fins pop up
+    for i, a in enumerate((200, 245, 285, 330, 40, 130)):
+        obj = kit.parent(blade(m, i, math.radians(a)), group)
+        kit.pop(obj, 14 + 2 * i, 7)
+    for i, a in enumerate((215, 250, 290, 325)):
+        obj = kit.parent(fin(m, i, math.radians(a)), group)
+        kit.pop(obj, 44 + 2 * i, 6)
 
-    # ---- glowing vents at the cone's foot (pulse), beacons on the cap
-    idle = []
-    for k in range(4):
-        a = 2 * math.pi * (k + 0.125) / 4
-        d = Vector((math.cos(a), math.sin(a), 0))
-        at = d * (CONE_FOOT + 0.005) + Vector((0, 0, DECK + 0.16))
-        frame = box(f'Vent{k}', m['nplate_dark'], (0.05, 0.13, 0.08), at, bevel=0.006, rotation=(0, math.radians(-10), a))
-        frame = kit.parent(kit.merge(f'Vent{k}', [frame], at), cone_obj)
-        kit.pop(frame, 46 + k, 5)
-        glow = kit.merge(f'VentGlow{k}', [
-            box(f'VentCore{k}', m['ember'], (0.03, 0.09, 0.05), at + d * 0.016, bevel=0, rotation=(0, math.radians(-10), a)),
-            box(f'VentHalo{k}', m['glow_red'], (0.06, 0.15, 0.1), at + d * 0.03, bevel=0, rotation=(0, math.radians(-10), a)),
-        ], at)
-        kit.parent(glow, frame)
-        idle.append((glow, lambda o, k=k: nod.pulse(o, kit.IDLE_END, 0.55, 1.1, phase=k * 0.1)))
-    lights = []
+    # ---- the cone rises out of the deck (translation only: its lamps blink in Idle)
+    cone_group = kit.parent(kit.empty('ConeGroup'), root)
+    shell, cone_details = cone(m, root)
+    kit.parent(shell, cone_group)
+    kit.parent(cone_details, shell)
+    low = Vector((0, 0, -(DECK + CONE_HEIGHT + 0.25)))
+    keys(cone_group, 'location', {0: low, 12: low, 42: Vector((0, 0, 0.012)), 46: Vector((0, 0, 0))})
+
+    # ---- the generator comes up out of the deck, the pipe grows down to it
+    gen = kit.parent(generator(m), group)
+    nod.rise(gen, 30, 10, 0.22)
+    pipe_obj = kit.parent(pipe(m), shell)
+    kit.pop(pipe_obj, 46, 10)
+
+    # ---- the reactor's glow round the red bands (the original's NAPOWR_A)
     top = Vector((0, 0, DECK + CONE_HEIGHT))
-    for k in range(4):
-        a = 2 * math.pi * (k + 0.5) / 4
-        at = top + Vector((math.cos(a), math.sin(a), 0)) * (CONE_TOP + 0.005) + Vector((0, 0, 0.02))
-        light = nod.lamp(m, crown_obj, f'CapLamp{k}', at, 'red', 52 + k)
-        lights.append((light, kit.flashes((k * 15, 8))))
-    for i, g in enumerate(gens):
-        at = g.location + Vector((0, 0, 0.25))
-        light = nod.lamp(m, g, f'GenLamp{i}', at, 'amber', 56 + i)
-        lights.append((light, kit.flashes((5 + 30 * i, 3), (12 + 30 * i, 4), (40 - 20 * i, 3))))
+    band_glow = kit.parent(ring_glow(m, top - Vector((0, 0, 0.12)), cone_radius(CONE_HEIGHT - 0.12) + 0.055, 0.2), shell)
+
+    def throb(obj, lo, hi, axes, phase=0.0):
+        base = Vector(obj.scale)
+        frames = {}
+        for f in range(0, kit.IDLE_END + 1, 3):
+            t = (math.sin(2 * math.pi * (2 * f / kit.IDLE_END + phase)) + 1) / 2
+            v = base.copy()
+            for ax in axes:
+                v[ax] = base[ax] * (lo + (hi - lo) * t)
+            frames[f] = v
+        frames[kit.IDLE_END] = frames[0]
+        kit.keys(obj, 'scale', frames, 'LINEAR')
+
+    idle = [(band_glow, lambda o: throb(o, 0.4, 1.0, (2,), 0.15))]
+
+    # ---- lamps: white ones on the cone (as in the original), amber on the generator
+    lights = []
+    for k, (a, z) in enumerate(((250, 0.32), (300, 0.62), (20, 0.4), (330, 0.95))):
+        d = Vector((math.cos(math.radians(a)), math.sin(math.radians(a)), 0))
+        at = d * (cone_radius(z) + 0.012) + Vector((0, 0, DECK + z - 0.03))
+        housing, light = kit.beacon(f'ConeLamp{k}', m, at, 'white', m['lamp_white'])
+        housing = kit.parent(kit.merge(f'ConeLamp{k}', [housing], at), shell)
+        kit.parent(light, shell)
+        kit.pop(housing, 54 + 2 * k, 5)
+        lights.append((light, kit.flashes((k * 15, 6), (k * 15 + 30, 3))))
+    d = Vector((math.cos(PIPE_ANGLE), math.sin(PIPE_ANGLE), 0))
+    at = deck_edge(PIPE_ANGLE) - d * 0.12 + Vector((0, 0, DECK + 0.2))
+    lights.append((nod.lamp(m, gen, 'GenLamp', at, 'amber', 52), kit.flashes((5, 4), (14, 4), (40, 6))))
 
     nod.clips(lights, idle)
     return len(kit.collection().objects)
 
 
 if __name__ == '__main__':
-    nod.main(build, OUT, BLEND, ortho=2.9, target=(0.05, 0, 0.5))
+    nod.main(build, 'NAPOWR', {'Build': [BUILD_END // 3, 2 * BUILD_END // 3, BUILD_END], 'Idle': [0, 8, 15]},
+             ortho=2.9, target=(0.0, -0.05, 0.55))

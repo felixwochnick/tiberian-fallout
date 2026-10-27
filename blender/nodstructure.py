@@ -1,22 +1,42 @@
 """
-Tiberian Fallout – shared parts of the big Nod buildings (NAPOWR, NAHAND, NAWEAP,
-NARADR, NATECH).
+Tiberian Fallout – shared parts of the Nod buildings: NAPOWR, NAHAND, NAWEAP, NARADR,
+NATECH, the defences NALASR, NASAM, NAPULS, the helipad NAHPAD, NAWALL and NAGATE_A.
 
 Nod builds in dark concrete and dark armour plate with sharp edges; the house colour
-(red for Nod) only on accents: trims, spikes, frames, the hand's stripes.
-    Nod_*        concrete: the procedural shader of the Nod defences
-                 (nodbuilding.concrete_material: mottling, streaks, speckles, darker in
-                 the corners) baked to a texture per object; extra nodColour white
+(red for Nod) only on accents: trims, spikes, frames, stripes.
+    Nod_*        concrete: a procedural shader (mottling, streaks, speckles, darker in
+                 the corners) baked to a texture per object; extra nodColour white (the
+                 texture carries the colour)
     NodPlate*,   dark armour plate and steel, plain colours; extra nodColour = its own
-    NodSteel     colour (applyHouseColour in app/lib/game/models.ts)
+    NodSteel,    colour (applyHouseColour in app/lib/game/models.ts)
+    NodArmour*
     Remap        the house colour
     Lamp*, Glow* emissive bulbs and additive halos as in the other models
 
-Also here: polygon prisms with sloped walls, lofted shells, spikes, pulsing glows,
-the preview camera and the build/bake/export main().
+Gun towers have the nodes the game aims (see Combat in app/lib/game/combat.ts):
+    Turret   turns about the vertical towards the target (never keyed by a clip)
+    Cannon   inside the turret, tipped up and down (never keyed); its barrel looks
+             along -Y (glTF +Z)
+    Flash…   the muzzle: the game reads its position when a shot leaves, before the
+             Fire clip moves anything – so it sits where the shot starts at rest
+The building animations hang on nodes above or below them.
+
+The clips of a building play at the same time in the game (Build holds its last frame,
+Idle loops over it, Fire/Open run once in between), and three.js averages a channel
+that two of them drive. So every node + property belongs to one clip only (checked by
+test/models.test.ts): a lamp that pops in during Build and blinks in Idle is two nodes,
+a housing (Build) and its light (Idle). Fire/Open must end in the rest pose.
+Nothing animated in Idle/Fire/Open may hang under a parent that Build scales to ~0
+(kit.pop, show_at, grow_z): the glTF exporter then writes wrong translation keys into
+those clips and the part hops. Let such parents rise/slide in, or hang the part beside
+them. Check: node <scratchpad>/na/idlecheck.mjs public/models/<ID>.glb [Idle|Fire|Open].
+
+Also here: polygon prisms with sloped walls, lofted shells, lathes, spikes, hazard
+stripes, pulsing glows, the previews and the build/bake/export main().
 
 Units: 1 = one map cell. Blender Z is up; -Y is the front (glTF +Z). The origin is in
-the middle of the foundation on the ground.
+the middle of the foundation on the ground. In the game -Y (the front) faces the lower
+left of the screen, +X the lower right – the two sides the original's sprite shows.
 """
 import math
 import os
@@ -28,10 +48,13 @@ from mathutils import Vector
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402 – the helpers of the barracks script
-import nodbuilding  # noqa: E402 – the Nod concrete shader and its bake
+import nodvehicle as vehicle  # noqa: E402 – the Nod armour materials
 
 PROJECT = os.path.dirname(HERE)
+HIDDEN = kit.HIDDEN
 NOD_RED = '#c42a1c'   # the house colour of the previews (the game paints Remap itself)
+
+box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
 # key: (material name, colour); every one gets the extra nodColour
 DARK = {
@@ -41,10 +64,16 @@ DARK = {
     'nsteel_light': ('NodSteelLight', '#a3a6aa'),
     'dirt': ('NodDirt', '#7a6744'),
 }
-# concrete tones
+# concrete tones (concrete() takes one of these or any hex colour)
 GREY = '#7b7c7e'
 LIGHT = '#9a9893'
 DARK_GREY = '#4b4c4f'
+CONCRETE = {
+    'dark': DARK_GREY,    # the towers' footings and bodies
+    'olive': '#5f6158',   # the EMP cannon's greenish grey base
+    'grey': GREY,         # walls and gate
+    'light': LIGHT,
+}
 
 
 def dark_material(name, hex_colour, roughness=0.6, metallic=0.4):
@@ -54,24 +83,129 @@ def dark_material(name, hex_colour, roughness=0.6, metallic=0.4):
 
 
 def materials():
-    m = kit.materials()
-    m['remap'] = kit.material('Remap', kit.srgb(NOD_RED), 0.5, 0.2)
+    m = vehicle.materials()
+    m['remap'].node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (*srgb(NOD_RED), 1)
+    for key, colour in (('armour', '#45474c'), ('armour_dark', '#26272b')):
+        m[key]['nodColour'] = colour
     for key, (name, colour) in DARK.items():
         m[key] = dark_material(name, colour, 0.95 if key == 'dirt' else 0.6, 0.0 if key == 'dirt' else 0.45)
     m['dark']['nodColour'] = '#17181a'
     m['steel']['nodColour'] = '#4a4d50'   # the lamp housings
-    m['glow_red'] = kit.material('GlowRed', (0, 0, 0), 1.0, emission=kit.srgb('#ff2a10'), strength=3, alpha=0.25)
-    m['ember'] = kit.material('LampEmber', kit.srgb('#ff4a20'), 0.3, emission=kit.srgb('#ff3a10'), strength=6)
-    m['hazard'] = kit.material('HazardYellow', kit.srgb('#d8a81c'), 0.6)
+    m['glow_red'] = material('GlowRed', (0, 0, 0), 1.0, emission=srgb('#ff2a10'), strength=3, alpha=0.25)
+    m['ember'] = material('LampEmber', srgb('#ff4a20'), 0.3, emission=srgb('#ff3a10'), strength=6)
+    m['hazard_dark'] = material('HazardDark', srgb('#1c1b1a'), 0.8)
+    m['glow_laser'] = material('GlowLaser', (0, 0, 0), 1.0, emission=srgb('#ff3a1c'), strength=8, alpha=0.6)
+    m['glow_pulse'] = material('GlowPulse', (0, 0, 0), 1.0, emission=srgb('#5ad8ff'), strength=8, alpha=0.6)
+    m['lamp_pulse'] = material('LampPulse', srgb('#b8f4ff'), 0.2, emission=srgb('#7ae4ff'), strength=10)
     return m
 
 
+# --------------------------------------------------------------------------- concrete
+
+def concrete_material(name, colour, reference):
+    """Live procedural concrete (Blender preview, source of the bake)."""
+    mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    mat.use_nodes = True
+    mat.use_backface_culling = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    nodes, links = nt.nodes, nt.links
+    out = nodes.new('ShaderNodeOutputMaterial')
+    bsdf = nodes.new('ShaderNodeBsdfPrincipled')
+    bsdf.inputs['Roughness'].default_value = 0.9
+    coords = nodes.new('ShaderNodeTexCoord')
+    coords.object = reference
+
+    def factor(scale, low, high, detail=4.0, frm=(0.3, 0.7)):
+        mapping = nodes.new('ShaderNodeMapping')
+        mapping.inputs['Scale'].default_value = scale
+        links.new(coords.outputs['Object'], mapping.inputs['Vector'])
+        noise = nodes.new('ShaderNodeTexNoise')
+        noise.inputs['Detail'].default_value = detail
+        links.new(mapping.outputs['Vector'], noise.inputs['Vector'])
+        span = nodes.new('ShaderNodeMapRange')
+        span.inputs['From Min'].default_value, span.inputs['From Max'].default_value = frm
+        span.inputs['To Min'].default_value = low
+        span.inputs['To Max'].default_value = high
+        links.new(noise.outputs['Fac'], span.inputs['Value'])
+        return span.outputs['Result']
+
+    ao = nodes.new('ShaderNodeAmbientOcclusion')
+    ao.inputs['Distance'].default_value = 0.06
+    ao.samples = 16
+    shade = nodes.new('ShaderNodeMapRange')
+    shade.inputs['To Min'].default_value = 0.62
+    links.new(ao.outputs['AO'], shade.inputs['Value'])
+    total = None
+    for f in (factor((5, 5, 5), 0.86, 1.12),            # big mottling
+              factor((70, 70, 70), 0.88, 1.06, 2.0),    # speckles
+              factor((28, 28, 2.2), 0.84, 1.02),        # rain streaks down the walls
+              shade.outputs['Result']):
+        node = nodes.new('ShaderNodeMath')
+        node.operation = 'MULTIPLY'
+        if total is None:
+            node.inputs[0].default_value = 1.0
+        else:
+            links.new(total, node.inputs[0])
+        links.new(f, node.inputs[1])
+        total = node.outputs['Value']
+    tint = nodes.new('ShaderNodeMix')
+    tint.data_type = 'RGBA'
+    tint.blend_type = 'MULTIPLY'
+    tint.inputs['Factor'].default_value = 1.0
+    tint.inputs['B'].default_value = (*srgb(colour), 1)
+    grey = nodes.new('ShaderNodeCombineColor')
+    for channel in ('Red', 'Green', 'Blue'):
+        links.new(total, grey.inputs[channel])
+    links.new(grey.outputs['Color'], tint.inputs['A'])
+    links.new(tint.outputs['Result'], bsdf.inputs['Base Color'])
+    links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
+    mat['nodColour'] = '#ffffff'   # the baked texture carries the colour
+    return mat
+
+
 def concrete(name, parts, root, colour=GREY, pivot=(0, 0, 0)):
-    """Merges `parts` into one object in baked Nod concrete of `colour`."""
+    """Merges `parts` into one object in baked Nod concrete of `colour` (a hex colour
+    or a key of CONCRETE)."""
     obj = kit.merge(name, parts, pivot)
     obj.data.materials.clear()
-    obj.data.materials.append(nodbuilding.concrete_material(f'Nod_{name}', colour, root))
+    obj.data.materials.append(concrete_material(f'Nod_{name}', CONCRETE.get(colour, colour), root))
     return obj
+
+
+def bake(size=512):
+    """Bakes every Nod_* concrete into an image texture (in the rest pose)."""
+    kit.setup_cycles()
+    view_layer = bpy.context.view_layer
+    for obj in [o for o in kit.collection().objects if o.type == 'MESH' and o.data.materials and o.data.materials[0].name.startswith('Nod_')]:
+        mat = obj.data.materials[0]
+        bpy.ops.object.select_all(action='DESELECT')
+        view_layer.objects.active = obj
+        obj.select_set(True)
+        if not obj.data.uv_layers:
+            obj.data.uv_layers.new(name='UVMap')
+            bpy.ops.object.mode_set(mode='EDIT')
+            bpy.ops.mesh.select_all(action='SELECT')
+            bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.01)
+            bpy.ops.object.mode_set(mode='OBJECT')
+        image = bpy.data.images.get(f'{mat.name}_Color') or bpy.data.images.new(f'{mat.name}_Color', size, size)
+        nt = mat.node_tree
+        out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
+        bsdf = next(n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED')
+        colour = bsdf.inputs['Base Color'].links[0].from_socket
+        emit = nt.nodes.new('ShaderNodeEmission')
+        nt.links.new(colour, emit.inputs['Color'])
+        nt.links.new(emit.outputs['Emission'], out.inputs['Surface'])
+        target = nt.nodes.new('ShaderNodeTexImage')
+        target.image = image
+        nt.nodes.active = target
+        bpy.ops.object.bake(type='EMIT', margin=8)
+        image.file_format = 'PNG'
+        image.pack()
+        nt.nodes.remove(emit)
+        nt.links.new(target.outputs['Color'], bsdf.inputs['Base Color'])
+        nt.links.new(bsdf.outputs['BSDF'], out.inputs['Surface'])
+        print('baked', obj.name, flush=True)
 
 
 # --------------------------------------------------------------------------- shapes
@@ -168,6 +302,84 @@ def spike(name, mat, root, direction, length, width, thickness, droop=0.0):
         root - side + up, root + side + up, tip + side * 0.08 + up * 0.3, tip - side * 0.08 + up * 0.3), bevel=0.003)
 
 
+# --------------------------------------------------------------------------- parts
+
+def stripes(name, m, centre, size, axis='X', count=8, normal='Z'):
+    """A yellow and black hazard band: a dark strip with slanted yellow bars across it,
+    `size` (length along `axis`, width, thickness); lies flat (normal Z) or stands on a
+    wall facing -Y/+Y (normal 'Y')."""
+    centre = Vector(centre)
+    length, width, thick = size
+    parts = []
+    if normal == 'Z':
+        dims = (length, width, thick) if axis == 'X' else (width, length, thick)
+    else:
+        dims = (length, thick, width)
+    parts.append(box(f'{name}Base', m['hazard_dark'], dims, centre, bevel=0))
+    step = length / count
+    for k in range(count):
+        t = -length / 2 + (k + 0.5) * step
+        if normal == 'Z':
+            off = Vector((t, 0, thick * 0.3)) if axis == 'X' else Vector((0, t, thick * 0.3))
+            rot = (0, 0, math.radians(35)) if axis == 'X' else (0, 0, math.radians(55))
+            bar = (step * 0.5, width * 2.2, thick * 0.6) if axis == 'X' else (width * 2.2, step * 0.5, thick * 0.6)
+            p = box(f'{name}Bar{k}', m['hazard'], bar, centre + off, bevel=0, rotation=rot)
+            parts.append(p)
+        else:
+            parts.append(box(f'{name}Bar{k}', m['hazard'], (step * 0.45, thick * 1.4, width * 1.1), centre + Vector((t, 0, 0)), bevel=0,
+                             rotation=(0, math.radians(35), 0)))
+    obj = kit.merge(name, parts, centre)
+    clip_to(obj, centre, dims, (0, 1) if normal == 'Z' else (0, 2))
+    return obj
+
+
+def clip_to(obj, centre, dims, axes=(0, 1, 2)):
+    """Cuts a merged object to a box (the slanted bars stick out at the ends)."""
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    half = Vector(dims) / 2
+    offset = Vector(centre) - obj.location
+    for axis in axes:
+        for sign in (-1, 1):
+            co = Vector((0, 0, 0))
+            no = Vector((0, 0, 0))
+            co[axis] = offset[axis] + sign * half[axis]
+            no[axis] = sign
+            geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
+            bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=no, clear_outer=True)
+    bm.to_mesh(obj.data)
+    bm.free()
+
+
+def glow(m, name, centre, size, mat, balls=3, facing=(0, -1, 0)):
+    """Glowing balls along `facing` from `centre` (a muzzle flash, a charge)."""
+    centre, facing = Vector(centre), Vector(facing).normalized()
+    parts = [sphere(f'{name}{k}', m[mat], size * (1 - 0.22 * k), centre + facing * size * 0.9 * k, 12) for k in range(balls)]
+    return kit.merge(name, parts, centre)
+
+
+def beacon(name, m, location, colour='red'):
+    """A small lamp housing (returned first) and its bulb + halo, which blinks. Key them
+    in different clips; if the housing pops in (scale from ~0) in Build, do not parent
+    the light to it (see lamp())."""
+    housing, light = kit.beacon(name, m, location, colour)
+    return kit.merge(f'{name}Housing', [housing], location), light
+
+
+def lamp(m, holder, name, at, colour, start):
+    """A beacon on `holder` whose housing pops in at `start` (Build); returns its light
+    (blinks in Idle). The light hangs on `holder`, not on the housing: under a parent
+    that Build scales to ~0 the glTF exporter writes bad translation keys into Idle (the
+    lamp hops) – so `holder` and its parents must not be scaled to ~0 in Build either
+    (let them rise or slide in instead)."""
+    housing, light = kit.beacon(name, m, at, colour)
+    housing = kit.parent(kit.merge(name, [housing], at), holder)
+    kit.parent(light, holder)
+    kit.pop(housing, start, 5)
+    return light
+
+
 # --------------------------------------------------------------------------- animation
 
 def pulse(obj, frames, low=0.6, high=1.15, phase=0.0, cycles=1):
@@ -203,6 +415,45 @@ def rise(obj, start, length, depth):
                                start + length * 0.85: p + Vector((0, 0, 0.01)), start + length: p})
 
 
+def grow_z(obj, start, length):
+    """Scales up from the ground (keys scale z from its origin)."""
+    s = obj.scale.copy()
+    flat = Vector((s.x, s.y, HIDDEN))
+    kit.keys(obj, 'scale', {0: flat, start: flat, start + length: Vector((s.x, s.y, s.z * 1.04)), start + length + 3: s})
+
+
+def show_at(obj, frame):
+    """Hidden until `frame`, then there (constant keys)."""
+    s = obj.scale.copy()
+    kit.keys(obj, 'scale', {0: s * HIDDEN, frame - 1: s * HIDDEN, frame: s}, 'CONSTANT')
+
+
+def all_to_build():
+    """Every object with an active action: that action is the Build clip."""
+    for obj in kit.collection().objects:
+        if obj.animation_data and obj.animation_data.action:
+            kit.to_track(obj, 'Build')
+
+
+def flash_keys(obj, frames, on, off, peak=1.4):
+    """The flash hidden, shown from `on` (bigger in the middle), hidden from `off`."""
+    hidden = Vector((HIDDEN,) * 3)
+    mid = (on + off) // 2
+    keyed = {0: hidden, on: Vector((1, 1, 1)), off: hidden, frames: hidden}
+    if on < mid < off:
+        keyed[mid] = Vector((peak,) * 3)
+    if on == 0:
+        keyed[0] = Vector((1, 1, 1))
+    kit.keys(obj, 'scale', keyed, 'CONSTANT')
+
+
+def blinking(lights, track='Idle'):
+    """lights: (object, frames on); the Idle loop."""
+    for light, pattern in lights:
+        kit.blink(light, pattern)
+        kit.to_track(light, track)
+
+
 def clips(lights=(), idle=()):
     """Everything keyed so far goes on the track Build; then the lights blink
     ((object, frames on)) and the idle animations ((object, keyer)) go on Idle."""
@@ -217,18 +468,11 @@ def clips(lights=(), idle=()):
         kit.to_track(obj, 'Idle')
 
 
-def lamp(m, holder, name, at, colour, start):
-    """A beacon on `holder` that pops in at `start`; returns its light (blinks in Idle)."""
-    housing, light = kit.beacon(name, m, at, colour)
-    housing = kit.parent(kit.merge(name, [housing], at), holder)
-    kit.parent(light, housing)
-    kit.pop(housing, start, 5)
-    return light
-
-
 # --------------------------------------------------------------------------- run
 
 def start(collection, root_name, build_end, idle_end=60):
+    """A fresh collection with the root empty; the scene stands at the end of Build
+    (parenting reads the evaluated pose: the finished building)."""
     kit.COLLECTION = collection
     kit.BUILD_END = build_end
     kit.IDLE_END = idle_end
@@ -238,33 +482,88 @@ def start(collection, root_name, build_end, idle_end=60):
     scene.render.fps = kit.FPS
     scene.frame_start = 0
     scene.frame_end = build_end + 12
-    scene.frame_current = build_end  # parenting reads the evaluated pose: the finished building
+    scene.frame_current = build_end
     return kit.empty(root_name)
 
 
-def preview(frames, out_dir, ortho, target):
-    """kit.render_preview with a camera framing the foundation."""
-    kit.render_preview([], out_dir)
+def _tracks():
+    return [t for obj in bpy.data.objects if obj.animation_data for t in obj.animation_data.nla_tracks]
+
+
+def _camera(scale, target, azimuth=45, elevation=30):
     cam = bpy.data.objects['PreviewCamera']
-    cam.data.ortho_scale = ortho
-    direction = Vector((math.sin(math.radians(45)) * math.cos(math.radians(30)),
-                        -math.cos(math.radians(45)) * math.cos(math.radians(30)),
-                        math.sin(math.radians(30))))
+    cam.data.ortho_scale = scale
+    a, e = math.radians(azimuth), math.radians(elevation)
+    direction = Vector((math.sin(a) * math.cos(e), -math.cos(a) * math.cos(e), math.sin(e)))
     cam.location = Vector(target) + direction * 10
-    kit.render_preview(frames, out_dir)
+    cam.rotation_euler = (-direction).to_track_quat('-Z', 'Y').to_euler()
 
 
-def main(build, out, blend, ortho=2.9, target=(0, 0, 0.35), texture=512):
-    """Builds, bakes the concrete, saves the .blend, exports the GLB;
-    -- --preview 0,40,72 <dir> renders frames through the game's camera."""
+def _rest_pose():
+    return {obj.name: (obj.location.copy(), obj.rotation_euler.copy(), obj.scale.copy()) for obj in kit.collection().objects}
+
+
+def _pose(rest, playing):
+    """Objects without a track in `playing` back to their rest pose (a muted track
+    leaves its object in whatever pose it was last evaluated in)."""
+    for obj in kit.collection().objects:
+        ad = obj.animation_data
+        if obj.name in rest and not (ad and any(t.name in playing for t in ad.nla_tracks)):
+            obj.location, obj.rotation_euler, obj.scale = rest[obj.name]
+
+
+def previews(out_dir, clips, scale, target, rest=None):
+    """Renders through the game's camera (orthographic, 30° down, azimuth 45°):
+    out_dir/build/… the Build clip alone; out_dir/<clip>/… every other clip over the
+    finished building; out_dir/views/… the finished building from four sides and
+    closer (az45 = the game's view, az225 the back, az135/az315 the other corners)."""
+    scene = bpy.context.scene
+    kit.render_preview([], out_dir)
+    tracks = _tracks()
+    for clip, frames in clips.items():
+        for t in tracks:  # the finished building first, then the clip alone over it
+            t.mute = t.name != 'Build'
+        scene.frame_set(kit.BUILD_END)
+        if clip != 'Build':
+            for t in tracks:
+                t.mute = t.name != clip
+        if rest:
+            _pose(rest, ('Build', clip))
+        _camera(scale, target)
+        kit.render_preview(frames, os.path.join(out_dir, clip.lower()))
+    for t in tracks:
+        t.mute = t.name != 'Build'
+    scene.frame_set(kit.BUILD_END)
+    if rest:
+        _pose(rest, ('Build',))
+    views = os.path.join(out_dir, 'views')
+    os.makedirs(views, exist_ok=True)
+    for azimuth, elevation, zoom in ((45, 30, 1.0), (45, 30, 0.55), (225, 30, 1.0), (135, 30, 1.0), (315, 30, 1.0), (45, 8, 1.0)):
+        _camera(scale * zoom, target, azimuth, elevation)
+        scene.render.filepath = os.path.join(views, f'az{azimuth}_el{elevation}_x{zoom}.png')
+        bpy.ops.render.render(write_still=True)
+    for t in tracks:
+        t.mute = False
+    for name in ('PreviewGround', 'PreviewSun', 'PreviewCamera'):
+        if name in bpy.data.objects:
+            bpy.data.objects.remove(bpy.data.objects[name], do_unlink=True)
+
+
+def main(build, name, clips, ortho=2.9, target=(0, 0, 0.35), texture=512):
+    """Builds, bakes the concrete (finished building), exports public/models/<name>.glb,
+    saves blender/<name>.blend; `-- --preview <dir>` renders `clips` ({clip: frames})
+    and the views (see previews())."""
     args = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+    out = os.path.join(PROJECT, 'public', 'models', f'{name}.glb')
+    blend = os.path.join(HERE, f'{name}.blend')
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     print('objects', build(), flush=True)
+    rest = _rest_pose()   # build() leaves every object at rest (gates shut, flashes hidden)
     bpy.context.scene.frame_set(kit.BUILD_END)
-    nodbuilding.bake(texture)
+    bake(texture)
     bpy.context.scene.frame_set(kit.BUILD_END)
     print('export', kit.export_glb(out), flush=True)
     bpy.ops.wm.save_as_mainfile(filepath=blend, compress=True)
     if '--preview' in args:
-        preview([int(f) for f in args[args.index('--preview') + 1].split(',')], args[args.index('--preview') + 2], ortho, target)
+        previews(args[args.index('--preview') + 1], clips, ortho, target, rest)

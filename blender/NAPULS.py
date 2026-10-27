@@ -7,7 +7,7 @@ turning housing with the pulse cannon – a thick barrel wound with copper coils
 opens into a parabolic dish with an emitter spike in its middle. Doors and vents in
 the pyramid's faces, a red lamp over the door.
 
-Nodes the game uses (see nodbuilding.py):
+Nodes the game uses (see nodstructure.py):
     Turret   the housing, turning about the vertical
     Cannon   the pulse cannon's trunnion, tipped up and down; the dish looks along -Y
     Flash    the discharge in front of the dish
@@ -35,15 +35,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402
 import detail  # noqa: E402
-import nodbuilding as nb  # noqa: E402
+import nodstructure as nb  # noqa: E402
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 HIDDEN = kit.HIDDEN
 
-TOP = 0.5                       # the pyramid's top
-DRUM = 0.12
-HOUSING = Vector((0, 0, TOP + DRUM))
-GUN = Vector((0, 0.0, TOP + DRUM + 0.2))
+TOP = 0.42                      # the pyramid's top
+BODY_B, BODY_T = 0.6, 0.38      # half the pyramid's width at the foot and at the top
+LEG = 1.2                       # how far the legs run out along the diagonals
+HOUSING = Vector((0, 0, TOP + 0.03))   # the turret's pivot on the collar
+DRUM_R, DRUM_H = 0.36, 0.38
+DRUM_TOP = HOUSING.z + DRUM_H
+GUN = Vector((0, 0.02, DRUM_TOP + 0.11))
 FIRE_FRAMES = 30
 BUILD_END = 78
 
@@ -51,159 +54,164 @@ BUILD_END = 78
 def pyramid(m, root):
     """The concrete pyramid and its legs (baked), the details; returns both."""
     body = kit.hexahedron('PyramidBody', m['steel'], (
-        (-0.62, -0.62, 0), (0.62, -0.62, 0), (0.62, 0.62, 0), (-0.62, 0.62, 0),
-        (-0.3, -0.3, TOP), (0.3, -0.3, TOP), (0.3, 0.3, TOP), (-0.3, 0.3, TOP)), bevel=0.02)
+        (-BODY_B, -BODY_B, 0), (BODY_B, -BODY_B, 0), (BODY_B, BODY_B, 0), (-BODY_B, BODY_B, 0),
+        (-BODY_T, -BODY_T, TOP), (BODY_T, -BODY_T, TOP), (BODY_T, BODY_T, TOP), (-BODY_T, BODY_T, TOP)), bevel=0.02)
     legs = []
     for k in range(4):
         a = math.pi / 4 + k * math.pi / 2
         d = Vector((math.cos(a), math.sin(a), 0))
         n = Vector((-d.y, d.x, 0))
-        foot, head = d * 1.28, d * 0.36
+        foot, head = d * LEG, d * BODY_T * math.sqrt(2) * 0.92
         legs.append(kit.hexahedron(f'Leg{k}', m['steel'], (
-            foot - n * 0.13, foot + n * 0.13, d * 0.5 + n * 0.3, d * 0.5 - n * 0.3,
-            foot * 0.98 - n * 0.1 + Vector((0, 0, 0.1)), foot * 0.98 + n * 0.1 + Vector((0, 0, 0.1)),
-            head + n * 0.08 + Vector((0, 0, TOP - 0.02)), head - n * 0.08 + Vector((0, 0, TOP - 0.02))), bevel=0.02))
-    shell = nb.concrete('Pyramid', [body, *legs], root, 'olive')
+            foot - n * 0.13, foot + n * 0.13, d * 0.45 + n * 0.3, d * 0.45 - n * 0.3,
+            foot * 0.97 - n * 0.1 + Vector((0, 0, 0.1)), foot * 0.97 + n * 0.1 + Vector((0, 0, 0.1)),
+            head + n * 0.08 + Vector((0, 0, TOP + 0.1)), head - n * 0.08 + Vector((0, 0, TOP + 0.1))), bevel=0.02))
+    shell = nb.concrete('Pyramid', [body, *legs], root, '#7e8070')
 
     parts = []
-    slope = math.atan2(TOP, 0.32)
+    run = BODY_B - BODY_T
+    slope = math.atan2(TOP, run)
     for k in range(4):
-        a = k * math.pi / 2
-        turn = kit.Matrix.Rotation(a, 4, 'Z')
+        turn = kit.Matrix.Rotation(k * math.pi / 2, 4, 'Z')
         normal = Vector((0, -math.sin(slope), math.cos(slope)))
 
         def on_face(name, mat, size, t, x=0.0, lift=0.006):
             """A plate on the face's slope at height fraction t."""
-            at = Vector((x, -0.62 + 0.32 * t, TOP * t)) + normal * lift
+            at = Vector((x, -BODY_B + run * t, TOP * t)) + normal * lift
             obj = box(name, mat, size, (0, 0, 0), bevel=0.004)
             obj.matrix_world = turn @ kit.Matrix.Translation(at) @ kit.Matrix.Rotation(slope, 4, 'X')
             return obj
-        parts.append(on_face(f'Band{k}', m['remap'], (0.9 - 0.5 * 0.82, 0.05, 0.012), 0.82))
-        if k == 0:     # the door at the front and its lamp
-            parts += [on_face('Door', m['armour_dark'], (0.22, 0.22, 0.02), 0.25),
-                      on_face('DoorFrame', m['steel'], (0.26, 0.03, 0.024), 0.43),
-                      on_face('DoorStep', m['steel'], (0.3, 0.06, 0.02), 0.06)]
+        parts.append(on_face(f'Band{k}', m['nplate_dark'], (2 * (BODY_B - run * 0.85) - 0.12, 0.04, 0.012), 0.85))
+        if k == 0:     # the door at the front
+            parts += [on_face('Door', m['armour_dark'], (0.2, 0.2, 0.02), 0.27),
+                      on_face('DoorFrame', m['steel'], (0.24, 0.03, 0.024), 0.45),
+                      on_face('DoorStep', m['steel'], (0.28, 0.06, 0.02), 0.06)]
         else:
             parts += [on_face(f'Vent{k}', m['dark'], (0.26, 0.1, 0.02), 0.35),
                       *[on_face(f'VentSlat{k}{j}', m['steel'], (0.27, 0.012, 0.024), 0.31 + 0.04 * j) for j in range(3)]]
-    for k in range(4):   # bolts on the legs' feet
+    for k in range(4):   # plates on the legs' feet
         a = math.pi / 4 + k * math.pi / 2
         d = Vector((math.cos(a), math.sin(a), 0))
-        parts.append(box(f'LegFoot{k}', m['armour_dark'], (0.18, 0.18, 0.05), d * 1.2 + Vector((0, 0, 0.025)), bevel=0.01, rotation=(0, 0, a)))
+        parts.append(box(f'LegFoot{k}', m['armour_dark'], (0.16, 0.16, 0.05), d * (LEG - 0.1) + Vector((0, 0, 0.025)), bevel=0.01, rotation=(0, 0, a)))
     parts += [
-        cylinder('Collar', m['steel'], 0.36, 0.03, (0, 0, TOP + 0.015), segments=28),
-        cylinder('Drum', m['remap'], 0.3, DRUM - 0.03, (0, 0, TOP + 0.03 + (DRUM - 0.03) / 2), segments=28, bevel=0.01),
-        *[box(f'DrumRib{k}', m['armour_dark'], (0.03, 0.03, DRUM - 0.03), (0.3 * math.cos(k * math.pi / 6), 0.3 * math.sin(k * math.pi / 6), TOP + 0.03 + (DRUM - 0.03) / 2),
-              bevel=0.004, rotation=(0, 0, k * math.pi / 6)) for k in range(12)],
+        cylinder('Collar', m['steel'], DRUM_R + 0.025, 0.03, (0, 0, TOP + 0.015), segments=32),
+        cylinder('CollarRim', m['armour_dark'], DRUM_R + 0.035, 0.012, (0, 0, TOP + 0.006), segments=32, bevel=0.002),
     ]
-    lamps = []
-    for k, (x, y, z) in enumerate(((0.0, -0.45, 0.27), (0.85, 0.85, 0.05), (-0.85, -0.85, 0.05))):
-        housing, light = nb.lamp(f'Lamp{k}', m, (x, y, z))
-        lamps.append((housing, light))
-    return shell, kit.merge('PyramidDetails', parts), lamps
+    return shell, kit.merge('PyramidDetails', parts)
 
 
 def cannon(m, mount):
-    """Housing (Turret) and pulse cannon (Cannon); returns (barrel, flash, charge, glow)."""
+    """The red drum (Turret) and the pulse cannon (Cannon → Recoil); returns the animated parts."""
     turret = kit.parent(kit.empty('Turret', HOUSING), mount)
+    z = HOUSING.z
+    drum = nb.lathe('Drum', m['remap'], [
+        (DRUM_R - 0.02, 0), (DRUM_R, 0.02), (DRUM_R, DRUM_H - 0.07), (DRUM_R - 0.03, DRUM_H - 0.025),
+        (DRUM_R - 0.1, DRUM_H - 0.003), (0, DRUM_H)], HOUSING, segments=36)
     housing = [
-        kit.hexahedron('Housing', m['armour'], (
-            (-0.26, -0.24, HOUSING.z), (0.26, -0.24, HOUSING.z), (0.28, 0.3, HOUSING.z), (-0.28, 0.3, HOUSING.z),
-            (-0.2, -0.16, HOUSING.z + 0.2), (0.2, -0.16, HOUSING.z + 0.2), (0.22, 0.26, HOUSING.z + 0.2), (-0.22, 0.26, HOUSING.z + 0.2)), bevel=0.02),
-        *[kit.hexahedron(f'Cheek{s}', m['remap'], (
-            (s * 0.265, -0.2, HOUSING.z + 0.02), (s * 0.285, -0.2, HOUSING.z + 0.02), (s * 0.29, 0.26, HOUSING.z + 0.02), (s * 0.27, 0.26, HOUSING.z + 0.02),
-            (s * 0.215, -0.14, HOUSING.z + 0.17), (s * 0.235, -0.14, HOUSING.z + 0.17), (s * 0.245, 0.22, HOUSING.z + 0.17), (s * 0.225, 0.22, HOUSING.z + 0.17)), bevel=0.004)
+        drum,
+        cylinder('DrumFoot', m['armour_dark'], DRUM_R + 0.008, 0.03, (0, 0, z + 0.015), segments=36, bevel=0.003),
+        cylinder('DrumBand', m['armour_dark'], DRUM_R + 0.006, 0.025, (0, 0, z + DRUM_H - 0.085), segments=36, bevel=0.003),
+        *[box(f'DrumRib{k}', m['armour_dark'], (0.035, 0.02, DRUM_H - 0.13), (DRUM_R * math.cos(a), DRUM_R * math.sin(a), z + 0.03 + (DRUM_H - 0.13) / 2),
+              bevel=0.004, rotation=(0, 0, a + math.pi / 2)) for k, a in ((k, math.pi / 16 + k * math.pi / 4) for k in range(8))],
+        # the cradle on the drum's top: trunnion cheeks, capacitors at the back
+        box('CradleBase', m['armour_dark'], (0.34, 0.26, 0.03), (0, GUN.y + 0.02, DRUM_TOP - 0.005), bevel=0.006),
+        *[box(f'Trunnion{s}', m['armour'], (0.045, 0.16, 0.15), (s * 0.135, GUN.y, (DRUM_TOP + GUN.z) / 2 + 0.015), bevel=0.01) for s in (-1, 1)],
+        *[cylinder(f'TrunnionHub{s}', m['steel'], 0.04, 0.012, (s * 0.16, GUN.y, GUN.z), rotation=(0, math.pi / 2, 0), segments=14, bevel=0.002) for s in (-1, 1)],
+        *[cylinder(f'Capacitor{s}', m['steel_light'], 0.045, 0.2, (s * 0.2, 0.24, DRUM_TOP - 0.01), rotation=(math.pi / 2, 0, 0), segments=16)
           for s in (-1, 1)],
-        *[cylinder(f'Capacitor{s}', m['steel_light'], 0.05, 0.3, (s * 0.2, 0.18, HOUSING.z + 0.24), rotation=(math.pi / 2, 0, 0), segments=16)
+        *[cylinder(f'CapCap{s}', m['remap'], 0.048, 0.025, (s * 0.2, 0.35, DRUM_TOP - 0.01), rotation=(math.pi / 2, 0, 0), segments=16)
           for s in (-1, 1)],
-        *[cylinder(f'CapCap{s}', m['remap'], 0.053, 0.03, (s * 0.2, 0.34, HOUSING.z + 0.24), rotation=(math.pi / 2, 0, 0), segments=16)
-          for s in (-1, 1)],
-        *detail.grille('HousingVent', m['steel'], m['dark'], (0, 0.31, HOUSING.z + 0.09), 0.24, 0.1, 'Y', 4),
-        *detail.hose('Feed0', m['dark'], (0.2, 0.03, HOUSING.z + 0.24), (0.16, -0.02, HOUSING.z + 0.3), (0.08, -0.08, GUN.z + 0.06), 0.012),
-        *detail.hose('Feed1', m['dark'], (-0.2, 0.03, HOUSING.z + 0.24), (-0.16, -0.02, HOUSING.z + 0.3), (-0.08, -0.08, GUN.z + 0.06), 0.012),
-        *[box(f'Trunnion{s}', m['armour_dark'], (0.05, 0.14, 0.12), (s * 0.15, GUN.y + 0.02, GUN.z - 0.02), bevel=0.01) for s in (-1, 1)],
+        *detail.hose('Feed0', m['dark'], (0.2, 0.14, DRUM_TOP - 0.01), (0.2, 0.06, DRUM_TOP + 0.02), (0.157, 0.02, DRUM_TOP + 0.06), 0.012),
+        *detail.hose('Feed1', m['dark'], (-0.2, 0.14, DRUM_TOP - 0.01), (-0.2, 0.06, DRUM_TOP + 0.02), (-0.157, 0.02, DRUM_TOP + 0.06), 0.012),
+        *detail.grille('DrumVent', m['steel'], m['dark'], (0, DRUM_R + 0.005, z + 0.1), 0.2, 0.08, 'Y', 4),
     ]
-    kit.parent(kit.merge('HousingBody', housing, HOUSING), turret)
+    kit.parent(kit.merge('DrumBody', housing, HOUSING), turret)
+    lamp = nb.lamp(m, turret, 'DrumLamp', (0.0, 0.3, DRUM_TOP - 0.03), 'red', 58)
 
     pivot = kit.parent(kit.empty('Cannon', GUN), turret)
+    recoil = kit.parent(kit.empty('Recoil', GUN), pivot)
     along = (math.pi / 2, 0, 0)
     copper = material('Copper', srgb('#b5703a'), 0.35, 1.0)
-    dish_y = GUN.y - 0.42
+    dish_y = GUN.y - 0.36
     parts = [
-        cylinder('Core', m['armour_dark'], 0.1, 0.5, GUN + Vector((0, -0.12, 0)), rotation=along, segments=20),
-        cylinder('Breech', m['armour'], 0.12, 0.12, GUN + Vector((0, 0.12, 0)), rotation=along, segments=20, bevel=0.01),
-        # the parabolic dish: a few cone rings opening forwards
-        cylinder('DishBack', m['steel'], 0.1, 0.05, (GUN.x, dish_y + 0.03, GUN.z), rotation=along, radius2=0.16, segments=24, bevel=0.003),
-        cylinder('Dish', m['steel_light'], 0.16, 0.06, (GUN.x, dish_y - 0.025, GUN.z), rotation=along, radius2=0.24, segments=28, bevel=0.003),
-        cylinder('DishInner', m['dark'], 0.1, 0.07, (GUN.x, dish_y - 0.022, GUN.z), rotation=along, radius2=0.225, segments=28, bevel=0),
+        cylinder('Core', m['armour_dark'], 0.065, 0.46, GUN + Vector((0, -0.1, 0)), rotation=along, segments=20),
+        cylinder('Breech', m['armour'], 0.09, 0.12, GUN + Vector((0, 0.1, 0)), rotation=along, segments=20, bevel=0.01),
+        cylinder('BreechCap', m['remap'], 0.07, 0.02, GUN + Vector((0, 0.17, 0)), rotation=along, segments=20, bevel=0.004),
+        # a small parabolic dish: cone rings opening forwards
+        cylinder('DishBack', m['steel'], 0.07, 0.04, (GUN.x, dish_y + 0.02, GUN.z), rotation=along, radius2=0.11, segments=24, bevel=0.003),
+        cylinder('Dish', m['steel_light'], 0.11, 0.05, (GUN.x, dish_y - 0.02, GUN.z), rotation=along, radius2=0.16, segments=28, bevel=0.003),
+        cylinder('DishInner', m['dark'], 0.07, 0.056, (GUN.x, dish_y - 0.018, GUN.z), rotation=along, radius2=0.148, segments=28, bevel=0),
         *[beam(f'DishRim{k}', m['remap'],
-               (0.243 * math.cos(2 * math.pi * k / 20), dish_y - 0.056, GUN.z + 0.243 * math.sin(2 * math.pi * k / 20)),
-               (0.243 * math.cos(2 * math.pi * (k + 1) / 20), dish_y - 0.056, GUN.z + 0.243 * math.sin(2 * math.pi * (k + 1) / 20)), 0.022, 0.016)
-          for k in range(20)],
-        cylinder('Spike', m['steel'], 0.022, 0.16, (GUN.x, dish_y - 0.06, GUN.z), rotation=along, radius2=0.008, segments=12),
-        sphere('Emitter', m['lamp_pulse'], 0.03, (GUN.x, dish_y - 0.13, GUN.z), 12),
+               (0.162 * math.cos(2 * math.pi * k / 16), dish_y - 0.047, GUN.z + 0.162 * math.sin(2 * math.pi * k / 16)),
+               (0.162 * math.cos(2 * math.pi * (k + 1) / 16), dish_y - 0.047, GUN.z + 0.162 * math.sin(2 * math.pi * (k + 1) / 16)), 0.018, 0.014)
+          for k in range(16)],
+        cylinder('Spike', m['steel'], 0.018, 0.12, (GUN.x, dish_y - 0.05, GUN.z), rotation=along, radius2=0.006, segments=12),
+        sphere('Emitter', m['lamp_pulse'], 0.024, (GUN.x, dish_y - 0.105, GUN.z), 12),
     ]
     for k in range(4):   # dish struts holding the spike
         a = math.pi / 4 + k * math.pi / 2
-        parts.append(beam(f'Strut{k}', m['steel'], (0.2 * math.cos(a), dish_y - 0.04, GUN.z + 0.2 * math.sin(a)), (0, dish_y - 0.11, GUN.z), 0.01))
-    for k in range(6):   # copper coils round the core
-        parts.append(cylinder(f'Coil{k}', copper, 0.125, 0.03, GUN + Vector((0, -0.04 - k * 0.05, 0)), rotation=along, segments=20, bevel=0.006))
-    barrel = kit.parent(kit.merge('PulseCannon', parts, GUN), pivot)
-    emitter = Vector((GUN.x, dish_y - 0.13, GUN.z))
-    glow = kit.parent(nb.glow(m, 'EmitterGlow', emitter, 0.05, 'glow_pulse', 1), barrel)
-    charge = kit.parent(nb.glow(m, 'Charge', emitter + Vector((0, 0.06, 0)), 0.17, 'glow_pulse', 1), barrel)
-    flash = kit.parent(nb.glow(m, 'Flash', emitter - Vector((0, 0.08, 0)), 0.14, 'glow_pulse', 4), pivot)
-    return barrel, flash, charge, glow
+        parts.append(beam(f'Strut{k}', m['steel'], (0.13 * math.cos(a), dish_y - 0.035, GUN.z + 0.13 * math.sin(a)), (0, dish_y - 0.09, GUN.z), 0.008))
+    for k in range(5):   # copper coils round the core
+        parts.append(cylinder(f'Coil{k}', copper, 0.088, 0.026, GUN + Vector((0, -0.05 - k * 0.045, 0)), rotation=along, segments=20, bevel=0.005))
+    kit.parent(kit.merge('PulseCannon', parts, GUN), recoil)
+    emitter = Vector((GUN.x, dish_y - 0.105, GUN.z))
+    glow = kit.parent(nb.glow(m, 'EmitterGlow', emitter, 0.04, 'glow_pulse', 1), pivot)
+    flare = kit.parent(nb.glow(m, 'EmitterFlare', emitter, 0.05, 'glow_pulse', 1), pivot)
+    charge = kit.parent(nb.glow(m, 'Charge', emitter + Vector((0, 0.05, 0)), 0.13, 'glow_pulse', 1), pivot)
+    flash = kit.parent(nb.glow(m, 'Flash', emitter - Vector((0, 0.06, 0)), 0.12, 'glow_pulse', 4), pivot)
+    return recoil, flash, charge, glow, flare, lamp
 
 
 def build():
-    root = nb.start('NodEMP', 'NodEMPCannon', BUILD_END + 10)
+    root = nb.start('NodEMP', 'NodEMPCannon', BUILD_END)
     m = nb.materials()
-    shell, details, lamps = pyramid(m, root)
+    shell, details = pyramid(m, root)
     kit.parent(shell, root)
     kit.parent(details, root)
     lights = []
-    for k, (housing, light) in enumerate(lamps):
-        kit.parent(housing, root)
-        kit.parent(light, housing)
-        nb.show_at(housing, 40 + 3 * k)
+    run = BODY_B - BODY_T
+    lamp_spots = [(0.0, -BODY_B + run * 0.93 - 0.02, TOP * 0.93)]
+    for a in (math.pi / 4, -3 * math.pi / 4):
+        d = Vector((math.cos(a), math.sin(a), 0)) * (LEG - 0.1)
+        lamp_spots.append((d.x, d.y, 0.05))
+    for k, at in enumerate(lamp_spots):
+        light = nb.lamp(m, root, f'Lamp{k}', at, 'red', 30 + 3 * k)
         lights.append((light, kit.flashes((k * 20, 8))))
     mount = kit.parent(kit.empty('Mount', HOUSING), root)
-    barrel, flash, charge, glow = cannon(m, mount)
+    recoil, flash, charge, glow, flare, drum_light = cannon(m, mount)
+    lights.append((drum_light, kit.flashes((10, 6), (40, 6))))
 
-    # Build
+    # Build: the pyramid rises, then the drum with the cannon is lowered onto it
     nb.rise(shell, 0, 26, TOP + 0.05)
-    nb.rise(details, 6, 26, TOP + DRUM + 0.05)
-    kit.keys(mount, 'scale', {0: Vector((HIDDEN,) * 3), 33: Vector((HIDDEN,) * 3), 34: Vector((1, 1, 1))}, 'CONSTANT')
-    nb.rise(mount, 34, 16, 0.4)
-    short = Vector((1, HIDDEN, 1))
-    kit.keys(barrel, 'scale', {0: short, 52: short, 68: Vector((1, 1.05, 1)), 72: Vector((1, 1, 1))})
+    nb.rise(details, 6, 26, TOP + 0.08)
+    kit.keys(mount, 'location', {0: HOUSING - Vector((0, 0, 2)), 39: HOUSING - Vector((0, 0, 2))}, 'CONSTANT')
+    kit.keys(mount, 'location', {40: HOUSING + Vector((0, 0, 0.7)), 60: HOUSING - Vector((0, 0, 0.005)), 64: HOUSING})
     nb.all_to_build()
 
     # Idle: the emitter glows softly, lamps blink
-    kit.keys(glow, 'scale', {f: Vector((1, 1, 1)) * (0.8 + 0.3 * math.sin(2 * math.pi * 2 * f / kit.IDLE_END)) for f in range(0, kit.IDLE_END + 1, 3)}, 'LINEAR')
+    nb.pulse(glow, kit.IDLE_END, 0.7, 1.2, cycles=2)
     kit.to_track(glow, 'Idle')
     nb.blinking(lights)
 
     # Fire: charge, discharge, kick
     hidden = Vector((HIDDEN,) * 3)
-    kit.keys(charge, 'scale', {0: Vector((0.15,) * 3), 18: Vector((1, 1, 1)), 20: Vector((1.15,) * 3), 21: hidden, FIRE_FRAMES: hidden}, 'LINEAR')
+    kit.keys(charge, 'scale', {0: hidden, 1: Vector((0.15,) * 3), 18: Vector((1, 1, 1)), 20: Vector((1.15,) * 3), 21: hidden, FIRE_FRAMES: hidden}, 'LINEAR')
     kit.to_track(charge, 'Fire')
-    kit.keys(glow, 'scale', {0: Vector((1.2,) * 3), 19: Vector((2.2,) * 3), 21: Vector((0.3,) * 3), FIRE_FRAMES: Vector((0.8,) * 3)}, 'LINEAR')
-    kit.to_track(glow, 'Fire')
+    kit.keys(flare, 'scale', {0: hidden, 1: Vector((1.0,) * 3), 19: Vector((2.2,) * 3), 21: Vector((0.3,) * 3), 23: hidden, FIRE_FRAMES: hidden}, 'LINEAR')
+    kit.to_track(flare, 'Fire')
     nb.flash_keys(flash, FIRE_FRAMES, 20, 27, 1.6)
     kit.to_track(flash, 'Fire')
-    rest = barrel.location.copy()
-    kit.keys(barrel, 'location', {0: rest, 20: rest, 22: rest + Vector((0, 0.05, 0)), 25: rest + Vector((0, 0.05, 0)), FIRE_FRAMES: rest})
-    kit.to_track(barrel, 'Fire')
+    rest = recoil.location.copy()
+    kit.keys(recoil, 'location', {0: rest, 20: rest, 22: rest + Vector((0, 0.05, 0)), 25: rest + Vector((0, 0.05, 0)), FIRE_FRAMES: rest})
+    kit.to_track(recoil, 'Fire')
 
     shell.location = details.location = (0, 0, 0)
     mount.location = HOUSING
-    barrel.location, barrel.scale = rest, (1, 1, 1)
-    flash.scale = charge.scale = (HIDDEN,) * 3
-    glow.scale = (0.8,) * 3
+    recoil.location = rest
+    flash.scale = charge.scale = flare.scale = (HIDDEN,) * 3
+    glow.scale = (1, 1, 1)
     return len(kit.collection().objects)
 
 
 if __name__ == '__main__':
-    nb.main(build, 'NAPULS', {'Build': [20, 45, 62, BUILD_END], 'Idle': [0], 'Fire': [12, 22]}, scale=2.6, target=(0, 0, 0.4), texture=1024)
+    nb.main(build, 'NAPULS', {'Build': [20, 45, 62, BUILD_END], 'Idle': [0], 'Fire': [12, 22, FIRE_FRAMES]}, ortho=2.6, target=(0, 0, 0.4), texture=1024)

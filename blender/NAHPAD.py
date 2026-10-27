@@ -1,20 +1,22 @@
 """
 Tiberian Fallout – Nod helipad (NAHPAD), after Tiberian Sun.
 
-On 2 × 2 cells: a round landing pad of dark concrete with a red (house colour) ring,
-a light cross and a target circle painted on it and green landing lights round its
-edge; at the back right a small control post – a concrete block with a light grey
-cabin, slanted windows, an antenna mast and a turning radar dish; at the back left two
-red fuel tanks on their cradles with a pump.
+On 2 × 2 cells: a raised, round landing pad of dark concrete – a thick red (house
+colour) rim, a dark cross dividing it into four fields and four white landing lights –
+standing on a mound of light, rough concrete that spills out towards the front. At the
+back right a light grey control tower: a concrete footing, a cabin with dark windows, a
+pale radar ring on a turntable and an antenna mast with a beacon. At the left three red
+fuel tanks on a footing, and from them a dark lattice gantry runs along the back left
+edge to the back corner and over to the tower.
 
 Nodes the game uses:
     Pad      the landing point on the middle of the pad; its -Y is the way an aircraft
              faces when it has landed
 Animations (glTF clips)
-    Build    one-shot, 2.2 s: the pad spreads, its markings and lights appear, the
-             control post rises, the tanks and the mast come up
-    Idle     loop, 2 s: the landing lights run round the pad, the radar dish turns,
-             the mast's beacon blinks
+    Build    one-shot, 2 s: the mound comes up out of the ground, the pad rises onto it,
+             the tower's footing and cabin rise, the tanks and the gantry grow
+    Idle     loop, 2 s: the landing lights flash round the pad, all four together at
+             the end; the radar ring turns, the mast's beacon blinks
 
 Run headless:
 
@@ -27,23 +29,32 @@ import math
 import os
 import sys
 
+import bpy
 from mathutils import Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402
 import detail  # noqa: E402
-import nodbuilding as nb  # noqa: E402
+import nodstructure as nb  # noqa: E402
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 HIDDEN = kit.HIDDEN
 
-PAD = Vector((-0.14, -0.12, 0))     # the pad's middle
-RADIUS = 0.74
-PAD_TOP = 0.06
-POST = Vector((0.6, 0.6, 0))        # the control post
-TANKS = Vector((-0.74, 0.62, 0))
-LIGHTS = 10
+PAD = Vector((-0.12, -0.2, 0))      # the pad's middle (on the ground)
+RADIUS = 0.66                       # the pad's concrete
+RIM = 0.055                         # the red rim's width (it overhangs a little)
+PAD_LOW, PAD_TOP = 0.22, 0.3        # the pad's underside and top
+TOWER = Vector((0.2, 0.78, 0))
+TANKS = Vector((-0.8, -0.76, 0))
+GANTRY_Z = 0.36                     # the gantry's lower chord
+LIGHTS = 4
+
+
+def coloured(name, hex_colour, roughness=0.6, metallic=0.2):
+    mat = material(name, srgb(hex_colour), roughness, metallic)
+    mat['nodColour'] = hex_colour
+    return mat
 
 
 def ring(name, mat, centre, radius, width, z, count=48):
@@ -63,144 +74,233 @@ def ring(name, mat, centre, radius, width, z, count=48):
     kit.finish(obj, mat, 0)
     for poly in obj.data.polygons:
         poly.use_smooth = False
-    return [obj]
+    return obj
+
+
+def mound(m, root):
+    """The rough light concrete under the pad: an irregular lump, wider towards the
+    front, low at the back right where the tower stands; a few boulders at its foot."""
+    count = 16
+    bottom, top = [], []
+    for k in range(count):
+        a = 2 * math.pi * k / count
+        d = Vector((math.cos(a), math.sin(a), 0))
+        front = max(0.0, -(d.x * -0.3 + d.y))           # towards -y, a little -x
+        back_right = max(0.0, d.x * 0.7 + d.y * 0.7)
+        jag = 0.05 * math.sin(5 * a + 1.3) + 0.03 * math.sin(11 * a)
+        towards_tanks = max(0.0, -(d.x + d.y) / math.sqrt(2)) ** 6
+        rb = 0.8 + 0.12 * front - 0.2 * back_right - 0.14 * towards_tanks + jag
+        rt = 0.58 + 0.03 * math.sin(7 * a)
+        bottom.append((PAD.x + d.x * rb, PAD.y + d.y * rb))
+        top.append((PAD.x + d.x * rt, PAD.y + d.y * rt))
+    parts = [nb.prism('MoundBody', m['steel'], bottom, top, 0, PAD_LOW + 0.005, 0.02)]
+    for k, (a, size, h) in enumerate(((-100, 0.16, 0.08), (-70, 0.12, 0.06), (-115, 0.12, 0.07), (-40, 0.1, 0.05), (-165, 0.1, 0.06))):
+        r = math.radians(a)
+        at = PAD + Vector((math.cos(r), math.sin(r), 0)) * 0.84
+        parts.append(kit.frustum(f'Boulder{k}', m['steel'], (size, size * 0.8), (size * 0.55, size * 0.4), h, at, bevel=0.02))
+        parts[-1].rotation_euler.z = r + 0.4
+    return nb.concrete('Mound', parts, root, '#b1aea4', pivot=PAD)
 
 
 def pad(m, root):
-    slab = nb.concrete('PadSlab', [
-        cylinder('Slab', m['steel'], RADIUS, PAD_TOP, PAD + Vector((0, 0, PAD_TOP / 2)), segments=40, bevel=0.012),
-        cylinder('Skirt', m['steel'], RADIUS + 0.04, 0.025, PAD + Vector((0, 0, 0.0125)), segments=40, bevel=0.008),
-    ], root, pivot=PAD)
-    z = PAD_TOP + 0.002
-    paint = material('PadPaint', srgb('#a9aaa6'), 0.85)
-    paint['nodColour'] = '#a9aaa6'
-    parts = [
-        *ring('Ring', m['remap'], PAD, RADIUS - 0.07, 0.06, z),
-        *ring('Target', paint, PAD, 0.24, 0.025, z),
-        *[box(f'Cross{k}', paint, (0.035, 0.84, 0.004), PAD + Vector((0, 0, z)), bevel=0, rotation=(0, 0, math.pi / 4 + k * math.pi / 2))
-          for k in range(2)],
-        box('PadSeam0', m['dark'], (2 * RADIUS - 0.05, 0.008, 0.003), PAD + Vector((0, 0, z - 0.0005)), bevel=0),
-        box('PadSeam1', m['dark'], (0.008, 2 * RADIUS - 0.05, 0.003), PAD + Vector((0, 0, z - 0.0005)), bevel=0),
-        # the front mark: an arrow on the pad's front edge (-Y)
-        kit.hexahedron('Arrow', paint, (
-            PAD + Vector((-0.07, -0.5, z - 0.002)), PAD + Vector((0.07, -0.5, z - 0.002)), PAD + Vector((0.0, -0.6, z - 0.002)), PAD + Vector((0.0, -0.6, z - 0.002)),
-            PAD + Vector((-0.07, -0.5, z + 0.002)), PAD + Vector((0.07, -0.5, z + 0.002)), PAD + Vector((0.0, -0.6, z + 0.002)), PAD + Vector((0.0, -0.6, z + 0.002))), bevel=0),
-    ]
-    lights = []
-    housings = []
+    """The landing pad (concrete), its markings with the light housings, and the lights."""
+    disc = nb.concrete('PadSlab', [
+        cylinder('Slab', m['steel'], RADIUS, PAD_TOP - PAD_LOW, PAD + Vector((0, 0, (PAD_LOW + PAD_TOP) / 2)), segments=48, bevel=0.01),
+    ], root, '#3e3f43', pivot=PAD + Vector((0, 0, PAD_LOW)))
+    z = PAD_TOP
+    rim = nb.lathe('Rim', m['remap'], [(RADIUS - RIM, z - 0.012), (RADIUS - RIM, z + 0.012), (RADIUS + 0.02, z + 0.012), (RADIUS + 0.02, z - 0.05)],
+                   PAD, segments=48, bevel=0.004)
+    field = coloured('PadField', '#4d4e53', 0.85, 0.1)
+    parts = [rim]
+    # the four fields between the dark cross (slightly lighter plates)
+    inner = RADIUS - RIM - 0.005
+    for q in range(4):
+        a0 = q * math.pi / 2 + 0.06
+        a1 = (q + 1) * math.pi / 2 - 0.06
+
+        def build(bm, a0=a0, a1=a1):
+            steps = 10
+            centre_off = Vector((math.cos((a0 + a1) / 2), math.sin((a0 + a1) / 2), 0)) * 0.045
+            c = bm.verts.new(PAD + centre_off + Vector((0, 0, z + 0.003)))
+            arc = [bm.verts.new(PAD + Vector((inner * math.cos(a0 + (a1 - a0) * i / steps), inner * math.sin(a0 + (a1 - a0) * i / steps), z + 0.003)))
+                   for i in range(steps + 1)]
+            for i in range(steps):
+                bm.faces.new((c, arc[i], arc[i + 1]))
+
+        obj = kit.mesh_object(f'Field{q}', build)
+        kit.finish(obj, field, 0)
+        parts.append(obj)
+    parts.append(ring('Target', coloured('PadTarget', '#77787c', 0.8, 0.1), PAD, 0.2, 0.02, z + 0.005))
+    lights, light_at = [], []
     for k in range(LIGHTS):
-        a = -math.pi / 2 + 2 * math.pi * k / LIGHTS
-        at = PAD + Vector(((RADIUS - 0.015) * math.cos(a), (RADIUS - 0.015) * math.sin(a), PAD_TOP - 0.01))
-        housing, light = nb.lamp(f'PadLight{k}', m, at, 'green')
-        housings.append(housing)
+        a = k * math.pi / 2       # on the cross's arms: the corners of the pad on screen
+        at = PAD + Vector((math.cos(a) * 0.46, math.sin(a) * 0.46, z))
+        housing, light = kit.beacon(f'PadLight{k}', m, at, 'white')
+        parts.append(housing)
+        parts.append(cylinder(f'PadLightBase{k}', m['armour_dark'], 0.032, 0.008, at + Vector((0, 0, 0.004)), segments=12, bevel=0))
         lights.append(light)
-    return slab, kit.merge('PadMarks', parts, PAD), housings, lights
+        light_at.append(at)
+    marks = kit.merge('PadMarks', parts, PAD + Vector((0, 0, z)))
+    return disc, marks, lights
 
 
-def post(m, root):
-    """The control post: block (baked), cabin and fittings, mast with beacon, dish."""
-    block = nb.concrete('PostBlock', [
-        kit.frustum('Block', m['steel'], (0.5, 0.46), (0.46, 0.42), 0.16, POST, bevel=0.012),
-        box('Stair', m['steel'], (0.12, 0.16, 0.06), POST + Vector((-0.31, -0.08, 0.03)), bevel=0.008),
-    ], root, pivot=POST)
-    panel = material('NodPanel', srgb('#b4b6b9'), 0.55, 0.2)
-    panel['nodColour'] = '#b4b6b9'
-    c = POST + Vector((0.02, 0.04, 0.16))
+def tower(m, root):
+    """The control tower at the back right: footing (concrete), cabin, ring, mast."""
+    footing = nb.concrete('TowerFooting', [
+        kit.frustum('Footing', m['steel'], (0.36, 0.36), (0.32, 0.32), 0.26, TOWER, bevel=0.015),
+        kit.frustum('FootingStep', m['steel'], (0.2, 0.12), (0.18, 0.1), 0.1, TOWER + Vector((-0.27, -0.06, 0)), bevel=0.01),
+    ], root, '#a9a8a2', pivot=TOWER)
+    panel = coloured('TowerPanel', '#d4d4d2', 0.6, 0.1)
+    c = TOWER + Vector((0, 0, 0.26))
     parts = [
-        box('Cabin', panel, (0.36, 0.3, 0.16), c + Vector((0, 0, 0.08)), bevel=0.012),
-        kit.hexahedron('Glazing', m['window'], (
-            c + Vector((-0.16, -0.155, 0.07)), c + Vector((0.16, -0.155, 0.07)), c + Vector((0.16, -0.14, 0.07)), c + Vector((-0.16, -0.14, 0.07)),
-            c + Vector((-0.16, -0.19, 0.15)), c + Vector((0.16, -0.19, 0.15)), c + Vector((0.16, -0.14, 0.15)), c + Vector((-0.16, -0.14, 0.15))), bevel=0.003),
-        kit.hexahedron('GlazingSide', m['window'], (
-            c + Vector((-0.195, -0.1, 0.07)), c + Vector((-0.18, -0.1, 0.07)), c + Vector((-0.18, 0.08, 0.07)), c + Vector((-0.195, 0.08, 0.07)),
-            c + Vector((-0.215, -0.1, 0.15)), c + Vector((-0.18, -0.1, 0.15)), c + Vector((-0.18, 0.08, 0.15)), c + Vector((-0.215, 0.08, 0.15))), bevel=0.003),
-        box('Roof', m['armour_dark'], (0.4, 0.34, 0.025), c + Vector((0, 0, 0.17)), bevel=0.008),
-        box('Band', m['remap'], (0.364, 0.304, 0.025), c + Vector((0, 0, 0.035)), bevel=0.004),
-        box('Door', m['armour_dark'], (0.012, 0.09, 0.12), c + Vector((-0.185, 0.0, -0.1)) + Vector((0, -0.12, 0.16)), bevel=0.003),
-        *detail.grille('PostVent', m['steel'], m['dark'], c + Vector((0.08, 0.152, 0.08)), 0.12, 0.07, 'Y', 4),
-        box('AcBox', m['steel'], (0.1, 0.08, 0.05), c + Vector((-0.08, 0.06, 0.207)), bevel=0.006),
-        *detail.rail('Rail', m['steel'], [c + Vector((-0.19, -0.16, 0.183)), c + Vector((0.19, -0.16, 0.183)), c + Vector((0.19, 0.16, 0.183))], 0.04),
+        kit.frustum('Cabin', panel, (0.3, 0.3), (0.26, 0.26), 0.2, c, bevel=0.012),
+        box('CabinRoof', m['steel_light'], (0.29, 0.29, 0.025), c + Vector((0, 0, 0.212)), bevel=0.006),
+        box('CabinBand', m['remap'], (0.296, 0.296, 0.022), c + Vector((0, 0, 0.03)), bevel=0.003),
+        cylinder('Turntable', m['steel'], 0.06, 0.04, c + Vector((0.02, 0.02, 0.245)), segments=16, bevel=0.004),
     ]
-    body = kit.merge('PostCabin', parts, POST)
-    mast_at = c + Vector((0.12, 0.08, 0.183))
-    mast = kit.merge('Mast', [
-        cylinder('MastPole', m['steel_light'], 0.01, 0.38, mast_at + Vector((0, 0, 0.19)), segments=8, bevel=0),
-        beam('MastBar', m['steel'], mast_at + Vector((-0.05, 0, 0.28)), mast_at + Vector((0.05, 0, 0.28)), 0.006),
-        beam('MastWhip', m['steel'], mast_at + Vector((0.05, 0, 0.28)), mast_at + Vector((0.05, 0, 0.36)), 0.004),
-    ], mast_at)
-    housing, beacon = kit.beacon('MastTop', m, mast_at + Vector((0, 0, 0.38)))
-    kit.parent(housing, mast)
-    dish_at = c + Vector((-0.08, 0.06, 0.232))
+    # dark windows on the two sides the camera sees (-y and +x), slanted with the walls
+    for k, (normal, side) in enumerate(((Vector((0, -1, 0)), Vector((1, 0, 0))), (Vector((1, 0, 0)), Vector((0, 1, 0))))):
+        lo, hi = c + normal * 0.1495 + Vector((0, 0, 0.08)), c + normal * 0.1355 + Vector((0, 0, 0.17))
+        out = normal * 0.004
+        parts.append(kit.hexahedron(f'Window{k}', m['window'], (
+            lo - side * 0.1, lo + side * 0.1, lo + side * 0.1 + out, lo - side * 0.1 + out,
+            hi - side * 0.09, hi + side * 0.09, hi + side * 0.09 + out, hi - side * 0.09 + out), bevel=0))
+    parts.append(box('Door', m['armour_dark'], (0.012, 0.08, 0.13), c + Vector((-0.149, -0.05, 0.065)), bevel=0.003))
+    parts += detail.rail('TowerRail', m['steel'], [c + Vector((-0.13, -0.13, 0.225)), c + Vector((0.13, -0.13, 0.225)), c + Vector((0.13, 0.13, 0.225))], 0.04)
+    mast_at = c + Vector((-0.08, 0.08, 0.225))
+    parts += [
+        cylinder('MastPole', m['steel_light'], 0.01, 0.36, mast_at + Vector((0, 0, 0.18)), segments=8, bevel=0),
+        beam('MastBar', m['steel'], mast_at + Vector((-0.05, 0.05, 0.27)), mast_at + Vector((0.05, -0.05, 0.27)), 0.007),
+        beam('MastBar2', m['steel'], mast_at + Vector((-0.035, -0.035, 0.31)), mast_at + Vector((0.035, 0.035, 0.31)), 0.006),
+    ]
+    cabin = kit.merge('TowerCabin', parts, TOWER)
+    housing, beacon = kit.beacon('MastTop', m, mast_at + Vector((0, 0, 0.36)))
+    housing = kit.merge('MastTopHousing', [housing], mast_at)
+    ring_at = c + Vector((0.02, 0.02, 0.265))
+    pale = coloured('RadarRing', '#b9b6d6', 0.4, 0.4)
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.125, minor_radius=0.009, major_segments=28, minor_segments=6)
+    hoop = bpy.context.active_object
+    hoop.name = 'RingHoop'
+    kit.finish(hoop, pale, 0)
+    hoop.rotation_euler = (math.radians(70), 0, 0)
+    hoop.location = ring_at + Vector((0, 0, 0.14))
     dish = kit.merge('RadarDish', [
-        cylinder('DishStand', m['steel'], 0.012, 0.06, dish_at + Vector((0, 0, 0.03)), segments=8, bevel=0),
-        cylinder('DishBowl', m['steel_light'], 0.08, 0.03, dish_at + Vector((0, -0.01, 0.08)), rotation=(math.radians(-60), 0, 0), radius2=0.02, segments=20),
-        beam('DishFeed', m['steel'], dish_at + Vector((0, -0.01, 0.08)), dish_at + Vector((0, -0.07, 0.11)), 0.006),
-    ], dish_at)
-    return block, body, mast, beacon, dish
+        cylinder('RingPost', m['steel'], 0.012, 0.012, ring_at + Vector((0, 0, 0.006)), segments=8, bevel=0),
+        beam('RingFork0', m['steel'], ring_at + Vector((-0.02, 0, 0.004)), ring_at + Vector((-0.125, 0, 0.14)), 0.012),
+        beam('RingFork1', m['steel'], ring_at + Vector((0.02, 0, 0.004)), ring_at + Vector((0.125, 0, 0.14)), 0.012),
+        hoop,
+        sphere('RingHub', m['steel_light'], 0.022, ring_at + Vector((0, 0, 0.14)), 12),
+    ], ring_at)
+    return footing, cabin, housing, beacon, dish
 
 
 def tanks(m):
-    parts = []
-    for k, dx in enumerate((-0.09, 0.09)):
-        at = TANKS + Vector((dx, 0, 0.11))
-        along = (math.pi / 2, 0, 0)
+    parts = [box('TankFooting', m['armour_dark'], (0.24, 0.42, 0.03), TANKS + Vector((0, 0, 0.015)), bevel=0.008)]
+    parts[-1].rotation_euler.z = math.pi / 4
+    for k, off in enumerate(((-0.11, 0.11), (0.0, 0.0), (0.11, -0.11))):
+        at = TANKS + Vector((off[0], off[1], 0.03))
+        h, r = (0.2, 0.09) if k == 1 else (0.16, 0.085)
         parts += [
-            cylinder(f'Tank{k}', m['remap'], 0.075, 0.4, at, rotation=along, segments=20, bevel=0.01),
-            *[sphere(f'TankEnd{k}{s}', m['remap'], 0.075, at + Vector((0, s * 0.2, 0)), 16) for s in (-1, 1)],
-            *[box(f'Cradle{k}{j}', m['armour_dark'], (0.17, 0.035, 0.07), at + Vector((0, y, -0.075)), bevel=0.006) for j, y in enumerate((-0.12, 0.12))],
-            *[box(f'Strap{k}{j}', m['dark'], (0.155, 0.016, 0.155), at + Vector((0, y, 0)), bevel=0.004) for j, y in enumerate((-0.12, 0.12))],
-            box(f'TankPlate{k}', m['hazard'], (0.04, 0.06, 0.005), at + Vector((dx * 0.75, -0.02, 0.06)), bevel=0, rotation=(0, math.copysign(0.6, dx), 0)),
+            cylinder(f'Tank{k}', m['remap'], r, h, at + Vector((0, 0, h / 2)), segments=20, bevel=0.006),
+            sphere(f'TankDome{k}', m['remap'], r, at + Vector((0, 0, h)), 16),
+            cylinder(f'TankBand{k}', m['dark'], r + 0.003, 0.016, at + Vector((0, 0, h * 0.35)), segments=20, bevel=0),
+            cylinder(f'TankValve{k}', m['steel'], 0.014, 0.03, at + Vector((0, 0, h + r + 0.005)), segments=8, bevel=0),
         ]
-    parts += [
-        box('TankFooting', m['armour_dark'], (0.38, 0.52, 0.03), TANKS + Vector((0, 0, 0.015)), bevel=0.008),
-        box('Pump', m['steel'], (0.1, 0.08, 0.1), TANKS + Vector((0.18, -0.3, 0.05)), bevel=0.008),
-        *detail.hose('PumpHose', m['dark'], TANKS + Vector((0.18, -0.3, 0.1)), TANKS + Vector((0.3, -0.42, 0.14)), TANKS + Vector((0.42, -0.5, 0.06)), 0.01),
-    ]
+    parts += detail.hose('TankHose', m['dark'], TANKS + Vector((0.1, -0.1, 0.1)), TANKS + Vector((0.22, -0.02, 0.05)), TANKS + Vector((0.2, 0.12, 0.03)), 0.01)
     return kit.merge('FuelTanks', parts, TANKS)
 
 
+def gantry(m):
+    """A dark box truss on legs from the tanks along the back left edge (-x) to the back
+    corner, then along the back edge (+y) to the tower."""
+    steel = m['nplate_dark']
+    x, y = -0.9, 0.88
+    path = [Vector((x, TANKS.y + 0.24, 0)), Vector((x, y, 0)), Vector((TOWER.x - 0.152, y, 0))]
+    parts = []
+    h, w = 0.08, 0.035
+    for i, (a, b) in enumerate(zip(path, path[1:])):
+        d = (b - a).normalized()
+        side = Vector((-d.y, d.x, 0)) * w
+        n = max(2, round((b - a).length / 0.1))
+        for s in (-1, 1):
+            for zz in (GANTRY_Z, GANTRY_Z + h):
+                parts.append(beam(f'Chord{i}{s}{zz:.2f}', steel, a + side * s + Vector((0, 0, zz)), b + side * s + Vector((0, 0, zz)), 0.012))
+            for k in range(n):   # zigzag diagonals in both side faces
+                p0 = a + (b - a) * (k / n) + side * s
+                p1 = a + (b - a) * ((k + 1) / n) + side * s
+                lo, hi = Vector((0, 0, GANTRY_Z)), Vector((0, 0, GANTRY_Z + h))
+                parts.append(beam(f'Diag{i}{s}{k}', steel, p0 + (lo if k % 2 else hi), p1 + (hi if k % 2 else lo), 0.007))
+        for k in range(n + 1):   # rungs across the top
+            p = a + (b - a) * (k / n) + Vector((0, 0, GANTRY_Z + h))
+            parts.append(beam(f'Rung{i}{k}', steel, p - side, p + side, 0.008))
+    for k, p in enumerate((path[0], path[1], path[0] + (path[1] - path[0]) * 0.5)):
+        parts.append(box(f'Leg{k}', steel, (0.03, 0.03, GANTRY_Z), p + Vector((0, 0, GANTRY_Z / 2)), bevel=0.003))
+        parts.append(box(f'LegFoot{k}', m['armour_dark'], (0.06, 0.06, 0.02), p + Vector((0, 0, 0.01)), bevel=0.003))
+    return kit.merge('Gantry', parts, path[1])
+
+
 def build():
-    root = nb.start('NodHelipad', 'NodHelipad')
+    root = nb.start('NodHelipad', 'NodHelipad', 60)
     m = nb.materials()
-    slab, marks, housings, lights = pad(m, root)
-    for obj in (slab, marks, *housings):
-        kit.parent(obj, root)
-    for housing, light in zip(housings, lights):
-        kit.parent(light, housing)
-    block, cabin, mast, beacon, dish = post(m, root)
-    for obj in (block, cabin, mast, dish):
-        kit.parent(obj, root)
-    kit.parent(beacon, mast)
+    m['glow_white'] = material('GlowWhite', (0, 0, 0), 1.0, emission=srgb('#fff4d8'), strength=3, alpha=0.3)
+    hill = kit.parent(mound(m, root), root)
+    disc, marks, lights = pad(m, root)
+    kit.parent(disc, root)
+    kit.parent(marks, disc)
+    for light in lights:
+        kit.parent(light, disc)
+    footing, cabin, housing, beacon, dish = tower(m, root)
+    kit.parent(footing, root)
+    kit.parent(cabin, root)
+    for obj in (housing, beacon, dish):
+        kit.parent(obj, cabin)
     fuel = kit.parent(tanks(m), root)
+    truss = kit.parent(gantry(m), root)
     kit.parent(kit.empty('Pad', PAD + Vector((0, 0, PAD_TOP))), root)
 
-    # Build
-    kit.keys(slab, 'scale', {0: Vector((0.04, 0.04, 1)), 2: Vector((0.04, 0.04, 1)), 16: Vector((1.03, 1.03, 1)), 19: Vector((1, 1, 1))})
-    nb.show_at(marks, 20)
-    for k, housing in enumerate(housings):
-        kit.pop(housing, 22 + k * 2, 6)
-    nb.rise(block, 12, 16, 0.2)
-    nb.rise(cabin, 22, 16, 0.4)
-    kit.grow(fuel, 36, 12, 2)
-    kit.grow(mast, 44, 14, 2)
-    kit.pop(dish, 50, 10)
+    # Build (only translations above the lights, the beacon and the ring, which Idle drives)
+    nb.rise(hill, 0, 16, PAD_LOW + 0.03)
+    nb.rise(disc, 10, 16, PAD_TOP + 0.06)
+    nb.rise(footing, 18, 14, 0.3)
+    nb.rise(cabin, 26, 16, 0.75)
+    kit.grow(fuel, 34, 10, 2)
+    kit.grow(truss, 42, 14, 2)
     nb.all_to_build()
 
-    # Idle: the lights run round the pad (two laps), the dish turns, the beacon blinks
-    lap = kit.IDLE_END // 2
-    step = lap // LIGHTS
-    nb.blinking([(light, kit.flashes((k * step, step + 1), (lap + k * step, step + 1))) for k, light in enumerate(lights)] +
+    # Idle: the lights flash round the pad, then all four together; the ring turns, the
+    # beacon blinks
+    end = kit.IDLE_END
+    nb.blinking([(light, kit.flashes((k * 9, 6), (40, 6), (50, 6))) for k, light in enumerate(lights)] +
                 [(beacon, kit.flashes((0, 6), (30, 6)))])
-    kit.keys(dish, 'rotation_euler', {0: Vector((0, 0, 0)), kit.IDLE_END: Vector((0, 0, 2 * math.pi))}, 'LINEAR')
+    kit.keys(dish, 'rotation_euler', {0: Vector((0, 0, 0)), end: Vector((0, 0, 2 * math.pi))}, 'LINEAR')
     kit.to_track(dish, 'Idle')
 
-    block.location = POST
-    cabin.location = POST
+    hill.location = PAD
+    disc.location = PAD + Vector((0, 0, PAD_LOW))
+    footing.location = cabin.location = TOWER
+    fuel.scale = truss.scale = (1, 1, 1)
     dish.rotation_euler = (0, 0, 0)
     for light in (*lights, beacon):
         light.scale = (1, 1, 1)
     return len(kit.collection().objects)
 
 
+def _rest():
+    """Puts back what evaluating Idle leaves behind (lights off, the ring turned) – only
+    for the previews; the glTF is not affected."""
+    for obj in bpy.data.objects:
+        if obj.name.endswith('Light'):
+            obj.scale = (1, 1, 1)
+    if 'RadarDish' in bpy.data.objects:
+        bpy.data.objects['RadarDish'].rotation_euler = (0, 0, 0)
+
+
+def _render_and_rest(frames, out_dir, _render=kit.render_preview):
+    result = _render(frames, out_dir)
+    _rest()
+    return result
+
+
 if __name__ == '__main__':
-    nb.main(build, 'NAHPAD', {'Build': [14, 30, 48, 66], 'Idle': [0, 10]}, scale=2.7, target=(0, 0, 0.2), texture=1024)
+    kit.render_preview = _render_and_rest
+    nb.main(build, 'NAHPAD', {'Build': [12, 24, 36, 60], 'Idle': [0, 12, 42]}, ortho=2.7, target=(0, 0, 0.25), texture=1024)
