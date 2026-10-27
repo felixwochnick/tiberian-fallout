@@ -64,6 +64,12 @@ export async function capture(at?: { clientX: number, clientY: number }, { lock 
     x = at.clientX
     y = at.clientY
   }
+  // automated browsers (the agent's Chromium, see scripts/mcp) get no pointer lock and must not
+  // take over the screen: the game goes on in the window
+  if (navigator.webdriver) {
+    stayWindowed()
+    return
+  }
   mouseCapture.wanted = true
   mouseCapture.lockWanted = lock
   mouseCapture.capturing = true
