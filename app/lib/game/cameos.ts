@@ -109,7 +109,23 @@ export interface BuildRules {
   blueTiberiumValue: number
   /** Selling and repairing buildings ([General]) */
   upkeep: Upkeep
+  /** Soldiers that come out of a building sold or destroyed ([General]) */
+  survivors: Survivors
+  /** The general sounds of [AudioVisual] by key (GATEUP, GATEDOWN, DIGSOUND, CLOAKSOUND …): file names */
+  audio: Map<string, string[]>
 }
+
+export interface Survivors {
+  /** Share of a building's cost (SurvivorRate=) … */
+  rate: number
+  /** … divided by this (SurvivorDivisor=) is the number of soldiers */
+  divisor: number
+  /** What they are (Crew=) */
+  crew: string
+}
+
+/** Tiberian Sun's values, until the rules are loaded */
+export const DEFAULT_SURVIVORS: Survivors = { rate: 0.4, divisor: 100, crew: 'E1' }
 
 export interface Upkeep {
   /** Share of the cost paid back for a building sold at full strength (RefundPercent=) */
@@ -162,6 +178,10 @@ export interface BuildInfo {
   wall: boolean
   /** A gate that opens for its own side's units (Gate=) */
   gate: boolean
+  /** Soldiers come out when it is sold or destroyed (Crewed=) */
+  crewed: boolean
+  /** Heard when a crusher runs it down (CrushSound=: soldiers, sandbags) */
+  crushSound: string[]
   /** Hit points (Strength=) */
   strength: number
   /** Can be repaired (Repairable=, default yes) */
@@ -304,6 +324,8 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       powersUp: section?.get('POWERSUPBUILDING')?.toUpperCase(),
       wall: yes(section?.get('WALL')),
       gate: yes(section?.get('GATE')),
+      crewed: yes(section?.get('CREWED')),
+      crushSound: list(section?.get('CRUSHSOUND')),
       armor: Math.max(0, ARMOR_TYPES.indexOf((section?.get('ARMOR') ?? 'none').toLowerCase())),
       weapon: weapon && {
         name: weaponName!,
@@ -404,7 +426,13 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
     repairStep: Number(general?.get('REPAIRSTEP') ?? DEFAULT_UPKEEP.repairStep),
   }
   return { prerequisites, generic, info, tiberiumValue: Number(rules.get('RIPARIUS')?.get('VALUE') ?? 25),
-    blueTiberiumValue: Number(rules.get('VINIFERA')?.get('VALUE') ?? 50), upkeep }
+    blueTiberiumValue: Number(rules.get('VINIFERA')?.get('VALUE') ?? 50), upkeep,
+    audio: new Map([...(rules.get('AUDIOVISUAL') ?? new Map())].map(([key, value]) => [key, list(value)] as [string, string[]]).filter(([, files]) => files.length)),
+    survivors: {
+      rate: share(general?.get('SURVIVORRATE'), DEFAULT_SURVIVORS.rate),
+      divisor: Number(general?.get('SURVIVORDIVISOR') ?? DEFAULT_SURVIVORS.divisor),
+      crew: (general?.get('CREW') ?? DEFAULT_SURVIVORS.crew).toUpperCase(),
+    } }
 }
 
 /** Whether an option can be built with the buildings owned (object ids). */

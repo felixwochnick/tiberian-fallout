@@ -5,7 +5,7 @@ import { Combat } from '~/lib/game/combat'
 import { Harvesting } from '~/lib/game/harvesting'
 import { Repairs } from '~/lib/game/repairs'
 import { MODELS, UNIT_FALLBACK, type Side } from '~/lib/game/models'
-import { type BuildInfo, DEFAULT_UPKEEP, type UnitVoice } from '~/lib/game/cameos'
+import { type BuildInfo, DEFAULT_SURVIVORS, DEFAULT_UPKEEP, type UnitVoice } from '~/lib/game/cameos'
 import type { Unit } from '~/lib/game/unit'
 import type { Field } from '~/lib/game/field'
 import type { Dropship, DropshipSound } from '~/lib/game/dropship'
@@ -787,6 +787,7 @@ function sell(building: THREE.Object3D) {
   const refund = Math.round(cost * (skirmish?.rules?.upkeep ?? DEFAULT_UPKEEP).refund * (building.userData.health ?? 1))
   battlefield.unbuild(building)
   forget(building)
+  releaseCrew(building)
   if (skirmish) skirmish.credits.value += refund
   sounds.effect(['CASHTURN'])
   sounds.speak('evaStructureSold')
@@ -814,6 +815,33 @@ function switchPower(building: THREE.Object3D) {
   if (action) action.paused = off
   sounds.play('click')
   sounds.speak(off ? 'evaBuildingOffline' : 'evaBuildingOnline')
+}
+
+/** Most soldiers that come out of one building */
+const MAX_SURVIVORS = 5
+
+/**
+ * Soldiers come out of a building of the player that is sold or destroyed, like in the
+ * original: Crewed= buildings let SurvivorRate= of their cost / SurvivorDivisor= of them
+ * (Crew=, light infantry) out round their foundation.
+ */
+function releaseCrew(building: THREE.Object3D) {
+  const info = infoOf(building)
+  const footprint = building.userData.footprint as { x: number, z: number, w: number, h: number } | undefined
+  if (!battlefield || !info?.crewed || !footprint || !Battlefield.own(building)) return
+  const survivors = skirmish?.rules?.survivors ?? DEFAULT_SURVIVORS
+  const count = Math.min(MAX_SURVIVORS, Math.floor((info.cost * survivors.rate) / survivors.divisor))
+  const centre = new THREE.Vector3(footprint.x + footprint.w / 2, 0, footprint.z + footprint.h / 2)
+  for (let i = 0; i < count; i++) {
+    const angle = (i / Math.max(1, count)) * Math.PI * 2
+    const at = centre.clone().add(new THREE.Vector3(Math.cos(angle) * 0.3, 0, Math.sin(angle) * 0.3))
+    battlefield.addUnit(MODELS[survivors.crew] ?? UNIT_MODEL, at, props.colour, 'player', props.side).then((unit) => {
+      unit.object.userData.id = survivors.crew
+      // out of the ruin, to the nearest free spot beside it
+      const out = centre.clone().add(new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(Math.max(footprint.w, footprint.h) / 2 + 0.8))
+      battlefield?.walk(unit, battlefield.openSpot(out))
+    }).catch(error => console.error('Überlebende konnten nicht erscheinen', error))
+  }
 }
 
 /** A building of the player is gone (destroyed, sold): it no longer counts for power and what can be built */
@@ -858,6 +886,11 @@ onMounted(() => {
     .then(frames => frames && battlefield?.setSigns(frames, cursorScale()))
     .catch(error => console.error('Gebäude-Symbole konnten nicht geladen werden', error))
   // fighting with the values of RULES.INI; shots and death cries from SOUNDS.MIX
+  // the battlefield's own sounds ([AudioVisual] of RULES.INI: gates, digging …)
+  battlefield.sound = (key) => {
+    const files = skirmish?.rules?.audio.get(key)
+    if (files?.length) sounds.effect(files)
+  }
   combat = markRaw(new Combat(
     battlefield,
     object => skirmish?.rules?.info.get(object.userData.id),
@@ -865,8 +898,10 @@ onMounted(() => {
       fire: (_, info) => sounds.effect(info.weapon?.reports ?? [], 'shots'),
       impact: weapon => sounds.effect(weapon.impactReports, 'shots'),
       blast: (_, info, delay) => setTimeout(() => sounds.effect(info.explosionReports, 'shots'), delay * 1000 / (SPEED_FACTORS[settings.speed] ?? 1)),
-      die(victim, info) {
-        sounds.effect(info.voices.die, 'voices')
+      die(victim, info, crushed) {
+        // run down: the squelch (CrushSound=) instead of the death cry
+        if (crushed && info.crushSound.length) sounds.effect(info.crushSound, 'shots')
+        else sounds.effect(info.voices.die, 'voices')
         // a vehicle blows up (Explosion=)
         sounds.effect(info.explosionReports, 'shots')
         if (Battlefield.own(victim)) sounds.speak('evaUnitLost')
@@ -883,8 +918,12 @@ onMounted(() => {
         else lastBaseAttack = now
         sounds.speak(harvester ? 'evaHarvesterAttack' : 'evaBaseAttack')
       },
-      // a lost building of the player no longer counts for power and what can be built
-      destroyed: forget,
+      // a lost building of the player no longer counts for power and what can be built;
+      // its crew gets out
+      destroyed(building) {
+        forget(building)
+        releaseCrew(building)
+      },
     },
   ))
   // repairs with the sidebar's button: RepairPercent=, RepairRate=, RepairStep= from RULES.INI

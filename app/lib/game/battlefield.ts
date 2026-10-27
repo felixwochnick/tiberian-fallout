@@ -1126,7 +1126,9 @@ export class Battlefield {
   private signMesh(i: number) {
     let mesh = this.signMeshes[i]
     if (!mesh) {
-      const material = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false })
+      // both sides: the overlay's y runs downwards and the plane is mirrored (see drawSelection),
+      // one-sided its back would face the camera and it would not be drawn at all
+      const material = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide })
       this.disposables.push(material)
       mesh = new THREE.Mesh(this.signGeometry, material)
       mesh.renderOrder = 1 // over the frames and lines
@@ -2180,6 +2182,12 @@ export class Battlefield {
    */
   crusher: (object: THREE.Object3D) => boolean = () => false
 
+  /**
+   * A sound of the battlefield, by its key in [AudioVisual] of RULES.INI (GATEUP,
+   * GATEDOWN …); set by whoever plays the sounds
+   */
+  sound: (key: string, at: THREE.Vector3) => void = () => {}
+
   /** A unit's speed in cells per second (Speed=, see Combat); undefined: the model's own */
   speedOf: (object: THREE.Object3D) => number | undefined = () => undefined
 
@@ -2249,6 +2257,7 @@ export class Battlefield {
         if (near === !!gate.userData.open) continue
         gate.userData.open = near
         this.playClip(gate, 'Open', near ? { hold: true } : { reverse: true })
+        this.sound(near ? 'GATEUP' : 'GATEDOWN', gate.position)
       }
     }
   }
@@ -2446,6 +2455,7 @@ export class Battlefield {
       tunnel.phase = 'moving'
       return
     }
+    this.sound('DIGSOUND', unit.object.position)
     void unit.change(POSTURES.tunnel.in, POSTURES.tunnel.posture).then(() => {
       if (object.userData.dead) return
       // out of sight and out of reach
@@ -2467,6 +2477,7 @@ export class Battlefield {
   vanish(unit: Unit) {
     const object = unit.object
     if (!TUNNELLERS.has(object.userData.id) || !this.canDig(object.position)) return false
+    this.sound('DIGSOUND', unit.object.position)
     void unit.change(POSTURES.tunnel.in, POSTURES.tunnel.posture).then(() => {
       if (!object.userData.dead) this.remove(object)
     })
@@ -2494,6 +2505,7 @@ export class Battlefield {
       object.position.z = tunnel.to.z
       tunnel.phase = 'up'
       object.visible = true
+      this.sound('DIGSOUND', unit.object.position)
       void unit.change(POSTURES.tunnel.out, undefined).then(() => {
         object.userData.underground = false
         this.tunnels.splice(this.tunnels.indexOf(tunnel), 1)

@@ -143,7 +143,7 @@ export interface CombatEffects {
   /** A shot is fired (sound) */
   fire: (attacker: THREE.Object3D, info: BuildInfo) => void
   /** A unit was destroyed (death cry) */
-  die: (victim: THREE.Object3D, info: BuildInfo) => void
+  die: (victim: THREE.Object3D, info: BuildInfo, crushed?: boolean) => void
   /** A building was destroyed */
   destroyed?: (building: THREE.Object3D) => void
   /** A projectile exploded (sound) */
@@ -824,6 +824,8 @@ export class Combat {
     // a sandbag driven over bursts and is flattened
     if (footprint && crushed) {
       this.battlefield.effects.crush(new THREE.Vector3(footprint.x + footprint.w / 2, object.position.y, footprint.z + footprint.h / 2), true)
+      const info = this.infoOf(object)
+      if (info) this.effects.die(object, info, true)
       this.battlefield.removeStructure(object)
       this.effects.destroyed?.(object)
       this.collapsing.push({ object, time: 0, crushed, ground: object.position.y })
@@ -855,7 +857,7 @@ export class Combat {
       return
     }
     if (crushed) this.battlefield.effects.crush(object.position, false)
-    if (info) this.effects.die(object, info)
+    if (info) this.effects.die(object, info, crushed)
     // no longer a target or selectable
     this.battlefield.remove(object)
     this.battlefield.addEffect(object)
