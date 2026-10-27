@@ -52,6 +52,32 @@ E2E_BASE=http://localhost:3000 pnpm test
 
 Die Formatbeschreibungen orientieren sich an [OpenRA](https://github.com/OpenRA/OpenRA).
 
+## Agent: das Spiel aus dem Terminal spielen
+
+Im Dev-Modus verbindet sich jedes laufende Spiel (Gefecht, Mission) mit dem Dev-Server; ein
+Agent – z. B. Claude Code – kann es dann über `scripts/agent.mjs` steuern, während man im
+Browser zusieht. Ablauf: Terminal → `POST /api/agent/command` → Spielseite holt den Befehl
+per Long-Polling (`/api/agent/poll`), führt ihn aus und meldet das Ergebnis (`/api/agent/result`).
+In Produktions-Builds sind die Routen abgeschaltet.
+
+```bash
+pnpm dev                                   # Browser: /skirmish öffnen, „Im Fenster weiterspielen“
+node scripts/agent.mjs state               # Geld, Strom, Bauliste, Objekte (mit ref), Tiberium-Felder
+node scripts/agent.mjs deploy 1            # MCV (ref 1) entfalten
+node scripts/agent.mjs build GAPOWR        # Bau starten (Einheiten: build E1 5)
+node scripts/agent.mjs place               # fertiges Gebäude neben der Basis platzieren (oder: place x z)
+node scripts/agent.mjs map                 # ASCII-Karte um die Basis (oder: map x z radius)
+node scripts/agent.mjs attackMove 4,5,6 40 30
+node scripts/agent.mjs wait 15             # 15 Spielsekunden warten, dann state
+node scripts/agent.mjs screenshot shot.jpg # Bild des Schlachtfelds
+node scripts/agent.mjs help                # alle Befehle
+```
+
+Weitere Befehle: `move`, `attack`, `stop`, `harvest`, `unload`, `rally`, `cancel`, `sell`, `repair`,
+`power`, `look`. Positionen sind Weltzellen (x, z) wie in `state`. Der Browser-Tab muss sichtbar
+bleiben (im Hintergrund hält der Browser `requestAnimationFrame` an, das Spiel steht dann).
+Befehle: `app/lib/agent/commands.ts`, Seitenseite: `app/lib/agent/link.ts`, Server: `server/utils/agent-relay.ts`.
+
 ## Startanimation in Blender bearbeiten
 
 `blender/startup_menu.blend` öffnen oder die Szene neu erzeugen (Scripting-Tab):

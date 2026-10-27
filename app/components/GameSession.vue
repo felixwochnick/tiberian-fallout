@@ -172,6 +172,7 @@ onBeforeUnmount(() => {
         :cursor-hidden="!skirmish.control && !blocked && !paused"
         :colour="colour"
         :side="side"
+        :tech-level="techLevel"
         @ready="battlefield = $event"
         @start="emit('start', $event)"
         @tick="emit('tick', $event)"

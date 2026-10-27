@@ -824,6 +824,23 @@ export class Battlefield {
     this.selectables.push(object)
   }
 
+  /** Buildings and units on the map that can be selected (for the agent, see lib/agent) */
+  get pickable(): readonly THREE.Object3D[] {
+    return this.selectables
+  }
+
+  /** Cells with Tiberium on them (stage > 0) */
+  get tiberiumCells(): TiberiumCell[] {
+    return [...this.tiberium.values()].filter(cell => cell.stage)
+      .map(cell => ({ x: cell.x, z: cell.z, stage: cell.stage, kind: cell.kind ?? 'green' }))
+  }
+
+  /** The battlefield as a picture (JPEG data URL), drawn now so the canvas still holds it */
+  snapshot(quality = 0.8) {
+    this.render(true)
+    return this.renderer.domElement.toDataURL('image/jpeg', quality)
+  }
+
   /** The building or unit under a point of the screen (client pixels), if any. */
   objectAt(clientX: number, clientY: number) {
     const rect = this.renderer.domElement.getBoundingClientRect()

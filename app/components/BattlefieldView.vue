@@ -14,6 +14,8 @@ import { loadSigns } from '~/lib/game/signs'
 import { getAssetStore } from '~/lib/storage/asset-store'
 import type { BaseMode } from '~/composables/useSkirmish'
 import { needsResume, pointer, setCursor } from '~/lib/input/mouse-capture'
+import { agentCommands } from '~/lib/agent/commands'
+import { linkAgent } from '~/lib/agent/link'
 
 /**
  * The battlefield: plain ground, scrolled by pushing the cursor against the screen edges.
@@ -31,7 +33,9 @@ const props = withDefaults(defineProps<{
   colour?: number
   /** The human player's side: GDI's units wear camouflage, Nod's dark armour */
   side?: Side
-}>(), { colour: 0xd8b43a, side: 'gdi' }) // GDI gold
+  /** Highest tech level that can be built (for the agent, the sidebar has its own) */
+  techLevel?: number
+}>(), { colour: 0xd8b43a, side: 'gdi', techLevel: 10 }) // GDI gold
 const skirmish = useSkirmish()
 /**
  * `ready` hands the battlefield to the HUD (radar), `start` the field to the game mode;
@@ -46,6 +50,8 @@ const stage = ref<HTMLDivElement>()
 let battlefield: Battlefield | undefined
 let running = false
 let last = 0
+/** Game seconds the battlefield has run */
+let clock = 0
 
 function frame(now: number) {
   if (!running || !battlefield) return
@@ -60,6 +66,7 @@ function frame(now: number) {
   if (active) repairs?.update(gameSeconds)
   if (active && skirmish) tickMissionDisplay(skirmish, gameSeconds)
   if (active) emit('tick', gameSeconds)
+  if (active) clock += gameSeconds
   if (active && skirmish) {
     skirmish.production.tick(seconds, speed * powerFactor(skirmish), skirmish.credits)
     // out of money: EVA says so, at most every few seconds
@@ -536,6 +543,12 @@ function place() {
     sounds.speak('evaCannotPlace')
     return
   }
+  placeAt(info, cell)
+}
+
+/** Puts a finished structure down with its lower corner on `cell` */
+function placeAt(info: BuildInfo, cell: [number, number]) {
+  if (!skirmish) return
   skirmish.placing = undefined
   skirmish.production.placed()
   syncPlacement()
@@ -726,6 +739,30 @@ onMounted(() => {
     },
   })))
   emit('ready', battlefield)
+  // dev only: an agent outside the browser can play (scripts/agent.mjs)
+  if (import.meta.dev && skirmish) {
+    unlinkAgent = linkAgent(agentCommands({
+      battlefield,
+      skirmish,
+      combat: combat!,
+      harvesting: harvesting!,
+      techLevel: () => props.techLevel,
+      paused: () => props.paused || needsResume(),
+      clock: () => clock,
+      place: placeAt,
+      deploy(object) {
+        if (!canDeploy(object)) return false
+        if (Battlefield.capacity(object)) unloadTransport(object)
+        else if (Battlefield.digsIn(object)) digIn(object)
+        else if (object.userData.id === 'MCV') deployMcv(object)
+        else return false
+        return true
+      },
+      sell: object => canSell(object) && (sell(object), true),
+      repair: object => canRepair(object) && (repair(object), true),
+      switchPower: object => canSwitch(object) && (switchPower(object), true),
+    }))
+  }
   emit('start', markRaw({
     battlefield,
     combat: combat!,
@@ -751,8 +788,11 @@ onMounted(() => {
   requestAnimationFrame(frame)
 })
 
+let unlinkAgent: (() => void) | undefined
+
 onBeforeUnmount(() => {
   running = false
+  unlinkAgent?.()
   resizeObserver.disconnect()
   window.removeEventListener('contextmenu', onRightClick)
   window.removeEventListener('keydown', onKeyDown)
