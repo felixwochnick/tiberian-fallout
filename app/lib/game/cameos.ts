@@ -1,8 +1,8 @@
 import * as THREE from 'three'
-import { parseIni } from '../formats/ini'
 import { MixArchive } from '../formats/mix'
 import { decodePalette, decodeShp, frameToRgba } from '../formats/shp'
 import type { AssetStore } from '../storage/asset-store'
+import { expansionArchive, gameIni } from './gamefiles'
 
 /**
  * Build options of the sidebar and their cameos (the 64 × 48 build pictures).
@@ -253,12 +253,9 @@ const CRUSHABLE_WALLS = new Set(['GASAND'])
 const yes = (value?: string) => /^(yes|true|1)$/i.test(value ?? '')
 
 export async function loadBuildRules(store: AssetStore): Promise<BuildRules | undefined> {
-  const tibsun = await store.get('TIBSUN.MIX')
-  if (!tibsun) return undefined
-  const local = await (await MixArchive.open(tibsun, 'TIBSUN.MIX')).openNested('LOCAL.MIX')
-  const bytes = await local?.read('RULES.INI')
-  if (!bytes) return undefined
-  const rules = parseIni(new TextDecoder('latin1').decode(bytes))
+  // the balance of Firestorm (FIRESTRM.INI over RULES.INI) when its disc was imported
+  const rules = await gameIni(store, 'RULES.INI')
+  if (!rules) return undefined
   const list = (value?: string) => (value ?? '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
   const general = rules.get('GENERAL')
   const generic = new Map<string, string[]>([
@@ -268,11 +265,13 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
     ['RADAR', list(general?.get('PREREQUISITERADAR'))],
     ['TECH', list(general?.get('PREREQUISITETECH'))],
     ['PROC', list(general?.get('PREREQUISITEPROC') ?? 'PROC')],
+    // Firestorm: the war factories of one side (with the deployed mobile ones)
+    ['GDIFACTORY', list(general?.get('PREREQUISITEGDIFACTORY') ?? 'GAWEAP')],
+    ['NODFACTORY', list(general?.get('PREREQUISITENODFACTORY') ?? 'NAWEAP')],
   ])
   // minutes to produce an item of 1000 credits
   const buildSpeed = Number(general?.get('BUILDSPEED') ?? 0.8)
-  const artBytes = await local?.read('ART.INI')
-  const art = artBytes ? parseIni(new TextDecoder('latin1').decode(artBytes)) : new Map()
+  const art = await gameIni(store, 'ART.INI') ?? new Map()
   /** The sounds of animations (explosions): their Report=, from RULES.INI or ART.INI */
   const reportsOf = (anims?: string) => list(anims).flatMap(anim => list(rules.get(anim)?.get('REPORT') ?? art.get(anim)?.get('REPORT')))
   const prerequisites = new Map<string, string[]>()
@@ -423,15 +422,17 @@ export async function loadCameos(store: AssetStore, ids: string[], side: 'gdi' |
   const tibsun = await store.get('TIBSUN.MIX')
   if (!tibsun) return cameos
   const archive = await MixArchive.open(tibsun, 'TIBSUN.MIX')
-  const [local, conquer, sidebar, cache] = await Promise.all(
+  const [conquer, sidebar, cache] = await Promise.all(
     // the side's own sidebar archive holds its infantry's cameos (SIDEC01: GDI, SIDEC02: Nod)
-    ['LOCAL.MIX', 'CONQUER.MIX', side === 'nod' ? 'SIDEC02.MIX' : 'SIDEC01.MIX', 'CACHE.MIX'].map(name => archive.openNested(name)),
+    ['CONQUER.MIX', side === 'nod' ? 'SIDEC02.MIX' : 'SIDEC01.MIX', 'CACHE.MIX'].map(name => archive.openNested(name)),
   )
-  const text = async (name: string) => {
-    const bytes = await local?.read(name)
-    return bytes ? parseIni(new TextDecoder('latin1').decode(bytes)) : new Map()
-  }
-  const [rules, art] = await Promise.all([text('RULES.INI'), text('ART.INI')])
+  const [rules, art] = await Promise.all([gameIni(store, 'RULES.INI'), gameIni(store, 'ART.INI')])
+  if (!rules || !art) return cameos
+  // Firestorm's cameos are in its own archive and the archives nested in it
+  const expansion = await expansionArchive(store)
+  const extra = expansion
+    ? [expansion, ...(await Promise.all(['ECACHE01.MIX', 0x30F90780].map(name => expansion.openNested(name).catch(() => undefined))))]
+    : []
   const pal = await cache?.read('CAMEO.PAL')
   if (!pal) return cameos
   const palette = decodePalette(pal)
@@ -440,7 +441,8 @@ export async function loadCameos(store: AssetStore, ids: string[], side: 'gdi' |
     const image = rules.get(id)?.get('IMAGE') ?? id
     const cameo = art.get(image)?.get('CAMEO') ?? art.get(id)?.get('CAMEO')
     if (!cameo) continue
-    const bytes = await sidebar?.read(`${cameo}.SHP`) ?? await conquer?.read(`${cameo}.SHP`)
+    let bytes = await sidebar?.read(`${cameo}.SHP`) ?? await conquer?.read(`${cameo}.SHP`)
+    for (const mix of extra) bytes ??= await mix?.read(`${cameo}.SHP`)
     if (!bytes) continue
     const shp = decodeShp(bytes)
     const canvas = document.createElement('canvas')

@@ -16,7 +16,7 @@ let loading: Promise<void> | undefined
 let speaking: EvaSound | undefined
 const evaQueue: EvaSound[] = []
 /** Unit responses from SOUNDS.MIX, decoded on first use */
-let soundsMix: Promise<MixArchive | undefined> | undefined
+let soundsMix: Promise<MixArchive[]> | undefined
 const voiceCache = new Map<string, Promise<AudioBuffer | undefined>>()
 let talking: AudioBufferSourceNode | undefined
 /** The game is paused: EVA, the effects and the radar transmission hold where they are */
@@ -111,13 +111,26 @@ export function useUiSounds() {
   async function soundFile(files: string[]) {
     const file = files[Math.floor(Math.random() * files.length)]
     if (!file || !ctx) return undefined
-    soundsMix ??= getAssetStore()
-      .then(store => store.get('TIBSUN.MIX'))
-      .then(blob => blob && MixArchive.open(blob, 'TIBSUN.MIX'))
-      .then(archive => archive?.openNested('SOUNDS.MIX'))
+    // Tiberian Sun's sounds, and Firestorm's (its units' voices and weapons)
+    soundsMix ??= getAssetStore().then(async (store) => {
+      const open = async (name: string, nested: string) => {
+        const blob = await store.get(name)
+        return blob ? (await MixArchive.open(blob, name)).openNested(nested).catch(() => undefined) : undefined
+      }
+      return (await Promise.all([open('TIBSUN.MIX', 'SOUNDS.MIX'), open('EXPAND01.MIX', 'SOUNDS01.MIX')]))
+        .filter((mix): mix is MixArchive => !!mix)
+    })
     const name = `${file.toUpperCase()}.AUD`
     if (!voiceCache.has(name)) {
-      voiceCache.set(name, soundsMix.then(mix => mix?.read(name)).then(bytes => bytes && toAudioBuffer(ctx!, decodeAud(bytes))).catch(() => undefined))
+      voiceCache.set(name, soundsMix
+        .then(async (mixes) => {
+          for (const mix of mixes) {
+            const bytes = await mix.read(name)
+            if (bytes) return bytes
+          }
+          return undefined
+        })
+        .then(bytes => bytes && toAudioBuffer(ctx!, decodeAud(bytes))).catch(() => undefined))
     }
     return voiceCache.get(name)
   }
