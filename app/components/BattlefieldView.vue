@@ -80,6 +80,7 @@ function frame(now: number) {
     }
     for (const info of skirmish.arrivals.splice(0)) deliver(info)
     tickSpecials(gameSeconds)
+    tickDepots(gameSeconds)
   }
   syncPlacement()
   updatePowerLabel()
@@ -517,11 +518,72 @@ function boarders(transport: THREE.Object3D) {
 
 /** Whether the selected soldiers can get into this (an own transport with room): the enter cursor */
 function canEnter(object: THREE.Object3D) {
+  if (depotVehicles(object).length) return true
   return !!battlefield && Battlefield.capacity(object) > 0 && Battlefield.own(object) && boarders(object).length > 0
 }
 
-/** Sends the selected soldiers into a transport; returns false if it is none they can get into */
+/** Buildings vehicles drive onto to be repaired (the service depot) */
+const DEPOTS = new Set(['GADEPT'])
+
+/** The selected own vehicles that could drive onto this service depot */
+function depotVehicles(object: THREE.Object3D) {
+  if (!battlefield || !DEPOTS.has(object.userData.id) || !Battlefield.own(object) || object.userData.dead) return []
+  return battlefield.selection.filter(o => Battlefield.own(o) && infoOf(o)?.category === 'vehicle' && !o.userData.harvester)
+}
+
+/** Where a vehicle stands on a depot (its Pad node) */
+function depotPad(depot: THREE.Object3D) {
+  depot.updateMatrixWorld(true)
+  return depot.getObjectByName('Pad')?.getWorldPosition(new THREE.Vector3()) ?? depot.position.clone()
+}
+
+/** Seconds of repair a credit buys … see Repairs; here: the share of strength a vehicle gets back each game second on the pad */
+const DEPOT_RATE = 0.06
+
+/**
+ * Service depots repair the player's vehicles standing on their pad, as long as there is
+ * money (RepairPercent= of the cost for a full repair), and their robot arms work meanwhile
+ */
+function tickDepots(seconds: number) {
+  if (!battlefield || !skirmish) return
+  for (const depot of battlefield.structureObjects) {
+    if (!DEPOTS.has(depot.userData.id) || !Battlefield.own(depot) || depot.userData.dead || depot.userData.poweredOff) continue
+    const pad = depotPad(depot)
+    const vehicle = battlefield.units.map(u => u.object).find((o) => {
+      const info = infoOf(o)
+      return Battlefield.own(o) && !o.userData.dead && info?.category === 'vehicle' && Math.hypot(o.position.x - pad.x, o.position.z - pad.z) < 0.6
+        && (o.userData.hp ?? info.strength) < info.strength
+    })
+    const working = !!vehicle
+    if (working !== !!depot.userData.repairing) {
+      depot.userData.repairing = working
+      battlefield.playClip(depot, 'Fire', working ? { hold: true } : { reverse: true })
+    }
+    if (!vehicle) continue
+    const info = infoOf(vehicle)!
+    const step = info.strength * DEPOT_RATE * seconds
+    const price = (step / info.strength) * info.cost * (skirmish.rules?.upkeep ?? DEFAULT_UPKEEP).repairCost
+    if (skirmish.credits.value < price) continue
+    skirmish.credits.value -= price
+    vehicle.userData.hp = Math.min(info.strength, (vehicle.userData.hp ?? info.strength) + step)
+    vehicle.userData.health = vehicle.userData.hp / info.strength
+  }
+}
+
+/** Sends the selected soldiers into a transport (vehicles onto a service depot); returns false if it is none they can get into */
 function enter(transport: THREE.Object3D) {
+  const vehicles = depotVehicles(transport)
+  if (battlefield && vehicles.length) {
+    // one after the other onto the pad: the first drives on, the others wait next to it
+    const pad = depotPad(transport)
+    vehicles.forEach((object, i) => {
+      combat?.stop([object])
+      battlefield!.walk(object.userData.unit as Unit, i === 0 ? pad : battlefield!.openSpot(pad.clone().add(new THREE.Vector3(i, 0, 2))))
+    })
+    respond('move')
+    sounds.play('click')
+    return true
+  }
   if (!battlefield || !canEnter(transport)) return false
   const units = boarders(transport)
   combat?.stop(units.map(unit => unit.object))

@@ -49,7 +49,7 @@ E2E_BASE=http://localhost:3000 pnpm test
 | `app/lib/game/unit.ts` | Einheit auf dem Schlachtfeld: läuft zu einem Ziel, dreht sich dorthin, blendet zwischen Stehen und Laufen über, wirft sich unter Beschuss hin und robbt (`Battlefield.addUnit`) |
 | `blender/ORCA.py` | Orca-Jäger (GDI): VTOL mit kurzem Rumpf, zweigeteilter Kanzel, Heckausleger mit V-Leitwerk; Stummelflügel mit zwei schwenkbaren Triebwerksgondeln und zwei Raketen-Pods, Wüstentarnung in Hausfarbe. Knoten `Flash`; Clips `Idle` (gelandet), `TakeOff`, `Fly`, `Land`, `Fire` → `public/models/ORCA.glb`. Gemeinsame Helfer in `blender/aircraft.py` |
 | `blender/APACHE.py` | Harpy (Nod): schlanker Kampfhubschrauber mit Tandemkanzel, Kettenkanone im Kinnturm, Stummelflügeln mit Raketen-Pods, Heckrotor; Vierblatt-Rotor (im Flug mit Unschärfe-Scheibe); Nod-Tarnung mit roten Akzenten. Knoten `Rotor`, `Flash`; Clips wie Orca → `public/models/APACHE.glb` |
-| `blender/APC.py` | Amphibien-Truppentransporter (GDI): kantiger Rumpf auf sechs Rädern, bootsartiger Bug, Mannschaftsraum mit Luken, Wasserstrahl-Düsen, große Heckrampe; Tarnmuster mit Hausfarben-Streifen; Clips `Idle`, `Walk`, `Unload` (Rampe) → `public/models/APC.glb` |
+| `blender/APC.py` | Amphibien-Transporter (GDI): flacher, breiter Rumpf über sechs großen Rädern, bootsartiger Bug mit vier blauen Sichtfenstern, Wasserstrahl-Düsen, große Heckrampe (`Unload`) → `public/models/APC.glb` |
 | `blender/LPST.py` | Mobiles Sensor-Array: Lkw mit liegendem Gittermast, Sensorkopf und Schüssel, vier Abstützungen; Clips `Idle`, `Walk`, `Deploy` (Stützen, Mast fährt aus), `Deployed` (Kopf dreht sich), `Undeploy` → `public/models/LPST.glb` |
 | `blender/ART2.py` | Nod-Artillerie: flaches Kettenfahrzeug mit sehr langem Rohr in der Fahrsperre, hochgeklappte Sporne; Nod-Tarnung; Knoten `Cradle`, `Cannon`, `Flash`; Clips `Idle`, `Walk`, `Fire`, `Deploy` (Sporne in den Boden, Rohr hebt sich), `Deployed`, `FireDeployed`, `Undeploy` → `public/models/ART2.glb` |
 | `blender/MEDIC.py` | GDI-Sanitäter auf dem Rig der leichten Infanterie (über `blender/infantry.py`): hellgrau-weiße Panzerung mit rotem Kreuz, Schulterpolster in Hausfarbe, Sanitätstasche und -koffer, unbewaffnet; Clips wie E1 plus `Fire` (Heilgeste) → `public/models/MEDIC.glb` |
@@ -62,17 +62,17 @@ E2E_BASE=http://localhost:3000 pnpm test
 | `blender/NAHPAD.py` | Nod-Landeplattform (2 × 2): erhöhte runde Landefläche mit rotem Ring und Lichtern auf Betonhügel, Kontrollturm mit Radarring, rote Tanks, Gitterbrücke; Knoten `Pad` → `public/models/NAHPAD.glb` |
 | `blender/NAWALL.py` | Nod-Mauer: Betonpfeiler mit schrägen Finnen (`Post`) und geböschte Wandscheiben zu den Nachbarn (`ArmXP/XN/ZP/ZN`, auch zu Nod-Toren) → `public/models/NAWALL.glb` |
 | `blender/NAGATE_A.py` | Nod-Tor (3 × 1): Betonwand mit rot gerahmter Platte und Nod-Zeichen, versinkt beim Öffnen (`Open`); Arme `ArmXP/XN` zur Mauer → `public/models/NAGATE_A.glb` |
-| `blender/GAWEAP.py` | GDI-Waffenfabrik (4 × 3) nach dem Original: Montagehalle im Tarnmuster mit Panzerblöcken in Hausfarbe, Lüftern und Lauflichtern, vorn links eine steile Rampe zwischen Stahlschienen; rechts die graue Tonnenhalle, deren Rolltor sich nach unten rechts öffnet, davor ein Gitterrost in Hausfarbe mit Fahrspurlichtern. Knoten `Exit` (−Y zeigt aus dem Tor), `Door`; Clips `Build`, `Idle`, `Open` (Tor rollt hoch, rückwärts = schließen) → `public/models/GAWEAP.glb` (Helfer `blender/gdibuilding.py`) |
+| `blender/GAWEAP.py` | GDI-Waffenfabrik (4 × 3): hohe Halle mit Rampe und Panzerung, rechts die graue Tonnenhalle – sie ist das Tor: ihre Hälfte klappt am First hoch (`Open`), das Fahrzeug fährt aus ihr über den Gitterrost (`Exit`) → `public/models/GAWEAP.glb` |
 | `blender/GARADR.py` | GDI-Radar (2 × 2): hoher Turm aus Tarnblock, offenem Stahlgeschoss und Plattform mit vier Antennenspitzen, darauf ein Joch mit großer runder Parabolschüssel; am Sockel Generator, Schaltschrank und Schuppen in Hausfarbe; `Idle` (6 s: die Schüssel dreht sich einmal) → `public/models/GARADR.glb` |
-| `blender/GASILO.py` | Tiberium-Silo (2 × 2, GDI und Nod): flache Kuppel auf Tarnschürze, acht zackige Blitzfinnen in Hausfarbe, grüne Tiberiumfenster, Pumpe → `public/models/GASILO.glb` |
+| `blender/GASILO.py` | Tiberium-Silo wie in der ersten Fassung: flache Kuppel, Blitz-Rippen in Hausfarbe bis zum Boden, grüne Fenster → `public/models/GASILO.glb` |
 | `blender/GATECH.py` | GDI-Technologiezentrum (3 × 2): keilförmiger Sockel, geodätische Kuppel in Hausfarbe, zwei hohe Klingen vorn links → `public/models/GATECH.glb` |
 | `blender/gdibuilding.py` | Gemeinsamer Helfer der neuen GDI-Gebäude (auf `GAPILE.py`): Tarnung, Drehkörper, Schrägplatten, Lüfter, Leuchtfeuer, Build/Idle-Clips, Vorschau |
-| `blender/GACTWR.py` | Komponententurm: achteckiger Tarnblock mit vier Stützen, Lampe vorn, Ring in Hausfarbe um die Montageplatte (Knoten `TowerSlot1`, dort montiert das Spiel GAVULC oder GACSAM); Mauerstümpfe (`Arm…`) zu Mauern und Toren → `public/models/GACTWR.glb` |
+| `blender/GACTWR.py` | Komponententurm im Aussehen der ersten Fassung (größer), Waffe auf `TowerSlot1`; Stümpfe zu Betonmauern (`Arm…`) und Sandsäcken (`Sand…`) → `public/models/GACTWR.glb` |
 | `blender/GAVULC.py` | Vulcan-Kanone (Aufsatz für den Komponententurm): gerundeter Panzerturm mit Munitionstrommeln in Hausfarbe, zwei sechsläufige Gatlings; Knoten `Turret`, `Cannon`, `Flash`; `Fire` (Läufe drehen, Rückstoß, Mündungsfeuer) → `public/models/GAVULC.glb` |
 | `blender/GACSAM.py` | SAM-Aufsatz für den Komponententurm: Kastenwerfer im Tarnmuster auf Schwenktrommeln, acht Rohre mit Spitzen in Hausfarbe, kleine Radarschüssel; Knoten `Turret`, `Cannon`, `Flash` → `public/models/GACSAM.glb` |
-| `blender/GAHPAD.py` | GDI-Landeplattform (2 × 2): Achteckdeck vorn rechts mit Landekreis (Ring in Hausfarbe, Lichterkreuz, das von innen nach außen läuft), hinten Kabine und Tanks; Knoten `Pad` → `public/models/GAHPAD.glb` |
-| `blender/GAWALL.py` | GDI-Betonmauer: je Zelle zwei graue Trapezblöcke mit Fuge, sandfarbene Fugen zu den Nachbarn; Arme (`ArmXP/XN/ZP/ZN`) zu Mauern, Komponententürmen und Toren → `public/models/GAWALL.glb` |
-| `blender/GAGATE_A.py` | GDI-Tor (3 × 1): Gitterkeil mit Rahmen in Hausfarbe, versinkt beim Öffnen (`Open`) im Sockel; Mauerstümpfe `ArmXP/XN` an den Enden → `public/models/GAGATE_A.glb` |
+| `blender/GAHPAD.py` | GDI-Landeplattform (2 × 2): großes Deck fast über das ganze Fundament, Landekreis für den Carryall (`Pad`), Leitstand und Tanks an den Ecken → `public/models/GAHPAD.glb` |
+| `blender/GAWALL.py` | GDI-Betonmauer nach dem Original: flache, breite Trapezblöcke (zwei je Zelle) aus hellem Beton, ockerfarbene Fugenpfeiler an den Zellkanten; `Post` + Arme `ArmXP/XN/ZP/ZN` → `public/models/GAWALL.glb` |
+| `blender/GAGATE_A.py` | GDI-Tor (3 × 1): Gitterkeil mit Rahmen in Hausfarbe, versenkt sich (`Open`); an den Enden Stümpfe zu Mauern (`ArmXP/XN`) und Sandsäcken (`SandXP/XN`) → `public/models/GAGATE_A.glb` |
 | `blender/GAPAVE.py` | Betonplatten (4 × 4): Platten in Grautönen mit Fugen, Randstein, Ölflecken, Gullys → `public/models/GAPAVE.glb` |
 | `blender/NAPOWR.py` | Nod-Kraftwerk (2 × 2): hoher grauer Reaktorkegel mit dunklen Rippen, oben offen mit zwei roten Bändern, auf ovaler Betonplattform mit langen roten Klingen, Rohr zu einem Aggregat → `public/models/NAPOWR.glb` (Helfer `blender/nodstructure.py`) |
 | `blender/NAHAND.py` | Hand von Nod (Kaserne, 3 × 2): riesige schwarze Hand flach auf dem Boden, Finger mit roten Ringen, rot-schwarz-khaki gestreifter Ärmel, dünner Turm mit blinkender Spitze; Knoten `Exit` am Handgelenk → `public/models/NAHAND.glb` |
@@ -81,6 +81,47 @@ E2E_BASE=http://localhost:3000 pnpm test
 | `blender/NATECH.py` | Nod-Technologiezentrum (2 × 2): heller Betonhügel mit gerillter Kuppel, dunklem zerklüftetem Turm, drei roten Rohrbögen und zwei roten Klauen → `public/models/NATECH.glb` |
 | `blender/nodstructure.py` | Gemeinsamer Helfer aller Nod-Gebäude: Materialien mit `nodColour`, gebackener Beton, Prismen, Loft, Drehkörper, Spitzen, Warnstreifen, Lampen, Aufbau-/Idle-Keys, Vorschau und Export |
 | `app/lib/game/flight.ts` | Flugzeuge und Jumpjets: steigen auf (`TakeOff`), fliegen gerade über alles in Flughöhe (`Fly`), landen (`Land`); Orca und Harpy gehören zu einer Landeplattform (Knoten `Pad`), tragen `Ammo=` Schuss und fliegen zum Nachladen heim |
+| `blender/SONIC.py` | Disruptor (GDI): breites Kettenfahrzeug in Tarnung, auf dem Turm der Schallemitter – ein Trichter mit Kühlringen unter gewölbter Haube, hellblau leuchtende Mündung; `Fire`: drei Schallringe laufen aus dem Trichter → `public/models/SONIC.glb` |
+| `blender/HVR.py` | Hover-MLRS (GDI): flaches Schwebefahrzeug auf hellblau glühendem Luftkissen, zwei Mantelpropeller, Turm mit Ziellaser und zwei Raketenkapseln; `Walk` gleitet schwebend → `public/models/HVR.glb` |
+| `blender/HMEC.py` | Mammoth Mk. II (GDI): schwerer Läufer auf vier Beinen, drehbares Geschützhaus mit zwei Railguns und Raketenkapseln → `public/models/HMEC.glb` |
+| `blender/JUGG.py` | Juggernaut (Feuersturm, GDI): Artillerie-Läufer mit drei langen Rohren; zum Feuern hockt er sich hin und gräbt zwei Sporne ein (`Deploy`, `Deployed`, `FireDeployed`, `Undeploy`) → `public/models/JUGG.glb` |
+| `blender/MOBILEMP.py` | Mobiler EM-Puls (Feuersturm, GDI): Kettenfahrzeug mit Pulsemitter; `Fire` entlädt mit blauem Energiering → `public/models/MOBILEMP.glb` |
+| `blender/MOBWARG.py` | Mobile Waffenfabrik (Feuersturm, GDI): Sattelzug mit Portalkran; `Deploy` klappt ihn zur Fabrik auf → `public/models/MOBWARG.glb` |
+| `blender/LIMPET.py` | Limpet-Drohne (Feuersturm): kleine Ei-Kapsel mit vier Spinnenbeinen; `Deploy` gräbt sie ein, nur die Sensorspitze bleibt sichtbar → `public/models/LIMPET.glb` |
+| `blender/MMCH.py` | Titan (GDI): Zweibeiner, etwa 1,3-mal so hoch wie der Wolverine – kompakter, facettierter Rumpf auf langen Beinen, lange Kanone rechts, Sensorkasten mit rotem Leuchtfeuer → `public/models/MMCH.glb` |
+| `blender/STNK.py` | Stealth-Panzer (Nod): flacher Kettenpanzer mit Keilnase, zwei Raketenkapseln auf Pylonen, Triebwerksgondeln mit cyan Ring; das Spiel blendet ihn beim Tarnen aus → `public/models/STNK.glb` |
+| `blender/REPAIR.py` | Mobiles Reparaturfahrzeug (Nod): Kettenwerkstatt mit Kabine, auf dem Drehkranz ein Z-förmig gefalteter Kran mit Schweißkopf; `Fire`: Kran schwenkt vor, Funken → `public/models/REPAIR.glb` |
+| `blender/SUBTANK.py` | Devil's Tongue (Nod): Untergrund-Flammenpanzer mit Bohrkegeln und Napalmtanks; `Burrow`, `Underground`, `Surface` wie der Untergrund-APC → `public/models/SUBTANK.glb` |
+| `blender/WEED.py` | Weed Eater (Nod): Sammler für Tiberium-Adern mit Sammelschacht und Kippbehälter; `Harvest`, `Unload` → `public/models/WEED.glb` |
+| `blender/REAPER.py` | Cyborg Reaper (Feuersturm, Nod): Cyborg-Oberkörper auf vier Spinnenbeinen, Raketenwerfer an den Armen, Netzwerfer → `public/models/REAPER.glb` |
+| `blender/SGEN.py` | Mobiler Stealth-Generator (Feuersturm, Nod): Kettenträger mit Emitter unter Glaskuppel; `Deploy`/`Deployed`/`Undeploy` → `public/models/SGEN.glb` |
+| `blender/MOBWARN.py` | Faust von Nod (Feuersturm): mobile Nod-Waffenfabrik auf acht Rädern; `Deploy` klappt sie auf → `public/models/MOBWARN.glb` |
+| `blender/CYC2.py` | Cyborg-Kommando (Nod, über `infantry.py`): größer als der Cyborg, schwere Panzerung in Hausfarbe, Plasmakanone am Arm, die beim Schuss glüht → `public/models/CYC2.glb` |
+| `blender/GHOST.py` | Ghost Stalker (GDI, über `infantry.py`): Kommando mit olivfarbener Weste, Railgun mit blau aufleuchtenden Spulen → `public/models/GHOST.glb` |
+| `blender/MHIJACK.py` | Mutanten-Hijacker (Nod, über `infantry.py`): Mutant im langen Mantel, unbewaffnet; `Fire` = Griff zum Entern → `public/models/MHIJACK.glb` |
+| `blender/ORCAB.py` | Orca-Bomber (GDI, über `aircraft.py`): schwere Orca mit zwei Schwenktriebwerken und Bombenschacht; `Fire` wirft eine Bombe → `public/models/ORCAB.glb` |
+| `blender/SCRIN.py` | Banshee (Nod, über `aircraft.py`): Nurflügler mit Klauen-Flügelspitzen und zwei Plasmakanonen → `public/models/SCRIN.glb` |
+| `blender/TRNSPORT.py` | Carryall (GDI, über `aircraft.py`): Transport-VTOL mit vier kippenden Mantelpropellern, Lastklammer (Knoten `Hook`) → `public/models/TRNSPORT.glb` |
+| `blender/GAPLUG.py` | GDI-Upgrade-Zentrum (2 × 3): Tarnhalle mit Antennenwald und drehendem Sensor, davor Plätze für die Aufsätze (Knoten `PlugSlot1…3`) → `public/models/GAPLUG.glb` |
+| `blender/GAPLUG2.py` | Seeker-Steuerung (Aufsatz für das Upgrade-Zentrum): Tarnkuppel mit großer weißer Linse und drehender Schüssel → `public/models/GAPLUG2.glb` |
+| `blender/GAPLUG3.py` | Ionenkanonen-Uplink (Aufsatz): Säule im Stahlkäfig mit großer Parabolschüssel; `Fire`: die Schüssel richtet sich zum Himmel, das Speisehorn leuchtet blau → `public/models/GAPLUG3.glb` |
+| `blender/GAPLUG4.py` | Drop-Pod-Knoten (Aufsatz, Feuersturm): Gehäuse mit Startschacht und Leitlichtern → `public/models/GAPLUG4.glb` |
+| `blender/GADEPT.py` | GDI-Service-Depot (3 × 3): achteckige Stahlplattform (Knoten `Pad`), Servicewand mit zwei Roboterarmen; `Fire`: die Arme reparieren → `public/models/GADEPT.glb` |
+| `blender/GAROCK.py` | RPG-Aufsatz für den Komponententurm: Werfer mit zwei großen Rohren; Knoten `Turret`, `Cannon`, `Flash` → `public/models/GAROCK.glb` |
+| `blender/GAFIRE.py` | Feuersturm-Generator (3 × 2): Schacht mit Spulenkern, Kondensatorwerk mit Pylonen; `Fire` (aktiv): Energiering und Blitze → `public/models/GAFIRE.glb` |
+| `blender/GAFSDF.py` | Feuersturm-Wandabschnitt: Emitterpfosten, Schienen (`Arm…`) und Energiewände (`Field…`, nur bei aktivem Feuersturm) → `public/models/GAFSDF.glb` |
+| `blender/GAGATE_B.py` | GDI-Tor um 90° gedreht (1 × 3, entlang z), aus `GAGATE_A.py`; Stümpfe `ArmZP/ZN` (Mauer) und `SandZP/ZN` (Sandsäcke) → `public/models/GAGATE_B.glb` |
+| `blender/NAAPWR.py` | Fortschrittliches Nod-Kraftwerk (2 × 3): großer Reaktorkegel auf ovaler Plattform mit roten Klingen, dahinter zwei kleinere Kegel, durch Rohre verbunden → `public/models/NAAPWR.glb` |
+| `blender/NASTLH.py` | Nod-Stealth-Generator (3 × 2): dunkle gelochte Kugel mit roten Ringen auf Betonhügel, Rohr mit drei roten Spulen; Tarnfeld-Leuchten → `public/models/NASTLH.glb` |
+| `blender/NATMPL.py` | Tempel von Nod (4 × 3): lange Kuppel unter vier dunklen Bogenschalen mit roten Rändern, hohes gebogenes Horn, rotes Auge → `public/models/NATMPL.glb` |
+| `blender/NAWAST.py` | Tiberium-Abfallverwertung (Nod, 3 × 3): Stern aus dunklen Keilen um einen Trog mit grün leuchtendem Schlamm, Dock (`Dock`) für den Weed Eater → `public/models/NAWAST.glb` |
+| `blender/NAOBEL.py` | Obelisk des Lichts (Nod, 2 × 2): geneigter Schaft mit rotem Kristall; `Fire` lädt und entlädt, Knoten `Flash` an der Spitze → `public/models/NAOBEL.glb` |
+| `blender/NAMISL.py` | Nod-Raketensilo (2 × 2): Bunker mit zwei Silodeckeln, die Rakete (`Missile`) fährt beim Öffnen (`Open`) hoch, Startpunkt `Launch` → `public/models/NAMISL.glb` |
+| `blender/NAPOST.py` | Laserzaun-Pfosten (Nod, 1 × 1): Kuppel mit Säule, blauer Linsenring (`Emitter`, Höhe des Zauns) → `public/models/NAPOST.glb` |
+| `blender/NAGATE_B.py` | Nod-Tor um 90° gedreht (1 × 3), aus `NAGATE_A.py`; Arme `ArmZP/ZN` zur Mauer → `public/models/NAGATE_B.glb` |
+| `blender/PROC.py` | Tiberium-Raffinerie: flache, breite dunkle Metallschürze mit Rippen in Hausfarbe, Turm mit Abfackelung, Tank; Plattform nach unten rechts mit Andockbucht (`Dock`) → `public/models/PROC.glb` |
+| `app/lib/game/superweapons.ts` | Superwaffen aus `[SuperWeaponTypes]`: kommen mit ihren Gebäuden, laden über `RechargeTime=` (bei genug Strom), stehen oben in der Gebäudespalte; Ionenkanone, EM-Puls, chemische Rakete, Hunter-Seeker, Landekapseln, Feuersturm |
+| `app/lib/game/gamefiles.ts` | Liest `RULES.INI`/`ART.INI` mit den Änderungen von Feuersturm (`FIRESTRM.INI`/`ARTFS.INI` aus `EXPAND01.MIX`) |
 | `app/composables/` | `useGameAssets` (Import/Status), `useMusicPlayer` (Web Audio) |
 | `app/components/` | Downloader, Importer, Musikplayer, Startanimation + Hauptmenü (`/menu`, im Dev-Modus mit `?t=2.5` einfrierbar) |
 

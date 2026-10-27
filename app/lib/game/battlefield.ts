@@ -134,6 +134,8 @@ function pavementTexture() {
 
 /** Gates (Gate=): their side's units pass, they open as these come near */
 const GATES = new Set(['GAGATE_A', 'GAGATE_B', 'NAGATE_A', 'NAGATE_B'])
+/** Buildings their side's vehicles drive onto (the service depot) */
+const DRIVE_ONTO = new Set(['GADEPT'])
 /** A gate opens when a unit of its side is this near (cells) */
 const GATE_REACH = 1.6
 
@@ -1763,7 +1765,7 @@ export class Battlefield {
   async addStructure(id: string, x: number, z: number, w: number, h: number, url?: string, houseColour = 0xd8b43a, owner: Owner = 'player', side: Side = 'gdi') {
     // on its level (the foundation is flat, see canPlace)
     const centre = new THREE.Vector3(x + w / 2, (this.terrain.flatLevel(x, z, w, h) ?? 0) * LEVEL_HEIGHT, z + h / 2)
-    const footprint: Footprint = { x, z, w, h, owner, wall: CRUSHABLE_WALLS.has(id), gate: GATES.has(id) }
+    const footprint: Footprint = { x, z, w, h, owner, wall: CRUSHABLE_WALLS.has(id), gate: GATES.has(id) || DRIVE_ONTO.has(id) }
     this.footprints.push(footprint)
     const object = url ? await this.addBuilding(url, centre, houseColour, true, side) : this.addPlaceholder(id, centre, w, h, houseColour)
     object.userData.id = id
