@@ -85,8 +85,16 @@ nächsten Start im Projekt, ob es sie verwenden darf.
 
 | Server | Tools | Wozu |
 | --- | --- | --- |
-| `tiberian-fallout` (`tiberian_fallout.py`) | `tf_state`, `tf_wait`, `tf_map`, `tf_screenshot`, `tf_command` (alle Befehle oben) | dieses Spiel über das Agent-Relay spielen und testen (`pnpm dev`, Spiel im Browser offen, `AGENT_URL` ändert den Server) |
+| `tiberian-fallout` (`tiberian_fallout.py`) | `tf_state`, `tf_wait`, `tf_map`, `tf_screenshot`, `tf_command` (alle Befehle oben); `tf_browser_open`, `tf_browser_import`, `tf_browser_screenshot`, `tf_browser_click`, `tf_browser_move`, `tf_browser_key`, `tf_browser_eval`, `tf_browser_console`, `tf_browser_close` | dieses Spiel über das Agent-Relay spielen und in Chromium testen (`pnpm dev`; `AGENT_URL` ändert den Server) |
 | `tiberian-sun` (`tiberian_sun.py`) | `ts_start`/`ts_stop`/`ts_status`, `ts_screenshot`, `ts_click`, `ts_drag`, `ts_key`, `ts_type`, `ts_scroll`, `ts_move_mouse`, `ts_wait`; `ts_rules`, `ts_rules_search`, `ts_file`, `ts_archives` | das Original (Steam, App 2229880) zum Vergleich spielen und dessen Regeln und Dateien lesen |
+
+`tf_browser_open` startet Chromium über das DevTools-Protokoll (`scripts/mcp/cdp.py`) mit eigenem Profil
+(`~/.cache/tiberian-fallout/chromium`) im X11-Modus ohne Hintergrund-Drosselung – das Spiel läuft also auch
+verdeckt weiter – und mit `--enable-automation`: Bei gesetztem `navigator.webdriver` bleibt das Spiel im
+Fenster (kein Vollbild, kein Mausfang). `--blink-settings` meldet eine Maus, die Chromium unter Xwayland
+sonst nicht erkennt. `tf_browser_import` lädt einmalig die MIX-Dateien der Steam-Installation in das Profil.
+Nach Codeänderungen den Tab neu laden (`tf_browser_open`), sonst kann Hot-Reload ein veraltetes Spiel verbunden lassen.
+Umgebungsvariablen: `TF_CHROMIUM`, `TF_CHROMIUM_PORT` (9333), `TF_CHROMIUM_PROFILE`.
 
 `ts_start` startet ein eigenes Xwayland-Fenster (Display `:7`, 1024 × 768, braucht einen Wayland-Desktop) und
 darin `Game.exe` über Proton mit der Steam-Prefix – ohne Steam-Client, Spielstände landen in derselben Prefix.
