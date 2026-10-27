@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "tiberian-fallout": {
+      "command": "python3",
+      "args": ["scripts/mcp/tiberian_fallout.py"]
+    },
+    "tiberian-sun": {
+      "command": "python3",
+      "args": ["scripts/mcp/tiberian_sun.py"]
+    }
+  }
+}

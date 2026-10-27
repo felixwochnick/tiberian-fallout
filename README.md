@@ -78,6 +78,24 @@ Weitere Befehle: `move`, `attack`, `stop`, `harvest`, `unload`, `rally`, `cancel
 bleiben (im Hintergrund hält der Browser `requestAnimationFrame` an, das Spiel steht dann).
 Befehle: `app/lib/agent/commands.ts`, Seitenseite: `app/lib/agent/link.ts`, Server: `server/utils/agent-relay.ts`.
 
+### MCP-Server (Claude Code)
+
+`.mcp.json` meldet zwei MCP-Server an (Python 3 ohne Zusatzpakete, `scripts/mcp/`); Claude Code fragt beim
+nächsten Start im Projekt, ob es sie verwenden darf.
+
+| Server | Tools | Wozu |
+| --- | --- | --- |
+| `tiberian-fallout` (`tiberian_fallout.py`) | `tf_state`, `tf_wait`, `tf_map`, `tf_screenshot`, `tf_command` (alle Befehle oben) | dieses Spiel über das Agent-Relay spielen und testen (`pnpm dev`, Spiel im Browser offen, `AGENT_URL` ändert den Server) |
+| `tiberian-sun` (`tiberian_sun.py`) | `ts_start`/`ts_stop`/`ts_status`, `ts_screenshot`, `ts_click`, `ts_drag`, `ts_key`, `ts_type`, `ts_scroll`, `ts_move_mouse`, `ts_wait`; `ts_rules`, `ts_rules_search`, `ts_file`, `ts_archives` | das Original (Steam, App 2229880) zum Vergleich spielen und dessen Regeln und Dateien lesen |
+
+`ts_start` startet ein eigenes Xwayland-Fenster (Display `:7`, 1024 × 768, braucht einen Wayland-Desktop) und
+darin `Game.exe` über Proton mit der Steam-Prefix – ohne Steam-Client, Spielstände landen in derselben Prefix.
+Screenshots und Eingaben (XTEST) gehen nur an dieses Fenster, der Desktop bleibt frei; man kann zusehen.
+Koordinaten sind Pixel dieses Fensters. `ts_rules` liest Sektionen aus `rules.ini` mit den Firestorm-Änderungen
+aus `firestrm.ini` (bzw. `art.ini`/`artfs.ini`, `ai.ini`/`aifs.ini`, `sound.ini` …) direkt aus den MIX-Archiven
+(`scripts/mcp/mix.py`, Port von `app/lib/formats/`), `ts_file` extrahiert beliebige Dateien.
+Umgebungsvariablen: `TS_DIR`, `STEAM_DIR`, `TS_PROTON`, `TS_DISPLAY`, `TS_APPID`; Log: `$XDG_RUNTIME_DIR/tiberian-sun-mcp.log`.
+
 ## Startanimation in Blender bearbeiten
 
 `blender/startup_menu.blend` öffnen oder die Szene neu erzeugen (Scripting-Tab):
