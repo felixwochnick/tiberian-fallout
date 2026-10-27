@@ -134,6 +134,10 @@ function pavementTexture() {
 
 /** Gates (Gate=): their side's units pass, they open as these come near */
 const GATES = new Set(['GAGATE_A', 'GAGATE_B', 'NAGATE_A', 'NAGATE_B'])
+/** Most free cells between two laser fence posts */
+const FENCE_GAP = 4
+/** Height of the laser fence over the ground (cells) */
+const FENCE_HEIGHT = 0.27
 /** Buildings their side's vehicles drive onto (the service depot) */
 const DRIVE_ONTO = new Set(['GADEPT'])
 /** A gate opens when a unit of its side is this near (cells) */
@@ -1776,6 +1780,7 @@ export class Battlefield {
     // a firestorm wall's fields show only while the firestorm is on
     if (id === 'GAFSDF') object.traverse(node => node.name.startsWith('Field') && (node.visible = false))
     if (JOINS[id]) this.joinAround(footprint)
+    if (id === 'NAPOST') this.updateFences()
     if (WALLS.has(id)) {
       // walls cannot be clicked or picked with a box (Selectable=no in RULES.INI)
       const i = this.selectables.indexOf(object)
@@ -1882,6 +1887,57 @@ export class Battlefield {
         mat.needsUpdate = true
       }
     })
+  }
+
+  /** Laser fences between posts: their beams and the cells they block */
+  private readonly fences: { beam: THREE.Group, footprints: Footprint[] }[] = []
+  private readonly fenceMaterial = new THREE.MeshBasicMaterial({ color: 0xff3020, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false })
+  private readonly fenceGeometry = new THREE.CylinderGeometry(0.012, 0.012, 1, 6, 1, true).rotateZ(Math.PI / 2)
+
+  /**
+   * Laser fences, like Nod's in the original: two posts (NAPOST) of one side in a row or
+   * column with at most FENCE_GAP free cells between them span a fence of red beams; its
+   * cells let nobody through. A post switched off (or lamed, or gone) drops its fences.
+   */
+  updateFences() {
+    for (const fence of this.fences.splice(0)) {
+      this.scene.remove(fence.beam)
+      for (const f of fence.footprints) {
+        const i = this.footprints.indexOf(f)
+        if (i >= 0) this.footprints.splice(i, 1)
+      }
+    }
+    const posts = this.structuresOf('NAPOST').filter(p => !p.userData.dead && !p.userData.poweredOff && !(p.userData.empSeconds > 0))
+    for (const a of posts) {
+      const fa = a.userData.footprint as Footprint
+      for (const b of posts) {
+        const fb = b.userData.footprint as Footprint
+        if (a === b || a.userData.owner !== b.userData.owner) continue
+        // each pair once, from the post with the lower cell
+        const along = fa.z === fb.z && fb.x > fa.x ? 'x' : fa.x === fb.x && fb.z > fa.z ? 'z' : undefined
+        if (!along) continue
+        const gap = along === 'x' ? fb.x - fa.x - 1 : fb.z - fa.z - 1
+        if (gap < 1 || gap > FENCE_GAP) continue
+        const cells = Array.from({ length: gap }, (_, i) => along === 'x' ? [fa.x + 1 + i, fa.z] : [fa.x, fa.z + 1 + i]) as [number, number][]
+        // only over free ground, and not past another post
+        if (cells.some(([x, z]) => this.structureOn(x, z) || !this.onMap(x, z))) continue
+        const footprints = cells.map(([x, z]): Footprint => ({ x, z, w: 1, h: 1, owner: fa.owner }))
+        this.footprints.push(...footprints)
+        const beam = new THREE.Group()
+        // at the height of the posts' emitters (their Emitter node, see blender/NAPOST.py)
+        const emitter = (f: Footprint) => new THREE.Vector3(f.x + 0.5, this.heightAt(f.x + 0.5, f.z + 0.5) + FENCE_HEIGHT, f.z + 0.5)
+        const [from, to] = [emitter(fa), emitter(fb)]
+        for (const lift of [0, 0.1, 0.2]) {
+          const line = new THREE.Mesh(this.fenceGeometry, this.fenceMaterial)
+          line.position.copy(from).lerp(to, 0.5).setY((from.y + to.y) / 2 + lift - 0.1)
+          line.scale.set(from.distanceTo(to), 1, 1)
+          line.rotation.y = -Math.atan2(to.z - from.z, to.x - from.x)
+          beam.add(line)
+        }
+        this.scene.add(beam)
+        this.fences.push({ beam, footprints })
+      }
+    }
   }
 
   /** The buildings of a kind on the map */
@@ -2735,6 +2791,7 @@ export class Battlefield {
     // the neighbouring walls lose their arm towards it
     const footprint = object.userData.footprint as Footprint | undefined
     if (footprint && JOINS[object.userData.id]) this.joinAround(footprint)
+    if (object.userData.id === 'NAPOST') this.updateFences()
   }
 
   /** Takes a unit or building off the map (after it was destroyed). */

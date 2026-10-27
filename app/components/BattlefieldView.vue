@@ -1107,6 +1107,8 @@ function switchPower(building: THREE.Object3D) {
   const idle = (building.userData.clips as THREE.AnimationClip[] | undefined)?.find(c => c.name === 'Idle')
   const action = idle && (building.userData.mixer as THREE.AnimationMixer | undefined)?.existingAction(idle)
   if (action) action.paused = off
+  // a laser fence post switched off drops its fences
+  if (id === 'NAPOST') battlefield?.updateFences()
   sounds.play('click')
   sounds.speak(off ? 'evaBuildingOffline' : 'evaBuildingOnline')
 }
