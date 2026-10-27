@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { Battlefield } from '../game/battlefield'
 import type { Combat } from '../game/combat'
 import type { Harvesting } from '../game/harvesting'
-import { type BuildInfo, canBuild, GDI_BUILD_OPTIONS } from '../game/cameos'
+import { BUILD_OPTIONS, type BuildInfo, canBuild } from '../game/cameos'
 import type { Unit } from '../game/unit'
 import { basePower, type Skirmish } from '~/composables/useSkirmish'
 import type { AgentCommands } from './link'
@@ -72,7 +72,8 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
   function options() {
     const rules = skirmish.rules
     if (!rules) return []
-    return [...GDI_BUILD_OPTIONS.structures, ...GDI_BUILD_OPTIONS.units]
+    const own = BUILD_OPTIONS[skirmish.side]
+    return [...own.structures, ...own.units]
       .map(o => rules.info.get(o.id))
       .filter((info): info is BuildInfo => !!info && canBuild(rules, info.id, skirmish.buildings, info.structure)
         && info.techLevel >= 0 && info.techLevel <= ctx.techLevel())
@@ -255,6 +256,14 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
       const job = skirmish.production.structure
       if (!job || job.state !== 'ready') throw new Error('Kein fertiges Gebäude zum Platzieren')
       const info = job.info
+      // a gun for the component tower goes onto the next tower without one
+      if (info.powersUp) {
+        const tower = battlefield.structuresOf(info.powersUp).find(o => Battlefield.own(o) && !o.userData.gun && !o.userData.dead)
+        if (!tower) throw new Error(`Kein freier ${info.powersUp} für ${info.id}`)
+        const f = tower.userData.footprint as { x: number, z: number }
+        ctx.place(info, [f.x, f.z])
+        return { placed: info.id, on: refOf(tower) }
+      }
       const [w, h] = info.foundation
       let cell: [number, number] | undefined
       if (x === undefined || near) cell = findSpot(info, x === undefined ? baseCentre() : ground(x, z!))

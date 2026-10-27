@@ -1,3 +1,4 @@
+import * as THREE from 'three'
 import { parseIni } from '../formats/ini'
 import { MixArchive } from '../formats/mix'
 import { decodePalette, decodeShp, frameToRgba } from '../formats/shp'
@@ -17,24 +18,78 @@ export interface BuildOption {
   name: string
 }
 
-/** GDI: structures in the left column, units in the right one (as in the original). */
-export const GDI_BUILD_OPTIONS: { structures: BuildOption[], units: BuildOption[] } = {
-  structures: [
-    { id: 'GAPOWR', name: 'GDI-Kraftwerk' },
-    { id: 'PROC', name: 'Tiberium-Raffinerie' },
-    { id: 'GAPILE', name: 'GDI-Kaserne' },
-    { id: 'GASILO', name: 'Tiberium-Silo' },
-    { id: 'GACTWR', name: 'Basisturm' },
-    { id: 'GAWEAP', name: 'GDI-Waffenfabrik' },
-    { id: 'GAVULC', name: 'Vulcankanone' },
-    { id: 'GARADR', name: 'Radar' },
-  ],
-  units: [
-    { id: 'E1', name: 'Leichte Infanterie' },
-    { id: 'E2', name: 'Grenadier' },
-    { id: 'E3', name: 'Raketensoldat' },
-    { id: 'ENGINEER', name: 'Ingenieur' },
-  ],
+export interface BuildOptions { structures: BuildOption[], units: BuildOption[] }
+
+/**
+ * What each side builds up to tech level 6, after Owner= of RULES.INI: structures in the
+ * left column, units in the right one (as in the original); the sidebar shows those
+ * whose Prerequisite= is met and whose TechLevel= the match allows.
+ */
+export const BUILD_OPTIONS: Record<'gdi' | 'nod', BuildOptions> = {
+  gdi: {
+    structures: [
+      { id: 'GAPOWR', name: 'GDI-Kraftwerk' },
+      { id: 'PROC', name: 'Tiberium-Raffinerie' },
+      { id: 'GAPILE', name: 'GDI-Kaserne' },
+      { id: 'GASILO', name: 'Tiberium-Silo' },
+      { id: 'GACTWR', name: 'Basisturm' },
+      { id: 'GAVULC', name: 'Vulcankanone' },
+      { id: 'GAWEAP', name: 'GDI-Waffenfabrik' },
+      { id: 'GARADR', name: 'Radar' },
+      { id: 'GACSAM', name: 'SAM-Aufsatz' },
+      { id: 'GAHPAD', name: 'Landeplattform' },
+      { id: 'GATECH', name: 'GDI-Technologiezentrum' },
+      { id: 'GAWALL', name: 'Betonmauer' },
+      { id: 'GAGATE_A', name: 'Tor' },
+      { id: 'GAPAVE', name: 'Betonplatten' },
+      { id: 'NAPULS', name: 'EMP-Kanone' },
+    ],
+    units: [
+      { id: 'E1', name: 'Leichte Infanterie' },
+      { id: 'E2', name: 'Grenadier' },
+      { id: 'ENGINEER', name: 'Ingenieur' },
+      { id: 'MEDIC', name: 'Sanitäter' },
+      { id: 'JUMPJET', name: 'Jumpjet-Infanterie' },
+      { id: 'HARV', name: 'Sammler' },
+      { id: 'SMECH', name: 'Wolverine' },
+      { id: 'MMCH', name: 'Titan' },
+      { id: 'APC', name: 'Amphibien-Transporter' },
+      { id: 'LPST', name: 'Mobile Sensoreinheit' },
+      { id: 'ORCA', name: 'Orca-Jäger' },
+    ],
+  },
+  nod: {
+    structures: [
+      { id: 'NAPOWR', name: 'Nod-Kraftwerk' },
+      { id: 'PROC', name: 'Tiberium-Raffinerie' },
+      { id: 'NAHAND', name: 'Hand von Nod' },
+      { id: 'GASILO', name: 'Tiberium-Silo' },
+      { id: 'NALASR', name: 'Lasergeschütz' },
+      { id: 'NAWEAP', name: 'Nod-Waffenfabrik' },
+      { id: 'NARADR', name: 'Nod-Radar' },
+      { id: 'NASAM', name: 'SAM-Stellung' },
+      { id: 'NAHPAD', name: 'Nod-Landeplattform' },
+      { id: 'NATECH', name: 'Nod-Technologiezentrum' },
+      { id: 'NAWALL', name: 'Nod-Mauer' },
+      { id: 'NAGATE_A', name: 'Nod-Tor' },
+      { id: 'GAPAVE', name: 'Betonplatten' },
+      { id: 'NAPULS', name: 'EMP-Kanone' },
+    ],
+    units: [
+      { id: 'E1', name: 'Leichte Infanterie' },
+      { id: 'E3', name: 'Raketensoldat' },
+      { id: 'ENGINEER', name: 'Ingenieur' },
+      { id: 'CYBORG', name: 'Cyborg' },
+      { id: 'HARV', name: 'Sammler' },
+      { id: 'BGGY', name: 'Buggy' },
+      { id: 'TTNK', name: 'Tick Tank' },
+      { id: 'BIKE', name: 'Angriffsmotorrad' },
+      { id: 'ART2', name: 'Artillerie' },
+      { id: 'SAPC', name: 'Untergrund-APC' },
+      { id: 'LPST', name: 'Mobile Sensoreinheit' },
+      { id: 'APACHE', name: 'Harpy' },
+    ],
+  },
 }
 
 /**
@@ -91,6 +146,22 @@ export interface BuildInfo {
   sight: number
   /** Top speed in cells per game second (Speed=), 0 for buildings */
   speed: number
+  /** What it is: which factory makes it (InfantryTypes, VehicleTypes, AircraftTypes in RULES.INI) */
+  category: 'structure' | 'infantry' | 'vehicle' | 'aircraft'
+  /** Soldiers it carries (Passengers=) */
+  passengers: number
+  /** Shots before it must reload on a helipad (Ammo=, aircraft); 0: no limit */
+  ammo: number
+  /** Flies with a jet pack (JumpJet=) */
+  jumpjet: boolean
+  /** Never throws itself down under fire (Fearless=: the cyborgs) */
+  fearless: boolean
+  /** The building it is mounted on (PowersUpBuilding=: the component tower's guns) */
+  powersUp?: string
+  /** A wall piece that joins its neighbours (Wall=) */
+  wall: boolean
+  /** A gate that opens for its own side's units (Gate=) */
+  gate: boolean
   /** Hit points (Strength=) */
   strength: number
   /** Can be repaired (Repairable=, default yes) */
@@ -137,6 +208,14 @@ export interface Weapon {
   spread: number
   /** Share of the damage at the edge of the explosion (PercentAtMax=) */
   percentAtMax: number
+  /** It hits aircraft and jumpjets in the air (AA= of its projectile) */
+  aa: boolean
+  /** It hits what is on the ground (AG= of its projectile, default yes): SAMs do not */
+  ag: boolean
+  /** Shots fired one after another at each go (Burst=) */
+  burst: number
+  /** A laser: a beam from the muzzle to the target (IsLaser=), red unless LaserInnerColor= says otherwise */
+  laser?: number
 }
 
 export interface Projectile {
@@ -199,7 +278,9 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
   const prerequisites = new Map<string, string[]>()
   const info = new Map<string, BuildInfo>()
   // infantry can be crushed unless its section says Crushable=no (cyborgs …)
-  const infantry = new Set([...(rules.get('INFANTRYTYPES')?.values() ?? [])].map(id => id.trim().toUpperCase()))
+  const typesOf = (list: string) => new Set([...(rules.get(list)?.values() ?? [])].map(id => id.trim().toUpperCase()))
+  const infantry = typesOf('INFANTRYTYPES')
+  const aircraft = typesOf('AIRCRAFTTYPES')
   /** Hit points, armor and weapon of an object (with its weapon's warhead) */
   const combat = (section?: Map<string, string>) => {
     const weaponName = section?.get('PRIMARY')
@@ -217,6 +298,13 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       storage: Number(section?.get('STORAGE') ?? 0),
       sight: Number(section?.get('SIGHT') ?? 5),
       speed: (Number(section?.get('SPEED') ?? 0) / SPEED_PER_CELL) * FRAMES_PER_SECOND,
+      passengers: Number(section?.get('PASSENGERS') ?? 0),
+      ammo: Number(section?.get('AMMO') ?? 0),
+      jumpjet: yes(section?.get('JUMPJET')),
+      fearless: yes(section?.get('FEARLESS')),
+      powersUp: section?.get('POWERSUPBUILDING')?.toUpperCase(),
+      wall: yes(section?.get('WALL')),
+      gate: yes(section?.get('GATE')),
       armor: Math.max(0, ARMOR_TYPES.indexOf((section?.get('ARMOR') ?? 'none').toLowerCase())),
       weapon: weapon && {
         name: weaponName!,
@@ -233,6 +321,12 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
         speed: Math.max(MIN_PROJECTILE_SPEED, (speed / LEPTONS_PER_CELL) * FRAMES_PER_SECOND),
         spread: Number(warhead?.get('CELLSPREAD') ?? 0),
         percentAtMax: Number(warhead?.get('PERCENTATMAX') ?? 1),
+        aa: yes(projectile?.get('AA')),
+        ag: !/^(no|false|0)$/i.test(projectile?.get('AG') ?? ''),
+        burst: Math.max(1, Number(weapon.get('BURST') ?? 1)),
+        laser: yes(weapon.get('ISLASER'))
+          ? new THREE.Color().setRGB(...(list(weapon.get('LASERINNERCOLOR') ?? '255,0,0').map(c => Number(c) / 255) as [number, number, number]), THREE.SRGBColorSpace).getHex()
+          : undefined,
       },
       explosionReports: reportsOf(section?.get('EXPLOSION')),
     }
@@ -253,6 +347,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       foundation: [fw || 1, fh || 1],
       adjacent: Number(section?.get('ADJACENT') ?? 2),
       techLevel: Number(section?.get('TECHLEVEL') ?? 1),
+      category: structure ? 'structure' : infantry.has(option.id) ? 'infantry' : aircraft.has(option.id) ? 'aircraft' : 'vehicle',
       ...combat(section),
       crusher: CRUSHERS.has(option.id) || yes(section?.get('CRUSHER')),
       crushable: section?.has('CRUSHABLE') ? yes(section.get('CRUSHABLE')) : infantry.has(option.id) || CRUSHABLE_WALLS.has(option.id),
@@ -264,8 +359,10 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       },
     })
   }
-  for (const option of GDI_BUILD_OPTIONS.structures) add(option, true)
-  for (const option of GDI_BUILD_OPTIONS.units) add(option, false)
+  for (const options of Object.values(BUILD_OPTIONS)) {
+    for (const option of options.structures) if (!info.has(option.id)) add(option, true)
+    for (const option of options.units) if (!info.has(option.id)) add(option, false)
+  }
   // the construction yard is never built from the sidebar, but it is part of the base
   add({ id: 'GACNST', name: 'Bauhof' }, true)
   // nor are the sandbags (TechLevel=-1), which some missions put round a base
@@ -321,13 +418,14 @@ export function canBuild(rules: BuildRules, id: string, owned: string[], structu
 }
 
 /** Cameo pictures as data URLs, by object id; missing ones are left out. */
-export async function loadCameos(store: AssetStore, ids: string[]): Promise<Map<string, string>> {
+export async function loadCameos(store: AssetStore, ids: string[], side: 'gdi' | 'nod' = 'gdi'): Promise<Map<string, string>> {
   const cameos = new Map<string, string>()
   const tibsun = await store.get('TIBSUN.MIX')
   if (!tibsun) return cameos
   const archive = await MixArchive.open(tibsun, 'TIBSUN.MIX')
   const [local, conquer, sidebar, cache] = await Promise.all(
-    ['LOCAL.MIX', 'CONQUER.MIX', 'SIDEC01.MIX', 'CACHE.MIX'].map(name => archive.openNested(name)),
+    // the side's own sidebar archive holds its infantry's cameos (SIDEC01: GDI, SIDEC02: Nod)
+    ['LOCAL.MIX', 'CONQUER.MIX', side === 'nod' ? 'SIDEC02.MIX' : 'SIDEC01.MIX', 'CACHE.MIX'].map(name => archive.openNested(name)),
   )
   const text = async (name: string) => {
     const bytes = await local?.read(name)

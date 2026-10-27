@@ -36,6 +36,8 @@ import type { Death, Unit } from './unit'
  * sandbags they drive round.
  */
 
+/** Game seconds between the shots of a burst (Burst=) */
+const BURST_GAP = 0.15
 /** The game logic runs 15 frames a second at game speed factor 1 (see SPEED_FACTORS) */
 const FRAMES_PER_SECOND = 15
 /** How often a unit walking after its target looks where the target is now */
@@ -133,6 +135,8 @@ interface Fighter {
   toTarget?: boolean
   /** Targets it found no clear shot at, until when it leaves them alone (seconds of game time) */
   ignore?: Map<THREE.Object3D, number>
+  /** Shots of the current burst (Burst=) still to come */
+  burst?: number
 }
 
 export interface CombatEffects {
@@ -198,21 +202,40 @@ export class Combat {
   }
 
   /**
+   * Whether `object`'s weapon may go for `other`: an enemy it can hit (in the air only
+   * with AA=, on the ground only with AG=); a healer's (negative Damage=) a wounded
+   * soldier of its own side
+   */
+  private targetable(object: THREE.Object3D, weapon: Weapon, other: THREE.Object3D, force = false) {
+    if (other === object || other.userData.dead || other.userData.underground) return false
+    const unit = other.userData.unit as Unit | undefined
+    if (weapon.damage < 0) {
+      const info = this.infoOf(other)
+      return !Combat.hostile(object, other) && info?.category === 'infantry' && this.hp(other) < (info.strength ?? 100)
+    }
+    if (!force && !Combat.hostile(object, other)) return false
+    const air = !!unit && this.battlefield.flight.airborne(unit)
+    return air ? weapon.aa : weapon.ag
+  }
+
+  /**
    * Whether the selected units could attack an object (it is an enemy, they have weapons).
    * `force` (Ctrl, like the original): anything but themselves, also walls and their own side.
    */
   canAttack(selection: THREE.Object3D[], target: THREE.Object3D, force = false) {
     if (!force && Battlefield.isWall(target)) return false
-    if (target.userData.dead || target.userData.underground) return false
-    return selection.some(object => object.userData.unit && Battlefield.own(object) && object !== target
-      && (force || Combat.hostile(object, target)) && this.infoOf(object)?.weapon)
+    return selection.some((object) => {
+      const weapon = this.infoOf(object)?.weapon
+      return !!object.userData.unit && Battlefield.own(object) && !!weapon && this.targetable(object, weapon, target, force)
+    })
   }
 
   /** Orders units to attack a target; `force`: also one that is not an enemy (see canAttack). */
   attack(attackers: THREE.Object3D[], target: THREE.Object3D, force = false) {
     for (const object of attackers) {
       const unit = object.userData.unit as Unit | undefined
-      if (!unit || object === target || !(force || Combat.hostile(object, target)) || !this.infoOf(object)?.weapon) continue
+      const weapon = this.infoOf(object)?.weapon
+      if (!unit || !weapon || !this.targetable(object, weapon, target, force)) continue
       this.fighters.set(unit, { target, ordered: true, cooldown: this.fighters.get(unit)?.cooldown ?? 0, chase: 0 })
     }
   }
@@ -282,12 +305,16 @@ export class Combat {
       }
       // standing idle: guard, attack the nearest enemy within sight
       const sight = Math.max(weapon.range, info!.sight)
-      if (!fighter.target && !unit.walking) {
+      if (!fighter.target && !unit.walking && !this.battlefield.flight.grounded(unit)) {
         fighter.target = this.nearestEnemy(object, weapon, fighter, other => Math.max(sight, this.range(object.position, weapon, other)))
         fighter.ordered = false
       }
       const target = fighter.target
-      if (!target) continue
+      if (!target) {
+        // an aircraft whose work is done flies home
+        this.battlefield.flight.done(unit)
+        continue
+      }
       // on its way to a place with a clear shot: let it get there
       // (while the target stays where it can be hit from there; once it moves away, a new place)
       if (fighter.spot) {
@@ -313,8 +340,8 @@ export class Combat {
         fighter.chase -= dt
         if (!unit.walking || fighter.chase <= 0) {
           fighter.chase = CHASE_INTERVAL
-          // near enough: to the nearest place it can hit it from (round cliffs, up ramps)
-          if (distance <= range + SPOT_SEARCH_REACH) {
+          // near enough: to the nearest place it can hit it from (round cliffs, up ramps; not in the air)
+          if (distance <= range + SPOT_SEARCH_REACH && !this.battlefield.flight.has(unit)) {
             this.takePosition(unit, fighter, weapon, target, MUZZLE_HEIGHT)
             continue
           }
@@ -328,14 +355,20 @@ export class Combat {
         continue
       }
       if (unit.walking) unit.stop()
-      const faced = fixed
+      // an aircraft without shots left flies home to reload
+      if (!this.battlefield.flight.canFire(unit)) {
+        fighter.target = undefined
+        continue
+      }
+      // dug in, the Tick Tank turns its turret; set up without one (the artillery) it turns as a whole
+      const faced = fixed && this.part(object, 'Turret')
         ? this.traverse(object, Battlefield.closestPoint(object.position, target), dt)
         : unit.face(Battlefield.closestPoint(object.position, target), dt)
       aiming.add(object)
       const elevated = this.elevate(object, target, dt)
       if (faced && elevated && fighter.cooldown <= 0) {
         const muzzle = this.muzzle(object, true)
-        if (this.flightBlocked(weapon, muzzle, this.aimPoint(muzzle, target))) {
+        if (!this.battlefield.flight.airborne(unit) && this.flightBlocked(weapon, muzzle, this.aimPoint(muzzle, target))) {
           // not into the rock: somewhere with a clear shot, or another target (dug in: only that)
           fighter.cooldown = BLOCKED_RETRY
           if (fixed) {
@@ -346,10 +379,14 @@ export class Combat {
           this.takePosition(unit, fighter, weapon, target, muzzle.y - object.position.y)
           continue
         }
-        fighter.cooldown = weapon.rof / FRAMES_PER_SECOND
+        // a burst: its shots one after another, then the weapon's pause
+        fighter.burst = (fighter.burst || weapon.burst) - 1
+        fighter.cooldown = fighter.burst > 0 ? BURST_GAP : weapon.rof / FRAMES_PER_SECOND
         this.fire(object, target, info!)
+        if (!fighter.burst) this.battlefield.flight.fired(unit)
       }
     }
+    this.updateTowers(dt)
     for (const unit of this.battlefield.units) {
       if (aiming.has(unit.object) || unit.object.userData.dead) continue
       this.elevate(unit.object, undefined, dt)
@@ -358,6 +395,50 @@ export class Combat {
     this.crush()
     this.fly(dt)
     this.animate(dt)
+  }
+
+  /** The base defences and their targets (each keeps its own, like a unit) */
+  private readonly towers = new Map<THREE.Object3D, Fighter>()
+
+  /**
+   * What a building fires with: its own Primary= (the laser, the SAM site) or that of
+   * the gun mounted on it (the component tower's Vulcan or SAM, userData.gun)
+   */
+  private armament(object: THREE.Object3D) {
+    const own = this.infoOf(object)
+    if (own?.weapon) return own
+    // (true while its model is still loading)
+    const gun = object.userData.gun as THREE.Object3D | true | undefined
+    return gun && gun !== true ? this.infoOf(gun) : undefined
+  }
+
+  /**
+   * Base defences fire at enemies within range of their own accord, turning their
+   * turret ("Turret", tipping "Cannon") towards them; switched off with the power
+   * button (userData.poweredOff) they are silent.
+   */
+  private updateTowers(dt: number) {
+    for (const object of this.battlefield.structureObjects) {
+      const info = object.userData.dead || object.userData.poweredOff ? undefined : this.armament(object)
+      const weapon = info?.weapon
+      if (!info || !weapon) continue
+      const fighter = this.towers.get(object) ?? { ordered: false, cooldown: 0, chase: 0 }
+      this.towers.set(object, fighter)
+      fighter.cooldown = Math.max(0, fighter.cooldown - dt)
+      const target = fighter.target
+      if (!target || !this.targetable(object, weapon, target) || Battlefield.reach(object.position, target) > weapon.range) {
+        fighter.target = this.nearestEnemy(object, weapon, fighter, () => weapon.range)
+      }
+      if (!fighter.target) continue
+      const aim = Battlefield.closestPoint(object.position, fighter.target)
+      const faced = this.traverse(object, aim, dt) || !this.part(object, 'Turret')
+      const elevated = this.elevate(object, fighter.target, dt)
+      if (!faced || !elevated || fighter.cooldown > 0) continue
+      fighter.burst = (fighter.burst || weapon.burst) - 1
+      fighter.cooldown = fighter.burst > 0 ? BURST_GAP : weapon.rof / FRAMES_PER_SECOND
+      this.fire(object, fighter.target, info)
+    }
+    for (const object of this.towers.keys()) if (object.userData.dead) this.towers.delete(object)
   }
 
   /**
@@ -468,7 +549,7 @@ export class Combat {
     const candidates = [...this.battlefield.units.map(u => u.object), ...this.battlefield.structureObjects]
     for (const other of candidates) {
       // walls are never picked as a target
-      if (other.userData.dead || !Combat.hostile(object, other) || Battlefield.isWall(other)) continue
+      if (!this.targetable(object, weapon, other) || Battlefield.isWall(other)) continue
       // buildings count a little farther, so soldiers deal with soldiers first
       if ((fighter.ignore?.get(other) ?? 0) > this.clock) continue
       const distance = Battlefield.reach(object.position, other)
@@ -493,8 +574,12 @@ export class Combat {
     const muzzle = this.muzzle(attacker)
     const aim = this.aimPoint(muzzle, target)
     shooter?.fire()
+    // a base defence plays its own Fire clip (its gun's, if one is mounted)
+    const gun = attacker.userData.gun as THREE.Object3D | true | undefined
+    if (!shooter) this.battlefield.playClip(gun && gun !== true ? gun : attacker, 'Fire')
     // the flash and a wisp of smoke at the muzzle (heavy guns: more of both)
     this.battlefield.effects.muzzleFlash(muzzle, aim.clone().sub(muzzle), weapon.damage >= HEAVY_DAMAGE)
+    if (weapon.laser !== undefined) this.battlefield.effects.beam(muzzle, aim, weapon.laser)
     if (!weapon.projectile) {
       // a bullet: into the ground or the rock if that is in the way
       const blocked = this.blocked(muzzle, aim)
@@ -720,9 +805,11 @@ export class Combat {
     const verses = Battlefield.isWall(target) && !weapon.wall ? 0 : weapon.verses[targetInfo?.armor ?? 0] ?? 1
     // infantry under fire throws itself down, and is harder to hurt there
     const victim = target.userData.unit as Unit | undefined
-    const cover = victim?.prone ? PRONE_DAMAGE : 1
-    victim?.takeFire()
-    const hp = this.hp(target) - weapon.damage * verses * cover * share
+    const healing = weapon.damage < 0
+    const cover = victim?.prone && !healing ? PRONE_DAMAGE : 1
+    if (!healing && !targetInfo?.fearless) victim?.takeFire()
+    // healed up to its full strength, no more
+    const hp = Math.min(targetInfo?.strength ?? Infinity, this.hp(target) - weapon.damage * verses * cover * share)
     target.userData.hp = hp
     target.userData.health = Math.max(0, hp / (targetInfo?.strength ?? 100))
     if (weapon.damage * verses > 0) this.effects.hit?.(target)

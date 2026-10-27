@@ -15,7 +15,7 @@ if (!import.meta.dev) navigateTo('/menu', { replace: true })
 useHead({ title: 'Tiberian Fallout – Gefecht' })
 
 const settings = useSettings()
-const skirmish = createSkirmish(settings.credits)
+const skirmish = createSkirmish(settings.credits, (settings.players.find(p => p.ai === null) ?? settings.players[0])?.side)
 const control = useBattleControl(skirmish)
 const session = ref<{ restart: () => void }>()
 

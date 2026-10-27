@@ -283,6 +283,7 @@ function onKeyDown(event: KeyboardEvent) {
   else if (keys.matches(event, 'home')) {
     // the construction yard (or barracks), else the MCV that is still to deploy
     const yard = battlefield.structuresOf('GACNST').find(Battlefield.own) ?? battlefield.structuresOf('GAPILE').find(Battlefield.own)
+      ?? battlefield.structuresOf('NAHAND').find(Battlefield.own)
       ?? battlefield.units.map(u => u.object).find(o => o.userData.id === 'MCV' && Battlefield.own(o) && !o.userData.dead)
     if (yard) battlefield.lookAt(yard.position)
   }
@@ -353,7 +354,13 @@ const resizeObserver = new ResizeObserver(() => battlefield?.resize())
 const FOUNDATIONS: Record<string, [number, number]> = { GACNST: [3, 3], GAPOWR: [2, 2], PROC: [4, 3], GAPILE: [2, 2], GASAND: [1, 1] }
 /** Units without their own model yet use the light infantry's */
 const UNIT_MODEL = UNIT_FALLBACK
-const FACTORY: Record<string, string> = { E1: 'GAPILE', E2: 'GAPILE', E3: 'GAPILE', ENGINEER: 'GAPILE' }
+/** The factories of each kind of unit: soldiers leave the barracks, vehicles the war factory, aircraft rise from the helipad */
+const FACTORIES: Record<BuildInfo['category'], string[]> = {
+  infantry: ['GAPILE', 'NAHAND'],
+  vehicle: ['GAWEAP', 'NAWEAP'],
+  aircraft: ['GAHPAD', 'NAHPAD'],
+  structure: [],
+}
 
 /** Puts a structure of the player's base on the map. */
 async function buildStructure(id: string, x: number, z: number, built = true) {
@@ -361,7 +368,7 @@ async function buildStructure(id: string, x: number, z: number, built = true) {
   const [w, h] = skirmish?.rules?.info.get(id)?.foundation ?? FOUNDATIONS[id] ?? [2, 2]
   skirmish?.buildings.push(id)
   try {
-    const object = await battlefield.addStructure(id, x, z, w, h, MODELS[id], props.colour)
+    const object = await battlefield.addStructure(id, x, z, w, h, MODELS[id], props.colour, 'player', props.side)
     // factories can send what they produce to a rally point
     if (FACTORY_IDS.has(id)) object.userData.abilities = ['rally']
     if (id === 'GAPOWR') await addTurbine(object, props.colour)
@@ -373,7 +380,7 @@ async function buildStructure(id: string, x: number, z: number, built = true) {
     console.error(`${id} konnte nicht gebaut werden`, error)
   }
 }
-const FACTORY_IDS = new Set(Object.values(FACTORY))
+const FACTORY_IDS = new Set(Object.values(FACTORIES).flat())
 /** Until the rules are loaded: bales a harvester carries and credits a bale is worth (Tiberian Sun) */
 const HARVESTER_STORAGE = 28
 const TIBERIUM_VALUE = 25
@@ -602,14 +609,40 @@ let lastFundsWarning = -Infinity
 const ATTACK_WARNING_INTERVAL = 30
 let lastBaseAttack = -Infinity
 let lastHarvesterAttack = -Infinity
-/** A finished unit comes out of its factory and walks to the rally point (or a bit out). */
+/** Seconds a war factory's door stays open after a vehicle has come out */
+const DOOR_OPEN_SECONDS = 2
+
+/**
+ * A finished unit comes out of its factory (the newest of its kind the player has): at
+ * the factory's Exit node, through the war factory's opening door, and walks to the
+ * rally point or a bit out. Aircraft rise from their helipad (see Aircraft).
+ */
 async function deliver(info: BuildInfo) {
   if (!battlefield) return
-  const factory = battlefield.structuresOf(FACTORY[info.id] ?? '').filter(Battlefield.own).at(-1)
+  const factory = battlefield.structureObjects.filter(o => FACTORIES[info.category].includes(o.userData.id) && Battlefield.own(o) && !o.userData.dead).at(-1)
   if (!factory) return
-  const door = factory.position.clone().add(new THREE.Vector3(0.46, 0, 1.0))
+  factory.updateMatrixWorld(true)
+  const exit = factory.getObjectByName('Exit')
+  const door = exit ? exit.getWorldPosition(new THREE.Vector3()) : factory.position.clone().add(new THREE.Vector3(0.46, 0, 1.0))
+  const out = exit ? exit.getWorldDirection(new THREE.Vector3()).setY(0).normalize() : new THREE.Vector3(0.3, 0, 1).normalize()
+  const opens = battlefield.playClip(factory, 'Open', { hold: true })
+  if (opens) {
+    clearTimeout(factory.userData.doorTimer)
+    factory.userData.doorTimer = setTimeout(() => battlefield?.playClip(factory, 'Open', { reverse: true }), (opens + DOOR_OPEN_SECONDS) * 1000 / (SPEED_FACTORS[settings.speed] ?? 1))
+  }
   const unit = await battlefield.addUnit(MODELS[info.id] ?? UNIT_MODEL, door, props.colour, 'player', props.side)
   unit.object.userData.id = info.id
+  unit.object.rotation.y = Math.atan2(out.x, out.z)
+  // an aircraft stands on its helipad, ready to take off; a jumpjet soldier flies where it is sent
+  if (info.category === 'aircraft') {
+    battlefield.flight.addAircraft(unit, factory, info.ammo)
+    return
+  }
+  if (info.jumpjet) battlefield.flight.addJumpjet(unit)
+  if (info.id === 'HARV') {
+    harvesting?.add(unit, undefined, opens || 0)
+    return
+  }
   const rally = factory.userData.rallyPoint as THREE.Vector3 | undefined
   // each one stands a bit apart from the last, round the rally point
   delivered++
@@ -617,7 +650,10 @@ async function deliver(info: BuildInfo) {
   const radius = 0.35 + 0.18 * Math.sqrt(delivered % 12)
   const spread = new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius)
   // to a free spot: in front of the door may be another building
-  battlefield.walk(unit, battlefield.openSpot((rally ?? door.clone().add(new THREE.Vector3(0.8, 0, 2.6))).clone().add(spread)))
+  const leave = () => battlefield?.walk(unit, battlefield.openSpot((rally ?? door.clone().addScaledVector(out, 2.2)).clone().add(spread)))
+  // out of the war factory once the door is open
+  if (opens) setTimeout(leave, opens * 1000 / (SPEED_FACTORS[settings.speed] ?? 1))
+  else leave()
 }
 
 /** Shows or hides the placement preview when the sidebar starts or stops placing. */
@@ -626,7 +662,8 @@ function syncPlacement() {
   if (!battlefield || placingId === skirmish?.placing?.id) return
   placingId = skirmish?.placing?.id
   const info = skirmish?.placing
-  if (info) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent)
+  // a gun for the component tower is put onto a tower with a click, no foundation to show
+  if (info && !info.powersUp) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent)
   else battlefield.cancelPlacement()
 }
 
@@ -635,6 +672,14 @@ function place() {
   const info = skirmish?.placing
   const cell = battlefield?.placementCell
   if (!skirmish || !info) return
+  if (info.powersUp) {
+    const at = pointer()
+    const tower = battlefield?.objectAt(at.x, at.y)
+    const f = tower && towerFor(info, tower) && tower.userData.footprint
+    if (f) placeAt(info, [f.x, f.z])
+    else sounds.speak('evaCannotPlace')
+    return
+  }
   if (!cell) {
     sounds.speak('evaCannotPlace')
     return
@@ -648,10 +693,33 @@ function placeAt(info: BuildInfo, cell: [number, number]) {
   skirmish.placing = undefined
   skirmish.production.placed()
   syncPlacement()
+  if (info.powersUp) {
+    const tower = battlefield!.structureObjects.find(o => o.userData.footprint?.x === cell[0] && o.userData.footprint?.z === cell[1] && towerFor(info, o))
+    if (tower) mountGun(tower, info.id)
+    return
+  }
   buildStructure(info.id, cell[0], cell[1])
   // the construction yard's crane lets a crate down into its hatch
   const yard = battlefield!.structuresOf('GACNST').filter(Battlefield.own).at(-1)
   if (yard) battlefield!.playClip(yard, 'Deliver')
+}
+
+/** Whether a gun (the Vulcan, the SAM) can go onto this building: an own component tower without one */
+function towerFor(info: BuildInfo, object: THREE.Object3D) {
+  return object.userData.id === info.powersUp && Battlefield.own(object) && !object.userData.gun && !object.userData.dead
+}
+
+/** Mounts a gun on a component tower (its TowerSlot1): from now on the tower fires with it (see Combat) */
+async function mountGun(tower: THREE.Object3D, id: string) {
+  tower.userData.gun = true // taken while the model loads
+  skirmish?.buildings.push(id)
+  buildSound()
+  const gun = await battlefield?.addUpgrade(tower, MODELS[id]!, props.colour)
+    .catch(error => console.error(`${id} konnte nicht montiert werden`, error))
+  if (!gun) return
+  gun.userData.id = id
+  gun.userData.owner = tower.userData.owner
+  tower.userData.gun = gun
 }
 
 let combat: Combat | undefined
@@ -754,6 +822,10 @@ function forget(building: THREE.Object3D) {
   if (i >= 0) skirmish.buildings.splice(i, 1)
   const off = building.userData.poweredOff ? skirmish.offline.indexOf(id) : -1
   if (off >= 0) skirmish.offline.splice(off, 1)
+  // the gun on a component tower goes with it
+  const gun = building.userData.gun as THREE.Object3D | true | undefined
+  const g = gun && gun !== true ? skirmish.buildings.indexOf(gun.userData.id) : -1
+  if (g >= 0) skirmish.buildings.splice(g, 1)
 }
 
 /**

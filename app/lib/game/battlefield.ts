@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { SCROLL_DIRECTIONS, type CursorKind, type ScrollDirection } from '../input/cursor'
+import { Flight } from './flight'
 import { findPath, type NavMap } from './pathfinding'
 import { Cell, LEVEL_HEIGHT, Terrain, type TerrainOptions } from './terrain'
 import { terrainGeometry } from './terrain-mesh'
@@ -49,12 +50,18 @@ const PLACEHOLDER_HEIGHT: Record<string, number> = {
   GACNST: 0.55, GAPOWR: 0.6, PROC: 0.45, GASILO: 0.35, GACTWR: 0.5, GAWEAP: 0.6, GAVULC: 0.4, GARADR: 0.7,
 }
 
-interface Footprint { x: number, z: number, w: number, h: number, owner: Owner, wall?: boolean }
+interface Footprint { x: number, z: number, w: number, h: number, owner: Owner, wall?: boolean, gate?: boolean }
 
 export type Owner = 'player' | 'enemy'
 
 /** Structures that join up with their neighbours (see connectWalls) */
-const WALLS = new Set(['GASAND'])
+const WALLS = new Set(['GASAND', 'GAWALL', 'NAWALL'])
+/** Walls a crusher drives over (the sandbags; concrete stops it) */
+const CRUSHABLE_WALLS = new Set(['GASAND'])
+/** Gates (Gate=): their side's units pass, they open as these come near */
+const GATES = new Set(['GAGATE_A', 'NAGATE_A'])
+/** A gate opens when a unit of its side is this near (cells) */
+const GATE_REACH = 1.6
 
 /** A deploying MCV stands in the middle of its foundation, facing the front (+z), like
  * the vehicle at the start of the yard's Build clip (see blender/GACNST.py) */
@@ -260,19 +267,19 @@ const OPEN_SEARCH = 6
  * posture's name (its idle and fire clips) and the clip out of it
  */
 const POSTURES = {
-  /** The Tick Tank dug in, nose down, its turret out of its tail */
+  /** The Tick Tank dug in, nose down, its turret out of its tail; the artillery and the sensor array set up the same way */
   dig: { in: 'Deploy', posture: 'Deployed', out: 'Undeploy' },
   /** The subterranean APC under the ground */
   tunnel: { in: 'Burrow', posture: 'Underground', out: 'Surface' },
 } as const
-/** Units that dig in where they stand */
-const DIGGERS = new Set(['TTNK'])
+/** Units that dig in or set up where they stand (Deploy/Deployed/Undeploy) */
+const DIGGERS = new Set(['TTNK', 'ART2', 'LPST'])
 /** Units that go under the ground to get somewhere */
 const TUNNELLERS = new Set(['SAPC'])
 /** Farther than this (cells) the subterranean APC goes under the ground; nearer it drives */
 const TUNNEL_MIN = 8
 /** How many soldiers the transports carry (Passengers=) */
-const TRANSPORTS: Record<string, number> = { SAPC: 5 }
+const TRANSPORTS: Record<string, number> = { SAPC: 5, APC: 5 }
 /** A soldier this near (cells) to its transport gets in */
 const BOARD_REACH = 0.8
 /** How far from the transport (cells) the soldiers get out */
@@ -340,6 +347,9 @@ export class Battlefield {
     materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial },
     cell?: [number, number], valid: boolean,
   }
+
+  /** Aircraft and jumpjets in the air (see Flight) */
+  readonly flight = new Flight(this)
 
   /** Everything selected: one building, or one or more units */
   selection: THREE.Object3D[] = []
@@ -725,11 +735,13 @@ export class Battlefield {
       const waypoints = unit.object.userData.waypoints as THREE.Vector3[] | undefined
       if (seconds > 0 && !unit.walking && waypoints?.length && !unit.object.userData.dead) this.walk(unit, waypoints.shift()!)
     }
+    this.flight.update(seconds)
     for (const ship of [...this.aircraft]) {
       ship.update(seconds)
       if (seconds > 0) this.engineEffects(ship.object, seconds)
     }
     this.updateDeploying(seconds)
+    if (seconds > 0) this.updateGates()
     this.updateTunnels(seconds)
     this.updateBoarding()
     this.updateDeliveries()
@@ -1599,14 +1611,15 @@ export class Battlefield {
    * model from `url` (built up by its own animation), or else a simple placeholder
    * that rises out of the ground.
    */
-  async addStructure(id: string, x: number, z: number, w: number, h: number, url?: string, houseColour = 0xd8b43a, owner: Owner = 'player') {
+  async addStructure(id: string, x: number, z: number, w: number, h: number, url?: string, houseColour = 0xd8b43a, owner: Owner = 'player', side: Side = 'gdi') {
     // on its level (the foundation is flat, see canPlace)
     const centre = new THREE.Vector3(x + w / 2, (this.terrain.flatLevel(x, z, w, h) ?? 0) * LEVEL_HEIGHT, z + h / 2)
-    const footprint: Footprint = { x, z, w, h, owner, wall: WALLS.has(id) }
+    const footprint: Footprint = { x, z, w, h, owner, wall: CRUSHABLE_WALLS.has(id), gate: GATES.has(id) }
     this.footprints.push(footprint)
-    const object = url ? await this.addBuilding(url, centre, houseColour) : this.addPlaceholder(id, centre, w, h, houseColour)
+    const object = url ? await this.addBuilding(url, centre, houseColour, true, side) : this.addPlaceholder(id, centre, w, h, houseColour)
     object.userData.id = id
     object.userData.owner = owner
+    object.userData.side = side
     object.userData.footprint = footprint
     this.structures.set(id, [...(this.structures.get(id) ?? []), object])
     if (WALLS.has(id)) {
@@ -1618,10 +1631,10 @@ export class Battlefield {
     return object
   }
 
-  /** The wall (sandbags …) standing on a cell, if any */
-  private wallAt(x: number, z: number) {
-    for (const id of WALLS) {
-      const wall = this.structuresOf(id).find(o => o.userData.footprint?.x === x && o.userData.footprint?.z === z)
+  /** The wall (sandbags …) standing on a cell, if any; `id`: only a wall of that kind */
+  private wallAt(x: number, z: number, id?: string) {
+    for (const kind of id ? [id] : WALLS) {
+      const wall = this.structuresOf(kind).find(o => o.userData.footprint?.x === x && o.userData.footprint?.z === z)
       if (wall) return wall
     }
     return undefined
@@ -1644,7 +1657,8 @@ export class Battlefield {
       for (const [name, [dx, dz]] of Object.entries(towards)) {
         const arm = arms[name]
         if (!arm) continue
-        if (this.wallAt(cx + dx, cz + dz)) {
+        // only walls of the same kind join up (sandbags with sandbags, concrete with concrete)
+        if (this.wallAt(cx + dx, cz + dz, wall.userData.id)) {
           if (!arm.parent) arm.userData.home.add(arm)
         }
         else if (arm.parent) {
@@ -1719,13 +1733,13 @@ export class Battlefield {
   }
 
   /** Loads a model: "Remap" (and its shades) in the house colour, "Glow*" halos shine additively. */
-  private async loadModel(url: string, houseColour: number) {
+  private async loadModel(url: string, houseColour: number, side: Side = 'gdi') {
     const gltf = await new GLTFLoader().loadAsync(url)
     gltf.scene.traverse((node) => {
       const mesh = node as THREE.Mesh
       if (!mesh.isMesh) return
       for (const mat of [mesh.material].flat() as THREE.MeshStandardMaterial[]) {
-        applyHouseColour(mat, houseColour)
+        applyHouseColour(mat, houseColour, side)
         if (mat.name.startsWith('Glow')) {
           mat.blending = THREE.AdditiveBlending
           mat.depthWrite = false
@@ -1789,7 +1803,7 @@ export class Battlefield {
       const owner = (unit.object.userData.owner ?? 'player') as Owner
       const wasSelected = this.selection.includes(unit.object)
       this.remove(unit.object)
-      this.addStructure('GACNST', job.x, job.z, 3, 3, job.url, job.houseColour, owner).then((yard) => {
+      this.addStructure('GACNST', job.x, job.z, 3, 3, job.url, job.houseColour, owner, unit.object.userData.side ?? 'gdi').then((yard) => {
         if (wasSelected) this.select(yard)
         job.resolve(yard)
       }, () => job.resolve(undefined))
@@ -1970,18 +1984,25 @@ export class Battlefield {
 
   /**
    * Plays one of a building's clips once from the start (e.g. the construction yard's
-   * "Deliver" when a structure is placed); a clip still running starts over.
-   * Returns false if the building has no such clip.
+   * "Deliver" when a structure is placed); a clip still running starts over. `hold`:
+   * it keeps its last pose (an open door); `reverse`: played backwards (the door
+   * closing). Returns the clip's length in seconds, false if the building has none.
    */
-  playClip(building: THREE.Object3D, name: string) {
+  playClip(building: THREE.Object3D, name: string, { hold = false, reverse = false } = {}) {
     const mixer = building.userData.mixer as THREE.AnimationMixer | undefined
     const clip = (building.userData.clips as THREE.AnimationClip[] | undefined)?.find(c => c.name === name)
     if (!mixer || !clip) return false
     const action = mixer.clipAction(clip)
+    // backwards from where it is (a gate closing while still opening), forwards from the start
+    const at = reverse && action.isRunning() ? action.time : clip.duration
     action.setLoop(THREE.LoopOnce, 1)
-    action.clampWhenFinished = false
-    action.reset().play()
-    return true
+    // `hold`: it stays in its last pose (an open door) until played backwards
+    action.clampWhenFinished = hold || reverse
+    action.reset()
+    action.timeScale = reverse ? -1 : 1
+    if (reverse) action.time = at
+    action.play()
+    return clip.duration
   }
 
   /**
@@ -1993,8 +2014,8 @@ export class Battlefield {
    * building stands finished) and "Idle" (looped: waving flag, blinking lights).
    * Other clips (e.g. the construction yard's "Deliver") wait for playClip().
    */
-  async addBuilding(url: string, at: THREE.Vector3, houseColour = 0xd8b43a, build = true) {
-    const gltf = await this.loadModel(url, houseColour)
+  async addBuilding(url: string, at: THREE.Vector3, houseColour = 0xd8b43a, build = true, side: Side = 'gdi') {
+    const gltf = await this.loadModel(url, houseColour, side)
     if (gltf.animations.length) {
       const mixer = new THREE.AnimationMixer(gltf.scene)
       for (const clip of gltf.animations) {
@@ -2042,7 +2063,7 @@ export class Battlefield {
     const slot = slots.find(s => !s.userData.upgrade)
     if (!slot) return undefined
     slot.userData.upgrade = true // taken while it loads
-    const upgrade = await this.addBuilding(url, new THREE.Vector3(), houseColour, build)
+    const upgrade = await this.addBuilding(url, new THREE.Vector3(), houseColour, build, structure.userData.side ?? 'gdi')
     this.selectables.splice(this.selectables.indexOf(upgrade), 1)
     slot.add(upgrade)
     slot.userData.upgrade = upgrade
@@ -2081,6 +2102,7 @@ export class Battlefield {
     })
     object.position.copy(at).setY(this.heightAt(at.x, at.z))
     object.userData.kind = 'unit' // can be picked with the selection box
+    object.userData.side = side
     const unit = new Unit(object, gltf.animations)
     // In its first pose (a new skeleton's bone matrices are all zero, the body would
     // shrink to a point): measured so, the frame came out far too small, and a bounding
@@ -2122,10 +2144,10 @@ export class Battlefield {
    * Whether a cell is on the map and not under a building; for a crusher of `crusher`'s
    * side the walls (sandbags) of its enemies are no obstacle, it drives over them
    */
-  private free(x: number, z: number, crusher?: Owner) {
+  private free(x: number, z: number, crusher?: Owner, mover?: Owner) {
     if (!this.onMap(x, z)) return false
     return !this.footprints.some(f => x >= f.x && x < f.x + f.w && z >= f.z && z < f.z + f.h
-      && !(crusher && f.wall && f.owner !== crusher))
+      && !(crusher && f.wall && f.owner !== crusher) && !(mover && f.gate && f.owner === mover))
   }
 
   /**
@@ -2168,14 +2190,34 @@ export class Battlefield {
 
   /** The map for one unit's way: a crusher's leads over enemy walls */
   navFor(object: THREE.Object3D): NavMap {
-    if (!this.crusher(object)) return this.nav
     const owner = (object.userData.owner ?? 'player') as Owner
-    return { free: (x, z) => this.free(x, z, owner), step: this.step }
+    // over enemy sandbags (crushers), through their own side's gates (everybody)
+    const crusher = this.crusher(object) ? owner : undefined
+    return { free: (x, z) => this.free(x, z, crusher, owner), step: this.step }
+  }
+
+  /** Gates open while a unit of their side is near, and close again behind it */
+  private updateGates() {
+    for (const id of GATES) {
+      for (const gate of this.structuresOf(id)) {
+        if (gate.userData.dead) continue
+        const near = this.units.some(u => !u.object.userData.dead && u.object.userData.owner === gate.userData.owner
+          && Battlefield.reach(u.object.position, gate) < GATE_REACH)
+        if (near === !!gate.userData.open) continue
+        gate.userData.open = near
+        this.playClip(gate, 'Open', near ? { hold: true } : { reverse: true })
+      }
+    }
   }
 
   /** Sends a unit to a point on the shortest way round the buildings. */
   walk(unit: Unit, to: THREE.Vector3) {
     const object = unit.object
+    // aircraft and jumpjets fly there, straight over everything
+    if (this.flight.has(unit)) {
+      this.flight.flyTo(unit, to)
+      return
+    }
     // under the ground: on to the new place
     const tunnel = this.tunnels.find(t => t.unit === unit)
     if (tunnel) {

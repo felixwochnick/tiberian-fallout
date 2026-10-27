@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Battlefield } from '~/lib/game/battlefield'
 import type { BaseMode } from '~/composables/useSkirmish'
-import { type BuildInfo, canBuild, GDI_BUILD_OPTIONS, loadCameos, type BuildOption } from '~/lib/game/cameos'
+import { BUILD_OPTIONS, type BuildInfo, canBuild, loadCameos, type BuildOption } from '~/lib/game/cameos'
 import { blackSteelCorner, brassFrameImage, type Corner, hudScale, PILLAR, pillarImage, plateImage, steelImage } from '~/lib/game/hud'
 import { getAssetStore } from '~/lib/storage/asset-store'
 
@@ -103,9 +103,11 @@ const available = (options: BuildOption[], structure: boolean) =>
     ? options.filter(o => canBuild(rules.value!, o.id, props.owned, structure)
       && (rules.value!.info.get(o.id)?.techLevel ?? 0) <= (props.techLevel ?? 10))
     : options
+/** The human player's side's options */
+const options = computed(() => BUILD_OPTIONS[skirmish?.side ?? 'gdi'])
 const columns = computed(() => ({
-  structures: available(GDI_BUILD_OPTIONS.structures, true),
-  units: available(GDI_BUILD_OPTIONS.units, false),
+  structures: available(options.value.structures, true),
+  units: available(options.value.units, false),
 }))
 // fewer options: keep the scroll position within the list
 watch(columns, () => {
@@ -245,8 +247,8 @@ onMounted(async () => {
   observer = new ResizeObserver(measure)
   observer.observe(lower.value!)
   window.addEventListener('resize', measure)
-  const ids = [...GDI_BUILD_OPTIONS.structures, ...GDI_BUILD_OPTIONS.units].map(o => o.id)
-  cameos.value = await getAssetStore().then(store => loadCameos(store, ids)).catch(() => new Map())
+  const ids = [...options.value.structures, ...options.value.units].map(o => o.id)
+  cameos.value = await getAssetStore().then(store => loadCameos(store, ids, skirmish?.side)).catch(() => new Map())
 })
 onBeforeUnmount(() => {
   observer?.disconnect()

@@ -19,6 +19,9 @@ function scatter(speed: number, up = 0) {
   return v.normalize().multiplyScalar(speed)
 }
 
+/** Game seconds a laser beam is seen (LaserDuration=15 frames) and its thickness (cells) */
+const BEAM_SECONDS = 1
+const BEAM_WIDTH = 0.025
 /** Seconds a scorch mark stays on the ground, fading out at the end */
 const SCORCH_SECONDS = 12
 
@@ -30,6 +33,9 @@ export class Effects {
   private readonly scorchGeometry = new THREE.CircleGeometry(0.5, 20).rotateX(-Math.PI / 2)
   private readonly scorchTexture: THREE.Texture
   private readonly scorchMaterial: THREE.MeshBasicMaterial
+  /** Laser beams on screen and how long they have left */
+  private readonly beams: { line: THREE.Mesh, time: number }[] = []
+  private readonly beamGeometry = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true).rotateX(Math.PI / 2)
 
   constructor(private readonly scene: THREE.Scene) {
     this.particles = new Particles(scene)
@@ -55,6 +61,15 @@ export class Effects {
 
   update(seconds: number, pixelsPerCell: number) {
     this.particles.update(seconds, pixelsPerCell)
+    for (const beam of this.beams) {
+      beam.time -= seconds
+      ;(beam.line.material as THREE.MeshBasicMaterial).opacity = Math.max(0, beam.time / BEAM_SECONDS)
+    }
+    for (const beam of this.beams.filter(b => b.time <= 0)) {
+      this.scene.remove(beam.line)
+      ;(beam.line.material as THREE.Material).dispose()
+    }
+    this.beams.splice(0, this.beams.length, ...this.beams.filter(b => b.time > 0))
     for (const scorch of this.scorches) {
       scorch.time += seconds
       const left = SCORCH_SECONDS - scorch.time
@@ -202,6 +217,23 @@ export class Effects {
              colour: [0xd8d2c8, 0x9a958e], alpha: [0.5, 0], fadeIn: 0.05, drag: 1.5, gravity: -0.1, spin: random(-1, 1), sprite: 'smoke' })
   }
 
+  /**
+   * A laser shot (IsLaser=): a glowing beam from `from` to `to` in `colour` that fades
+   * within LaserDuration= (15 frames, a second at game speed 1), with a glow at both ends
+   */
+  beam(from: THREE.Vector3, to: THREE.Vector3, colour: number) {
+    const material = new THREE.MeshBasicMaterial({ color: colour, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+    const line = new THREE.Mesh(this.beamGeometry, material)
+    line.position.copy(from).lerp(to, 0.5)
+    line.scale.set(BEAM_WIDTH, BEAM_WIDTH, from.distanceTo(to))
+    line.lookAt(to)
+    this.scene.add(line)
+    this.beams.push({ line, time: BEAM_SECONDS })
+    for (const at of [from, to]) {
+      this.particles.emit({ position: at, life: 0.25, size: [0.2, 0.05], colour: [0xffffff, colour], alpha: [1, 0], additive: true })
+    }
+  }
+
   /** A glowing shell's trail (call every frame) */
   tracer(at: THREE.Vector3) {
     this.particles.emit({ position: at, life: 0.12, size: [0.06, 0.02], colour: [0xffe0a0, 0xff7020], alpha: [0.8, 0], additive: true })
@@ -291,6 +323,7 @@ export class Effects {
   }
 
   dispose() {
+    this.beamGeometry.dispose()
     this.particles.dispose()
     for (const scorch of this.scorches) {
       this.scene.remove(scorch.mesh)

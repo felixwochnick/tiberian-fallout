@@ -1,5 +1,6 @@
 import type { InjectionKey } from 'vue'
 import type { BuildInfo, BuildRules } from '~/lib/game/cameos'
+import type { Side } from '~/lib/game/models'
 import { Production } from '~/lib/game/production'
 
 /**
@@ -8,6 +9,8 @@ import { Production } from '~/lib/game/production'
  */
 export interface Skirmish {
   credits: { value: number }
+  /** The human player's side: what the sidebar offers */
+  side: Side
   rules?: BuildRules
   /** Buildings on the map (RULES.INI ids) */
   buildings: string[]
@@ -77,10 +80,11 @@ const KEY: InjectionKey<Skirmish> = Symbol('skirmish')
  */
 export const SPEED_FACTORS = [10, 12, 15, 20, 30, 45, 60].map(fps => fps / 15)
 
-export function createSkirmish(startCredits: number) {
+export function createSkirmish(startCredits: number, side: Side = 'gdi') {
   const sounds = useUiSounds()
   const state: Skirmish = {
     credits: { value: startCredits },
+    side,
     rules: undefined,
     buildings: [],
     offline: [],
