@@ -1,11 +1,12 @@
 """
 Tiberian Fallout – GDI Tiberium refinery (PROC), after Tiberian Sun.
 
-A wide round plant (foundation 4 × 3 cells): a tall, sloped skirt in a crown of
-house-colour ribs, with a dark deck on top and a hopper in its middle. The processing
-tower with its gas burnoff stands at the back, two smaller stacks on the deck, a
-spherical storage tank at the back right. The plant stands on a light concrete pad
-whose front edge runs on slanting past it. Towards the bottom right of the screen the
+A wide round plant (foundation 4 × 3 cells): a broad, flat skirt of dark metal plates
+in a crown of house-colour ribs, with a large dark deck on top and a hopper in its
+middle. The processing tower with its gas burnoff stands at the back, two smaller
+stacks on the deck, a spherical storage tank at the back right. The plant stands on a
+light concrete pad that reaches out to the lower right (towards +X) under the dock,
+its front edge running on slanting past the plant. Towards the bottom right of the screen the
 skirt is open: a gate cut square into it, framed in the house colour,
 all black inside, that the harvester dumps its Tiberium through. In front of it the
 bay in hazard stripes, where the harvester parks.
@@ -13,7 +14,7 @@ bay in hazard stripes, where the harvester parks.
 The bay is the empty node Dock (on the pad, its -Y axis pointing away from the
 plant: the way the harvester faces when it has backed up to the opening).
 
-Materials as for the barracks (see GAPILE.py): Camo_* is the baked desert camouflage,
+Materials as for the barracks (see GAPILE.py): Camo_* is the baked desert camouflage (the tower's base),
 Remap the house colour, Lamp* emissive, Glow* additive (lights, flames, Tiberium).
 
 Animations (glTF clips, merged from the NLA tracks of the same name)
@@ -53,18 +54,18 @@ PAD = 0.03                              # top of the concrete pad
 FOOTING = PAD + 0.012                   # top of the dark footing ring under the plant
 DISH = Vector((-0.55, 0.0, 0))          # centre of the round plant, in the middle row of cells
 # the skirt from its foot up to the deck: (radius, height)
-SKIRT = ((1.3, 0.0), (1.3, 0.12), (0.68, 0.72), (0.66, 0.74))
-DECK = 0.74                             # top of the skirt, where the deck lies
-DECK_RADIUS = 0.6
+SKIRT = ((1.42, 0.0), (1.42, 0.07), (0.92, 0.5), (0.9, 0.52))
+DECK = 0.52                             # top of the skirt, where the deck lies
+DECK_RADIUS = 0.84
 RIBS = 18
 DOCK_DIR = Vector((1.0, 0, 0))                      # from the plant to the dock, square to the cells
 DOCK_ANGLE = math.atan2(DOCK_DIR.y, DOCK_DIR.x)
 BAY = (0.95, 0.85)                                  # length (along DOCK_DIR) and width
-GATE = (0.36, 0.56)                                 # the opening in the skirt: half width, height
+GATE = (0.36, 0.38)                                 # the opening in the skirt: half width, height
 PIT = 0.68                                          # its back wall, distance from DISH
 DOCK = DISH + DOCK_DIR * (SKIRT[0][0] + BAY[0] / 2 + 0.02)   # middle of the bay, right in front of the gate
 TOWER = DISH + Vector((-0.6, 0.62, 0.35))           # processing tower, at the back (its foot inside the skirt)
-TANK = Vector((0.55, 0.78, 0))                      # storage tank, back right
+TANK = Vector((0.85, 1.0, 0))                       # storage tank, back right
 STACKS = ((DISH + Vector((0.12, -0.18, 0)), 0.5), (DISH + Vector((0.28, 0.12, 0)), 0.36))
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
@@ -74,6 +75,8 @@ def materials():
     m = kit.materials()
     m.update({
         'deck': material('Deck', srgb('#262c38'), 0.6, 0.4),
+        'skirt': material('SkirtMetal', srgb('#4b4f55'), 0.55, 0.65),
+        'skirt_dark': material('SkirtMetalDark', srgb('#2f3236'), 0.6, 0.6),
         'copper': material('Copper', srgb('#8a5a3c'), 0.45, 0.6),
         'hazard': material('Hazard', srgb('#e2a21c'), 0.6),
         'flame': material('GlowFlame', (0, 0, 0), 1.0, emission=srgb('#ff8a1e'), strength=5, alpha=0.7),
@@ -125,7 +128,7 @@ def pad(m):
     """Light concrete pad under the plant and the dock, its front edge running on
     slanting past the plant, the corners chamfered, with the bay in hazard stripes; a
     dark footing ring under the plant."""
-    outline = [(-1.4, -1.15), (-1.05, -1.47), (1.6, -1.47), (1.97, -1.1), (1.97, 0.55), (1.5, 1.02), (0.3, 1.02)]
+    outline = [(-1.55, -1.2), (-1.28, -1.47), (1.62, -1.47), (1.97, -1.12), (1.97, 1.12), (1.62, 1.47), (0.3, 1.47)]
 
     def build(bm):
         low = [bm.verts.new((x, y, 0)) for x, y in outline]
@@ -141,6 +144,13 @@ def pad(m):
         # on top of the pad, not level with it (the surfaces would flicker into each other)
         cylinder('Footing', m['concrete_dark'], SKIRT[0][0] + 0.06, FOOTING, DISH + Vector((0, 0, FOOTING / 2)), segments=48, bevel=0.005),
     ]
+    # joints and cracks in the concrete
+    for x in (0.5, 1.4):
+        parts.append(box(f'PadJoint{x}', m['concrete_dark'], (0.01, 2.6, 0.003), (x, 0, PAD + 0.0015), bevel=0))
+    for k, a in enumerate((-60, -25, 20, 55, 100)):
+        d = Vector((math.cos(math.radians(a)), math.sin(math.radians(a)), 0))
+        start = Vector((DOCK.x, DOCK.y, PAD + 0.002)) + d * 0.62
+        parts.append(beam(f'Crack{k}', m['concrete_dark'], start, start + d * (0.25 + 0.07 * (k % 3)), 0.008, 0.003))
     # the bay: a dark plate with bars across it, like a ramp's warning stripes
     length, width = BAY
     across = Vector((-DOCK_DIR.y, DOCK_DIR.x, 0))
@@ -167,7 +177,7 @@ def gate_cut(obj, cutter):
 def skirt(m, root):
     """The sloped skirt (camouflage) with the gate cut into it, its deck and the hopper."""
     cutter = box('GateCutter', m['dark'], (2, 2 * GATE[0], GATE[1] + 0.2), flat(DOCK_DIR, PIT + 1, (GATE[1] - 0.2) / 2), bevel=0)
-    shell = gate_cut(camo(lathe('Skirt', m['sand'], SKIRT, DISH, 48), root), cutter)
+    shell = gate_cut(lathe('Skirt', m['skirt'], SKIRT, DISH, 48), cutter)
     band = gate_cut(cylinder('SkirtBand', m['steel_light'], SKIRT[0][0] + 0.01, 0.03, DISH + Vector((0, 0, 0.05)), segments=48, bevel=0), cutter)
     bpy.data.objects.remove(cutter, do_unlink=True)
     parts = [band,
@@ -181,6 +191,14 @@ def skirt(m, root):
         a = math.pi / 8 + k * math.pi / 4
         d = Vector((math.cos(a), math.sin(a), 0))
         parts.append(beam(f'DeckSeam{k}', m['steel'], flat(d, 0.27, DECK + 0.032), flat(d, DECK_RADIUS - 0.03, DECK + 0.032), 0.012, 0.006))
+    # seams between the skirt's metal plates (between the ribs) and a ring of rivets
+    for k in range(RIBS):
+        ang = 2 * math.pi * k / RIBS
+        if abs(math.remainder(ang - DOCK_ANGLE, 2 * math.pi)) < 0.4:
+            continue
+        d = Vector((math.cos(ang), math.sin(ang), 0))
+        lo, hi = SKIRT[1][0] + 0.004, SKIRT[2][0] + 0.004
+        parts.append(beam(f'SkirtSeam{k}', m['skirt_dark'], flat(d, lo, SKIRT[1][1] + 0.004), flat(d, hi, SKIRT[2][1] + 0.002), 0.014, 0.006))
     return shell, kit.merge('Deck', parts, DISH)
 
 
@@ -403,7 +421,7 @@ def build():
     for k, (at, colour, holder) in enumerate(tops):
         housing, light = kit.beacon(f'Beacon{k}', m, at, colour)
         housing = kit.parent(kit.merge(f'Beacon{k}', [housing], at), holder)
-        kit.parent(light, housing)
+        kit.parent(light, holder)   # not under the popping housing (that spoils its Idle keys)
         kit.pop(housing, 86 + k, 5)
         pattern = kit.flashes((0, 12), (30, 12)) if colour == 'red' else kit.flashes((15 + 3 * k, 8), (45 + 3 * k, 8))
         lights.append((light, pattern))

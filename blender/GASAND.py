@@ -125,6 +125,22 @@ def post(name, rng, mats):
     return kit.merge(name, bags)
 
 
+def materials():
+    """The three sand shades of the bags."""
+    return [material(f'Sandbag{k}', srgb(c), 0.95) for k, c in enumerate(('#b8a477', '#a8936a', '#c4b287'))]
+
+
+def stub(name, direction, start, end=0.5, seed=7):
+    """A run of sandbags from `start` (distance from the middle of the cell) to `end`
+    (the cell's edge) along `direction` (unit vector along x or y), like an arm of the
+    sandbag wall: the component tower and the gates (GACTWR, GAGATE_A, GAGATE_B) show
+    these towards neighbouring sandbags. Origin in the middle on the ground."""
+    d = Vector(direction)
+    along_x = abs(d.x) > 0.5
+    sign = d.x if along_x else d.y
+    return piece(name, random.Random(seed), materials(), start, end, along_x, sign)
+
+
 def build():
     kit.COLLECTION = 'GDISandbags'
     for obj in list(kit.collection().objects):
@@ -135,7 +151,7 @@ def build():
     scene.frame_end = 20
     scene.frame_current = 0
 
-    mats = [material(f'Sandbag{k}', srgb(c), 0.95) for k, c in enumerate(('#b8a477', '#a8936a', '#c4b287'))]
+    mats = materials()
     rng = random.Random(4)
     root = kit.empty('GDISandbags')
     parts = [post('Post', rng, mats)]

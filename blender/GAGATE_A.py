@@ -7,10 +7,16 @@ whose two sloped faces are grilles of light vertical bars in a heavy frame in th
 colour. The gate retracts into a slot in the sill to let units through. Two small
 lamps on the sill at the gate's ends blink.
 
-Like the wall (GAWALL.py) the gate shows wall stubs at its ends towards neighbouring
-walls and component towers (Battlefield.connectWalls): ArmXP and ArmXN (glTF axes),
-each a block of the concrete wall from the gate's end to the joint at the edge of the
-foundation.
+At its ends the gate shows stubs towards neighbouring walls and component towers
+(Battlefield.connectWalls), one pair for each kind of wall (glTF axes):
+
+    ArmXP, ArmXN     the concrete wall (GAWALL.arm: block and half a joint)
+    SandXP, SandXN   sandbags (GASAND.stub)
+
+each from the gate's end to the edge of the foundation; the game shows the matching one
+on each side. GAGATE_B (GAGATE_B.py) is this gate turned by 90° (foundation 1 × 3, along
+glTF z): built by the same code with the root turned, its stubs are ArmZP/ArmZN and
+SandZP/SandZN.
 
 Materials as for the barracks (see GAPILE.py): Camo_* is the baked desert camouflage,
 Remap the house colour, Lamp* emissive, Glow* additive halos.
@@ -19,7 +25,7 @@ Nodes: GateRise (scaled by Build: the gate comes up) holds Gate (scaled by Open)
 holds the panel – so no channel belongs to two clips.
 
 Animations (glTF clips, merged from the NLA tracks of the same name)
-    Build    one-shot, 1.6 s: the footing and sill spread out, the wall stubs grow,
+    Build    one-shot, 1.6 s: the footing and sill spread out, the stubs grow,
              the gate comes up out of the sill, the lamps' housings pop up
     Idle     loop, 2 s: the lamps blink in turn
     Open     one-shot, 1 s: the gate sinks into the sill (played backwards it closes)
@@ -42,6 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402 – the helpers of the barracks script
 import GACTWR as tower  # noqa: E402 – the preview with another camera
+import GASAND as sand  # noqa: E402 – the sandbag stubs
 import GAWALL as wall  # noqa: E402 – the wall stubs
 
 kit.COLLECTION = 'GDIGate'  # after the imports, which set their own
@@ -57,7 +64,7 @@ GATE_HALF = 1.34        # half the gate's length
 GATE_TOP = 0.74
 GATE_BASE = 0.1         # half the gate's thickness at the sill …
 GATE_RIDGE = 0.03       # … and at its top
-LAMP_X = 1.43           # the lamps on the sill, beyond the gate's ends
+LAMP_X = 1.22           # the lamps on the sill in front of the gate, near its ends (clear of the stubs)
 
 box, cylinder, beam, srgb = kit.box, kit.cylinder, kit.beam, kit.srgb
 
@@ -108,7 +115,9 @@ def gate(m):
     return kit.merge('GatePanel', parts, (0, 0, SILL))
 
 
-def build():
+def build(turned=False):
+    """Builds the gate along x, or (turned) along y as GAGATE_B: then the root is turned
+    by 90° and the stubs are named for the glTF z axis."""
     for obj in list(kit.collection().objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     scene = bpy.context.scene
@@ -129,10 +138,15 @@ def build():
         kit.parent(obj, base)
     keys(base, 'scale', {0: Vector((0.05, 1, 1)), 2: Vector((0.05, 1, 1)), 14: Vector((1.02, 1, 1)), 17: Vector((1, 1, 1))})
 
-    # ---- the wall stubs at the ends (towards neighbouring walls and towers) grow up
-    for name, side in (('ArmXP', 1), ('ArmXN', -1)):
-        stub = kit.parent(wall.arm(name, wm, (side, 0, 0), GATE_HALF + 0.005, 1.503), root)
-        keys(stub, 'scale', {0: Vector((1, 1, kit.HIDDEN)), 10: Vector((1, 1, kit.HIDDEN)), 24: Vector((1, 1, 1.05)), 28: Vector((1, 1, 1))})
+    # ---- the stubs at the ends (towards neighbouring walls and towers) grow up; turned
+    # by 90° (+x to Blender +y = glTF -z) the +x end becomes the glTF -z one
+    for side, end in ((1, 'XP'), (-1, 'XN')):
+        if turned:
+            end = 'ZN' if side > 0 else 'ZP'
+        for obj in (wall.arm(f'Arm{end}', wm, (side, 0, 0), GATE_HALF + 0.005, 1.503),
+                    sand.stub(f'Sand{end}', (side, 0, 0), GATE_HALF + 0.005, 1.5, seed=21 + side)):
+            stub = kit.parent(obj, root)
+            keys(stub, 'scale', {0: Vector((1, 1, kit.HIDDEN)), 10: Vector((1, 1, kit.HIDDEN)), 24: Vector((1, 1, 1.05)), 28: Vector((1, 1, 1))})
 
     # ---- two lamps on the sill beyond the gate's ends; the lights hang from the root
     # (a parent scaled to nothing in Build spoils their keys in Idle)
@@ -161,18 +175,20 @@ def build():
     # Open: the gate sinks into the sill (a little at first, then quickly, slowing down)
     keys(panel, 'scale', {0: Vector((1, 1, 1)), 4: Vector((1, 1, 0.97)), OPEN_END: Vector((1, 1, 0.02))})
     kit.to_track(panel, 'Open')
+    if turned:
+        root.rotation_euler = (0, 0, math.pi / 2)
     return len(kit.collection().objects)
 
 
-def main():
+def main(out=OUT, blend=BLEND, turned=False):
     args = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    print('objects', build(), flush=True)
+    print('objects', build(turned), flush=True)
     kit.bake_camo(1024)
     bpy.context.scene.frame_set(BUILD_END)
-    print('export', kit.export_glb(OUT), flush=True)
-    bpy.ops.wm.save_as_mainfile(filepath=BLEND, compress=True)
+    print('export', kit.export_glb(out), flush=True)
+    bpy.ops.wm.save_as_mainfile(filepath=blend, compress=True)
     if '--preview' in args:
         for obj in kit.collection().objects:  # show the gate closed
             for track in (obj.animation_data.nla_tracks if obj.animation_data else []):

@@ -10,16 +10,19 @@ foundation (4 × 3 cells); on its left part the works:
   fans, vents and a row of five chaser lights on its roof;
 - on its front (-Y) a steep ramp in the house colour between two steel rails, beside
   it a small generator block;
-- on its right (+X) the vehicle bay: a grey vault along y between two camouflaged
-  arches. Its right half is the door, a curved shell that rolls up over the top of the
-  vault; then the bay opens towards +X, where the pad carries a grating in the house
-  colour with lane lights – the vehicles roll out to the lower right as in the original.
-  Behind the vault a third armour block.
+- on its right (+X) the vehicle bay: a tall grey vault along y (upright walls under a
+  round roof, as high as the hall with its armour) between two camouflaged arches. As
+  in the original (GAWEAP_D) the vault is the gate: its right half is the door, hinged
+  on the ridge, that swings up and out like a hatch, opening the whole right side
+  (wide and high enough for a harvester, an MCV or a mammoth mech); the pad in front
+  of it carries a grating in the house colour with lane lights – the vehicles roll out
+  of the vault to the lower right. Behind the vault a third armour block.
 
 Nodes
-    Exit     empty on the floor of the bay, where a finished vehicle stands; its -Y
-             axis (glTF +Z) points out of the door, i.e. along +X (it is turned 90°)
-    Door     the rolling door, turns about the vault's axis (its y axis)
+    Exit     empty on the floor inside the vault, where a finished vehicle stands; its
+             -Y axis (glTF +Z) points out of the door, i.e. along +X (it is turned 90°)
+    Door     the door (the vault's right half), turns about the hinge on the ridge
+             (its y axis)
 
 Materials as for the barracks (see GAPILE.py): Camo_* is the baked camouflage in a
 pale shade of the house colour, Remap the house colour, Lamp* emissive, Glow* additive.
@@ -32,8 +35,8 @@ scales to almost nothing)
              ramp, the armour, the generator and the lamps appear
     Idle     loop, 2 s: the fans turn, the chaser lights run along the roof, the
              beacons blink
-    Open     one-shot, 1.2 s: the door rolls up over the vault in about nine steps' worth
-             of travel and stays open (the game plays it backwards to close it)
+    Open     one-shot, 1.2 s: the door swings up about its hinge on the ridge (112°) and
+             stays open (the game plays it backwards to close it)
 
 Run headless (builds, bakes, saves the .blend, exports the GLB):
 
@@ -64,20 +67,19 @@ BUILD_END = 84
 OPEN_END = 36
 
 PAD = 0.03
-HALL = (-1.95, -0.95, -0.34, 1.45)  # the assembly hall: x0, y0, x1, y1
-HALL_TOP = 0.6
+HALL = (-1.95, -0.95, -0.53, 1.45)  # the assembly hall: x0, y0, x1, y1
+HALL_TOP = 0.95
 WALL_SLOPE = 0.06                   # how far the walls lean in up to the roof
-AX, AZ, R = 0.25, 0.12, 0.5         # the vault: its axis (x, z) and radius
+AX, AZ, R = 0.22, 0.58, 0.66         # the vault: its axis (x, z) over upright walls, and radius
 VY0, VY1 = -1.12, 0.92              # the vault's ends (inside the arches)
 ARCH = 0.15                         # thickness of the arches along y
 RO, RI = R + 0.09, R - 0.05         # the arches' outer and inner radius
 DOOR_IN, DOOR_OUT = R + 0.008, R + 0.033
-DOOR_TOP = math.radians(100)        # the closed door runs from the ground up to here
-DOOR_OPEN = math.radians(-85)       # its roll about the vault's axis (y) when open
-RAMP_X = (-1.42, -0.64)             # the ramp's sides
+DOOR_OPEN = math.radians(-112)      # the door's swing about its hinge on the ridge (y) when open
+RAMP_X = (-1.5, -0.8)               # the ramp's sides
 RAMP_FOOT = -1.45                   # y of the ramp's foot
 RAMP_TOP = (HALL[1] + 0.04, HALL_TOP + 0.005)   # (y, z) where it meets the roof edge
-GRATE = (0.8, 1.68, -1.05, 0.85)    # the grating in front of the door: x0, x1, y0, y1
+GRATE = (0.88, 1.78, -1.05, 0.85)    # the grating in front of the door: x0, x1, y0, y1
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -92,11 +94,6 @@ def materials():
         'grate': housecamo.shade('RemapGrate', 0.45, 1.0, 0.7),
     })
     return m
-
-
-def ground_angle(r):
-    """Angle (from +x towards +z, about the vault's axis) where radius r meets the pad."""
-    return math.asin((PAD - AZ) / r)
 
 
 def band(name, mat, r0, r1, a0, a1, y0, y1, steps=24, bevel=0.0):
@@ -155,11 +152,11 @@ def hall_roof(m):
         box('LightBarStripe', m['remap'], (0.052, 1.75, 0.008), (x1 - s - 0.07, 0.16, z + 0.026), bevel=0),
     ]
     for k in range(4):  # roof seams
-        x = x0 + 0.45 + k * 0.33
+        x = x0 + 0.4 + k * 0.28
         parts.append(box(f'RoofSeam{k}', m['concrete_dark'], (0.012, y1 - y0 - 0.6, 0.004), (x, 0.0, z + 0.002), bevel=0))
     for k, y in enumerate((-0.55, -0.15, 0.25, 0.65)):  # round vents with dark caps (the original's dark knobs)
-        parts += [cylinder(f'VentRim{k}', m['steel'], 0.06, 0.04, (-0.68, y, z + 0.02), segments=16, bevel=0.004),
-                  cylinder(f'VentCap{k}', m['dark'], 0.045, 0.03, (-0.68, y, z + 0.055), segments=16, bevel=0.006)]
+        parts += [cylinder(f'VentRim{k}', m['steel'], 0.06, 0.04, (-0.8, y, z + 0.02), segments=16, bevel=0.004),
+                  cylinder(f'VentCap{k}', m['dark'], 0.045, 0.03, (-0.8, y, z + 0.055), segments=16, bevel=0.006)]
     # the pipe run across the deck
     for k, y in enumerate((0.84, 0.92)):
         parts.append(cylinder(f'RoofPipe{k}', m['steel_light'], 0.022, 0.82, (-0.97, y, z + 0.045), rotation=(0, math.pi / 2, 0), segments=12))
@@ -178,9 +175,9 @@ def hall_walls(m):
     for k, x in enumerate((-1.84, -1.7, -1.56)):
         parts.append(beam(f'WallRib{k}', m['steel'], Vector((x, on_front(PAD) - 0.012, PAD + 0.01)), Vector((x, on_front(HALL_TOP - 0.05) - 0.012, HALL_TOP - 0.05)), 0.03, 0.02))
     for k, x in enumerate((-1.77, -1.63)):
-        parts.append(box(f'Window{k}', m['window'], (0.08, 0.012, 0.05), (x, on_front(0.42) - 0.008, 0.42), bevel=0.002))
-    parts.append(box('SideDoor', m['dark'], (0.1, 0.012, 0.18), (-1.7, on_front(0.12) - 0.008, PAD + 0.09), bevel=0.003))
-    parts.append(box('WallBand', m['remap'], (0.4, 0.012, 0.04), (-1.7, on_front(0.52) - 0.008, 0.52), bevel=0.003))
+        parts.append(box(f'Window{k}', m['window'], (0.08, 0.012, 0.06), (x, on_front(0.68) - 0.008, 0.68), bevel=0.002))
+    parts.append(box('SideDoor', m['dark'], (0.1, 0.012, 0.26), (-1.7, on_front(0.16) - 0.008, PAD + 0.13), bevel=0.003))
+    parts.append(box('WallBand', m['remap'], (0.4, 0.012, 0.05), (-1.7, on_front(0.82) - 0.008, 0.82), bevel=0.003))
     # the left end: grey pipes bent out of the wall and back, near the front
     for k, (y, h) in enumerate(((-0.62, 0.2), (-0.3, 0.3))):
         xo = x0 - 0.06
@@ -264,7 +261,7 @@ def ramp_rails(m):
 
 def generator(m):
     """The small red block between the ramp and the vault."""
-    x0, x1, y0, y1 = -0.58, -0.4, -1.22, HALL[1] + 0.02
+    x0, x1, y0, y1 = -0.76, -0.56, -1.22, HALL[1] + 0.02
     parts = [box('Generator', m['remap'], (x1 - x0, y1 - y0, 0.17), ((x0 + x1) / 2, (y0 + y1) / 2, PAD + 0.085), bevel=0.02)]
     parts[0].modifiers['Bevel'].segments = 3
     for k in range(3):
@@ -275,44 +272,52 @@ def generator(m):
 
 # --------------------------------------------------------------------------- the vault
 
+def barrel_path(r, side, a_top=math.pi / 2, z_lo=PAD, steps=14):
+    """The vault's outline at radius r on one side (+1: +x, -1: -x), from z_lo up the
+    upright wall and over the curve to the angle a_top (pi/2 is the ridge)."""
+    a_side = 0.0 if side > 0 else math.pi
+    pts = [(AX + side * r, z_lo)] if z_lo < AZ - 1e-4 else []
+    return pts + gb.arc((AX, AZ), r, a_side, a_top, steps)
+
+
+def barrel(name, mat, r0, r1, side, y0, y1, a_top=math.pi / 2, z_lo=PAD, steps=14, bevel=0.0):
+    """A shell of the vault (radii r0 … r1) on one side, from y0 to y1."""
+    profile = barrel_path(r1, side, a_top, z_lo, steps) + barrel_path(r0, side, a_top, z_lo, steps)[::-1]
+    if side < 0:
+        profile = profile[::-1]
+    return gb.prism(name, mat, profile, y0, y1, 'Y', bevel)
+
+
 def vault_shell(m):
-    """The fixed left half of the vault: the shell from the top down to its back wall,
-    the dark inside, the floor of the bay with guide lines and lamps under the roof."""
+    """The fixed left half of the vault: the shell from the ridge down to the pad, the
+    end walls, the floor of the bay with guide lines and lamps under the roof."""
     parts = [
-        band('VaultBack', m['hangar'], R - 0.025, R, math.radians(92), math.pi, VY0, VY1, 20, 0.004),
-        box('VaultWall', m['hangar'], (0.03, VY1 - VY0, AZ - PAD + 0.01), (AX - R + 0.0125, (VY0 + VY1) / 2, (AZ + PAD) / 2), bevel=0.004),
-        box('BayFloor', m['grating'], (2 * R - 0.06, VY1 - VY0, 0.008), (AX + 0.01, (VY0 + VY1) / 2, PAD + 0.004), bevel=0),
-        box('BayBack', m['hangar_dark'], (2 * R - 0.08, 0.01, 0.35), (AX + 0.02, VY1 - 0.005, PAD + 0.175), bevel=0),
+        barrel('VaultBack', m['hangar'], R - 0.025, R, -1, VY0, VY1, math.radians(88), bevel=0.004),
+        box('BayFloor', m['grating'], (2 * R - 0.06, VY1 - VY0, 0.008), (AX, (VY0 + VY1) / 2, PAD + 0.004), bevel=0),
     ]
-    # the end walls inside the arches, a small door in the front one
+    # the end walls inside the arches (the whole cross-section), a door in the front one
     r = RI + 0.012
-    disc = gb.arc((AX, AZ), r, ground_angle(r), math.pi, 24) + [(AX - r, PAD)]
+    disc = barrel_path(r, 1, steps=16) + barrel_path(r, -1, steps=16)[::-1][1:]
     parts.append(gb.prism('EndWallFront', m['hangar'], disc, VY0 - ARCH + 0.03, VY0 - 0.02, 'Y', 0.0))
     parts.append(gb.prism('EndWallBack', m['hangar'], disc, VY1 + 0.02, VY1 + ARCH - 0.03, 'Y', 0.0))
-    parts.append(box('EndDoor', m['dark'], (0.16, 0.012, 0.24), (AX - 0.12, VY0 - ARCH + 0.024, PAD + 0.12), bevel=0.003))
-    parts.append(box('EndDoorFrame', m['remap'], (0.2, 0.01, 0.025), (AX - 0.12, VY0 - ARCH + 0.022, PAD + 0.255), bevel=0))
-    for k in range(3):
-        parts.append(box(f'EndDoorSlat{k}', m['steel'], (0.14, 0.006, 0.01), (AX - 0.12, VY0 - ARCH + 0.016, PAD + 0.04 + k * 0.07), bevel=0))
+    parts.append(box('EndDoor', m['dark'], (0.2, 0.012, 0.36), (AX - 0.25, VY0 - ARCH + 0.024, PAD + 0.18), bevel=0.003))
+    parts.append(box('EndDoorFrame', m['remap'], (0.24, 0.01, 0.03), (AX - 0.25, VY0 - ARCH + 0.022, PAD + 0.375), bevel=0))
+    for k in range(4):
+        parts.append(box(f'EndDoorSlat{k}', m['steel'], (0.17, 0.006, 0.012), (AX - 0.25, VY0 - ARCH + 0.016, PAD + 0.05 + k * 0.08), bevel=0))
     for k, y in enumerate((-0.5, 0.3)):  # guide lines across the floor towards the door
-        parts.append(box(f'BayLine{k}', m['hazard'], (2 * R - 0.1, 0.025, 0.004), (AX + 0.02, y, PAD + 0.01), bevel=0))
+        parts.append(box(f'BayLine{k}', m['hazard'], (2 * R - 0.1, 0.025, 0.004), (AX, y, PAD + 0.01), bevel=0))
     for k in range(3):  # ribs on the fixed half
         y = VY0 + 0.25 + k * (VY1 - VY0 - 0.5) / 2
-        parts.append(band(f'VaultBackRib{k}', m['steel'], R - 0.002, R + 0.006, math.radians(93), math.pi, y - 0.015, y + 0.015, 16))
+        parts.append(barrel(f'VaultBackRib{k}', m['steel'], R - 0.002, R + 0.008, -1, y - 0.018, y + 0.018, math.radians(89), PAD + 0.01))
     for k, y in enumerate((-0.7, -0.1, 0.5)):   # lamps under the roof of the bay
-        parts.append(box(f'BayLamp{k}', m['lamp_white'], (0.05, 0.3, 0.01), (AX - 0.12, y, AZ + R * math.sin(math.radians(105)) - 0.04), bevel=0,
-                         rotation=(0, math.radians(15), 0)))
+        parts.append(box(f'BayLamp{k}', m['lamp_white'], (0.05, 0.3, 0.01), (AX - 0.2, y, AZ + R * math.sin(math.radians(108)) - 0.06), bevel=0,
+                         rotation=(0, math.radians(18), 0)))
     return kit.merge('VaultShell', parts, (AX, 0, AZ))
 
 
 def arches(m, root):
     """The two camouflaged arches closing the vault's ends (they stand on the pad)."""
-    def profile():
-        a_out, a_in = ground_angle(RO), ground_angle(RI)
-        outer = gb.arc((AX, AZ), RO, a_out, math.pi, 24)
-        inner = gb.arc((AX, AZ), RI, math.pi, a_in, 24)
-        return outer + [(AX - RO, PAD), (AX - RI, PAD)] + inner
-
-    p = profile()
+    p = barrel_path(RO, 1, steps=20) + barrel_path(RO, -1, steps=20)[::-1][1:] + barrel_path(RI, -1, steps=20)[:-1] + barrel_path(RI, 1, steps=20)[::-1]
     parts = [gb.prism('ArchFront', m['sand'], p, VY0 - ARCH, VY0, 'Y', 0.008),
              gb.prism('ArchBack', m['sand'], p, VY1, VY1 + ARCH, 'Y', 0.008)]
     return gb.camo(kit.merge('Arches', parts), root)
@@ -322,34 +327,36 @@ def arch_details(m):
     """Steel caps on the arches' outer faces, the house-colour band, a hazard step."""
     parts = []
     for name, y in (('Front', VY0 - ARCH - 0.004), ('Back', VY1 + ARCH + 0.004)):
-        parts.append(band(f'ArchCap{name}', m['steel'], RO - 0.035, RO - 0.005, math.radians(20), math.radians(160), y - 0.004, y + 0.004, 16))
-        parts.append(band(f'ArchBand{name}', m['remap'], RO - 0.003, RO + 0.008, math.radians(60), math.radians(120), y - 0.06 if name == 'Front' else y - 0.09,
+        parts.append(band(f'ArchCap{name}', m['steel'], RO - 0.035, RO - 0.005, math.radians(10), math.radians(170), y - 0.004, y + 0.004, 16))
+        parts.append(band(f'ArchBand{name}', m['remap'], RO - 0.003, RO + 0.01, math.radians(55), math.radians(125), y - 0.06 if name == 'Front' else y - 0.09,
                           y + 0.09 if name == 'Front' else y + 0.06, 10))
-    parts.append(box('ArchStep', m['hazard'], (0.3, 0.06, 0.01), (AX - 0.05, VY0 - ARCH - 0.04, PAD + 0.005), bevel=0))
+        for s in (-1, 1):   # steel shoes at the arches' feet
+            parts.append(box(f'ArchShoe{name}{s}', m['steel'], (RO - RI + 0.04, ARCH + 0.04, 0.08), (AX + s * (RO + RI) / 2, y - 0.004 * (1 if name == 'Front' else -1) + (ARCH / 2 if name == 'Front' else -ARCH / 2), PAD + 0.04), bevel=0.006))
+    parts.append(box('ArchStep', m['hazard'], (0.34, 0.06, 0.01), (AX - 0.25, VY0 - ARCH - 0.04, PAD + 0.005), bevel=0))
     return kit.merge('ArchDetails', parts)
 
 
 def door(m):
-    """The rolling door: the right half of the vault, a shell just outside the fixed
-    one, from the pad up over the top; its origin on the vault's axis."""
-    a0 = ground_angle(DOOR_IN) + 0.01
+    """The door: the right half of the vault, a shell just outside the fixed one from
+    the pad up to the ridge, hinged there; its origin on the hinge."""
     y0, y1 = VY0 + 0.012, VY1 - 0.012
-    parts = [band('DoorShell', m['hangar'], DOOR_IN, DOOR_OUT, a0, DOOR_TOP, y0, y1, 26, 0.004)]
+    parts = [barrel('DoorShell', m['hangar'], DOOR_IN, DOOR_OUT, 1, y0, y1, z_lo=PAD + 0.004, steps=18, bevel=0.004)]
     for k in range(6):   # ribs round the door
         y = y0 + 0.12 + k * (y1 - y0 - 0.24) / 5
-        parts.append(band(f'DoorRib{k}', m['steel'], DOOR_OUT - 0.002, DOOR_OUT + 0.01, a0 + 0.02, DOOR_TOP - 0.02, y - 0.014, y + 0.014, 22))
-    # a seam along the top, a hazard edge at the foot, two handles
-    parts.append(band('DoorSeam', m['steel_light'], DOOR_OUT - 0.002, DOOR_OUT + 0.006, math.radians(48), math.radians(52), y0 + 0.05, y1 - 0.05, 2))
-    parts.append(band('DoorFoot', m['hazard'], DOOR_OUT - 0.002, DOOR_OUT + 0.008, a0 + 0.005, a0 + 0.07, y0 + 0.04, y1 - 0.04, 2))
+        parts.append(barrel(f'DoorRib{k}', m['steel'], DOOR_OUT - 0.002, DOOR_OUT + 0.01, 1, y - 0.014, y + 0.014,
+                            math.radians(86), PAD + 0.02, 16))
+    # the hinge along the ridge, a seam, a hazard edge at the foot, two handles
+    parts.append(cylinder('DoorHinge', m['steel_light'], 0.03, y1 - y0 - 0.1, (AX, (y0 + y1) / 2, AZ + DOOR_OUT), rotation=(math.pi / 2, 0, 0), segments=12))
+    parts.append(band('DoorSeam', m['steel_light'], DOOR_OUT - 0.002, DOOR_OUT + 0.006, math.radians(43), math.radians(47), y0 + 0.05, y1 - 0.05, 2))
+    parts.append(box('DoorFoot', m['hazard'], (0.012, y1 - y0 - 0.08, 0.06), (AX + DOOR_OUT + 0.004, (y0 + y1) / 2, PAD + 0.04), bevel=0))
     for k, y in enumerate((-0.5, 0.3)):
-        parts.append(box(f'DoorHandle{k}', m['steel_light'], (0.02, 0.1, 0.02), (AX + DOOR_OUT * math.cos(a0 + 0.14) + 0.012, y, AZ + DOOR_OUT * math.sin(a0 + 0.14)), bevel=0.003))
-    return kit.merge('Door', parts, (AX, 0, AZ))
+        parts.append(box(f'DoorHandle{k}', m['steel_light'], (0.02, 0.1, 0.02), (AX + DOOR_OUT + 0.012, y, PAD + 0.2), bevel=0.003))
+    return kit.merge('Door', parts, (AX, 0, AZ + DOOR_OUT))
 
 
 def back_block(m):
     """Armour in the house colour behind the vault."""
-    return armour(m, 'ArmourBack', -0.28, 0.86, VY1 + ARCH + 0.04, 1.44, PAD, 0.5, grooves_along_x=True)
-
+    return armour(m, 'ArmourBack', -0.36, 0.86, VY1 + ARCH + 0.04, 1.44, PAD, 0.78, grooves_along_x=True)
 
 # --------------------------------------------------------------------------- model
 
@@ -372,14 +379,14 @@ def build():
     hall = kit.parent(kit.empty('HallGroup'), root)
     for obj in (hall_body(m, root), hall_roof(m), hall_walls(m)):
         kit.parent(obj, hall)
-    keys(hall, 'location', {0: Vector((0, 0, -0.75)), 6: Vector((0, 0, -0.75)), 30: Vector((0, 0, 0.012)), 34: Vector((0, 0, 0))})
+    keys(hall, 'location', {0: Vector((0, 0, -1.1)), 6: Vector((0, 0, -1.1)), 30: Vector((0, 0, 0.012)), 34: Vector((0, 0, 0))})
 
     # ---- the vault rises, its door closed
     vault = kit.parent(kit.empty('VaultGroup'), root)
     for obj in (vault_shell(m), arches(m, root), arch_details(m), door(m)):
         kit.parent(obj, vault)
     leaf = bpy.data.objects['Door']
-    keys(vault, 'location', {0: Vector((0, 0, -0.72)), 12: Vector((0, 0, -0.72)), 36: Vector((0, 0, 0.01)), 40: Vector((0, 0, 0))})
+    keys(vault, 'location', {0: Vector((0, 0, -1.3)), 12: Vector((0, 0, -1.3)), 36: Vector((0, 0, 0.01)), 40: Vector((0, 0, 0))})
 
     # ---- the ramp's rails swing down from upright, then the ramp and the generator appear
     rails = kit.parent(ramp_rails(m), root)
@@ -393,9 +400,9 @@ def build():
     # ---- the armour
     x0, y0, x1, y1 = HALL
     s = WALL_SLOPE
-    plates = [armour(m, 'ArmourL', x0 + s + 0.01, -1.4, y0 + 0.16, 0.2, HALL_TOP, 0.22, grooves_along_x=False),
-              armour(m, 'ArmourM', x0 + s + 0.01, -1.4, 0.26, y1 - s - 0.01, HALL_TOP, 0.22, grooves_along_x=False),
-              armour(m, 'ArmourTop', -1.34, x1 - s - 0.2, 1.06, y1 - s - 0.01, HALL_TOP, 0.17)]
+    plates = [armour(m, 'ArmourL', x0 + s + 0.01, -1.4, y0 + 0.16, 0.2, HALL_TOP, 0.3, grooves_along_x=False),
+              armour(m, 'ArmourM', x0 + s + 0.01, -1.4, 0.26, y1 - s - 0.01, HALL_TOP, 0.3, grooves_along_x=False),
+              armour(m, 'ArmourTop', -1.34, x1 - s - 0.2, 1.06, y1 - s - 0.01, HALL_TOP, 0.22)]
     for k, plate in enumerate(plates):
         kit.pop(kit.parent(plate, hall), 46 + 4 * k, 8)
     kit.pop(kit.parent(end_plate(m), hall), 44, 8)
@@ -423,7 +430,7 @@ def build():
     gb.clips(idle, lights)
 
     # ---- Open: the door rolls up over the vault (played backwards to close)
-    keys(leaf, 'rotation_euler', {0: Vector((0, 0, 0)), 5: Vector((0, DOOR_OPEN * 0.06, 0)), OPEN_END - 5: Vector((0, DOOR_OPEN * 1.015, 0)),
+    keys(leaf, 'rotation_euler', {0: Vector((0, 0, 0)), 5: Vector((0, DOOR_OPEN * 0.05, 0)), OPEN_END - 5: Vector((0, DOOR_OPEN * 1.015, 0)),
                                   OPEN_END: Vector((0, DOOR_OPEN, 0))})
     kit.to_track(leaf, 'Open')
     leaf.animation_data.nla_tracks['Open'].strips[0].extrapolation = 'NOTHING'
@@ -432,4 +439,4 @@ def build():
 
 
 if __name__ == '__main__' and bpy.app.background:
-    gb.run(build, OUT, BLEND, scale=5.0, target=(0, -0.05, 0.4))
+    gb.run(build, OUT, BLEND, scale=5.0, target=(0, -0.05, 0.6))

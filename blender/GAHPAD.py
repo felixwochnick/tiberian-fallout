@@ -1,11 +1,13 @@
 """
 Tiberian Fallout – GDI helipad (GAHPAD), after Tiberian Sun.
 
-An octagonal landing deck in the desert camouflage on a dark footing (foundation 2 × 2
-cells), on the deck a dark landing circle with a ring in the house colour and a cross of
-light lines set with landing lights. At the back corner a small control booth with a
-window band, a beacon and an antenna, and beside it fuel tanks in the house colour on
-a cradle, joined to the deck by a hose.
+A large landing deck in the desert camouflage with a steel edge on a dark footing
+(foundation 2 × 2 cells): it almost fills the foundation, its corners cut – deeply at
+the back (the control booth) and on the left (the fuel tanks). On it a dark landing
+circle (radius 0.66, room for a carryall, 1.5 cells long) with a ring in the house
+colour, yellow ticks and a cross of light lines set with landing lights. In the back
+corner a small control booth with a window band, a beacon and an antenna; along the
+cut left corner two fuel tanks in the house colour on a cradle, a pipe to the deck.
 
 The empty node Pad marks where an aircraft lands, in the middle of the circle on the
 deck; its -Y is the direction the aircraft faces when it stands on the pad.
@@ -37,7 +39,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402 – the helpers of the barracks script
 import GAPOWR as plant  # noqa: E402 – lathe()
-import GACTWR as tower  # noqa: E402 – octagon(), the preview with another camera
+import GACTWR as tower  # noqa: E402 – the preview with another camera
+import gdibuilding as gb  # noqa: E402 – slab(), chamfered()
 
 kit.COLLECTION = 'GDIHelipad'  # after the imports, which set their own
 PROJECT = os.path.dirname(HERE)
@@ -47,9 +50,13 @@ BLEND = os.path.join(HERE, 'GAHPAD.blend')
 BUILD_END = 60
 FOOTING = 0.025
 DECK = 0.15             # top of the deck: where an aircraft stands
-DECK_R = 0.7            # corner radius of the octagonal deck at the top
-CENTRE = Vector((0.24, 0.04, 0))    # the deck and its landing circle, towards the front right
-BOOTH = Vector((-0.6, 0.64, 0))
+# the deck's outline at the ground: a square with its corners cut, deeply at the back
+# (booth) and on the left (tanks), so it almost fills the foundation
+OUTLINE = gb.chamfered(-0.93, -0.93, 0.95, 0.93, (0.62, 0.36, 0.36, 0.72))
+CENTRE = Vector((0.07, -0.05, 0))   # the landing circle, towards the front right
+CIRCLE = 0.66           # radius of the landing circle (a carryall is 1.5 cells long)
+BOOTH = Vector((-0.76, 0.76, 0))
+TANKS = Vector((-0.8, -0.8, 0))
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -63,32 +70,36 @@ def materials():
 
 
 def deck(m, root):
-    """The camouflaged deck: an octagon with sloped sides (one material, baked)."""
-    obj = tower.octagon('Deck', m['sand'], ((DECK_R + 0.06, 0), (DECK_R + 0.06, 0.012), (DECK_R, DECK - FOOTING)), FOOTING, 0.006)
-    obj.location = CENTRE + Vector((0, 0, FOOTING))
-    obj = kit.merge('Deck', [obj])
-    obj.data.materials.clear()
-    obj.data.materials.append(kit.camo_material('Camo_Deck', root))
-    return obj
+    """The camouflaged deck with sloped sides (one material, baked) and a steel edge
+    round its top."""
+    obj = gb.slab('Deck', m['sand'], OUTLINE, DECK - FOOTING, inset=0.05, z0=FOOTING, bevel=0.006)
+    obj = gb.camo(kit.merge('Deck', [obj]), root)
+    top = gb.offset(OUTLINE, 0.05)
+    edges = []
+    for k, a in enumerate(top):
+        b = top[(k + 1) % len(top)]
+        a3, b3 = Vector((*a, DECK + 0.004)), Vector((*b, DECK + 0.004))
+        inward = Vector((-(b3 - a3).y, (b3 - a3).x, 0)).normalized() * 0.018
+        edges.append(beam(f'DeckEdge{k}', m['steel'], a3 + inward, b3 + inward, 0.03, 0.01))
+    return obj, kit.merge('DeckEdge', edges)
 
 
 def markings(m):
     """The landing circle with its ring and cross, and a few seams in the deck."""
     c = CENTRE + Vector((0, 0, DECK))
     parts = [
-        cylinder('Circle', m['pad_dark'], 0.5, 0.006, c + Vector((0, 0, 0.003)), segments=48, bevel=0),
-        plant.lathe('Ring', m['remap'], ((0.56, 0), (0.56, 0.008), (0.47, 0.008)), c, 48),
-        cylinder('RingInner', m['pad_dark'], 0.47, 0.009, c + Vector((0, 0, 0.0045)), segments=48, bevel=0),
+        cylinder('Circle', m['pad_dark'], CIRCLE, 0.006, c + Vector((0, 0, 0.003)), segments=64, bevel=0),
+        plant.lathe('Ring', m['remap'], ((CIRCLE + 0.07, 0), (CIRCLE + 0.07, 0.008), (CIRCLE - 0.03, 0.008)), c, 64),
+        cylinder('RingInner', m['pad_dark'], CIRCLE - 0.03, 0.009, c + Vector((0, 0, 0.0045)), segments=64, bevel=0),
     ]
     for k, a in enumerate((0, math.pi / 2)):
-        d = Vector((math.cos(a), math.sin(a), 0)) * 0.44
-        parts.append(beam(f'Cross{k}', m['paint_white'], c - d + Vector((0, 0, 0.01)), c + d + Vector((0, 0, 0.01)), 0.022, 0.004))
-    # seams of the deck plates
-    flat = DECK_R * math.cos(math.pi / 8) - 0.04   # stay inside the octagon
-    for k, (along_x, at) in enumerate(((True, -0.5), (True, 0.5), (False, -0.5), (False, 0.5))):
-        reach = min(flat, flat * math.sqrt(2) - abs(at))
-        a, b = ((-reach, at), (reach, at)) if along_x else ((at, -reach), (at, reach))
-        parts.append(beam(f'Seam{k}', m['concrete_dark'], CENTRE + Vector((*a, DECK + 0.001)), CENTRE + Vector((*b, DECK + 0.001)), 0.012, 0.003))
+        d = Vector((math.cos(a), math.sin(a), 0)) * (CIRCLE - 0.08)
+        parts.append(beam(f'Cross{k}', m['paint_white'], c - d + Vector((0, 0, 0.01)), c + d + Vector((0, 0, 0.01)), 0.026, 0.004))
+    # yellow ticks round the circle
+    for k in range(16):
+        a = 2 * math.pi * (k + 0.5) / 16
+        d = Vector((math.cos(a), math.sin(a), 0))
+        parts.append(beam(f'Tick{k}', m['paint'], c + d * (CIRCLE - 0.12) + Vector((0, 0, 0.01)), c + d * (CIRCLE - 0.05) + Vector((0, 0, 0.01)), 0.02, 0.004))
     return kit.merge('Markings', parts, c)
 
 
@@ -119,22 +130,26 @@ def booth(m):
 
 
 def tanks(m):
-    """Two fuel tanks in the house colour on a cradle along the back left edge."""
-    centre = Vector((-0.66, 0.0, 0))
-    parts = [box('Cradle', m['concrete_dark'], (0.24, 0.46, 0.04), centre + Vector((0, 0, 0.02)), bevel=0.006)]
-    for k, x in enumerate((-0.06, 0.06)):
-        p = centre + Vector((x, 0, 0.1))
+    """Two fuel tanks in the house colour on a cradle along the cut left corner, a pipe
+    to the deck."""
+    centre = Vector((0, 0, 0))
+    parts = [box('Cradle', m['concrete_dark'], (0.34, 0.6, 0.04), centre + Vector((0, 0, 0.02)), bevel=0.006)]
+    for k, x in enumerate((-0.085, 0.085)):
+        p = centre + Vector((x, 0, 0.13))
         parts += [
-            cylinder(f'Tank{k}', m['remap'], 0.055, 0.36, p, rotation=(math.pi / 2, 0, 0), segments=20, bevel=0.01),
-            *[cylinder(f'TankCap{k}{s}', m['steel'], 0.04, 0.03, p + Vector((0, 0.19 * s, 0)), rotation=(math.pi / 2, 0, 0), segments=16, bevel=0.006)
+            cylinder(f'Tank{k}', m['remap'], 0.08, 0.46, p, rotation=(math.pi / 2, 0, 0), segments=24, bevel=0.014),
+            *[cylinder(f'TankCap{k}{s}', m['steel'], 0.055, 0.03, p + Vector((0, 0.24 * s, 0)), rotation=(math.pi / 2, 0, 0), segments=16, bevel=0.006)
               for s in (-1, 1)],
-            *[cylinder(f'TankStrap{k}{y}', m['steel'], 0.058, 0.014, p + Vector((0, y, 0)), rotation=(math.pi / 2, 0, 0), segments=20, bevel=0)
-              for y in (-0.11, 0.11)],
-            *[box(f'TankLeg{k}{y}', m['steel'], (0.1, 0.03, 0.06), p + Vector((0, y, -0.05)), bevel=0.004) for y in (-0.11, 0.11)],
+            *[cylinder(f'TankStrap{k}{y}', m['steel'], 0.083, 0.018, p + Vector((0, y, 0)), rotation=(math.pi / 2, 0, 0), segments=24, bevel=0)
+              for y in (-0.14, 0.14)],
+            *[box(f'TankLeg{k}{y}', m['steel'], (0.13, 0.035, 0.07), p + Vector((0, y, -0.075)), bevel=0.004) for y in (-0.14, 0.14)],
         ]
-    parts.append(cylinder('Valve', m['steel_light'], 0.012, 0.06, centre + Vector((0, -0.25, 0.08)), segments=8, bevel=0))
-    parts.append(beam('Pipe', m['steel'], centre + Vector((0, -0.25, 0.05)), centre + Vector((0.2, -0.25, 0.05)), 0.016))
-    return kit.merge('Tanks', parts, centre)
+    parts.append(cylinder('Valve', m['steel_light'], 0.014, 0.07, centre + Vector((0.1, -0.32, 0.08)), segments=8, bevel=0))
+    parts.append(beam('Pipe', m['steel'], centre + Vector((0.1, -0.32, 0.05)), centre + Vector((0.3, -0.32, 0.05)), 0.018))
+    obj = kit.merge('Tanks', parts, centre)
+    obj.location = TANKS
+    obj.rotation_euler = (0, 0, math.pi / 4)   # along the cut corner
+    return obj
 
 
 def build():
@@ -151,12 +166,12 @@ def build():
     keys = kit.keys
 
     # ---- the footing spreads, the deck rises
-    footing = tower.octagon('Footing', m['concrete_dark'], ((DECK_R + 0.1, 0), (DECK_R + 0.1, FOOTING)), 0, 0.004)
-    footing.location = CENTRE
+    footing = gb.slab('Footing', m['concrete_dark'], gb.offset(OUTLINE, -0.04), FOOTING, inset=0.01, bevel=0.004)
     footing = kit.parent(kit.merge('Footing', [footing], CENTRE), root)
     keys(footing, 'scale', {0: Vector((0.05, 0.05, 1)), 2: Vector((0.05, 0.05, 1)), 14: Vector((1.02, 1.02, 1)), 17: Vector((1, 1, 1))})
     deck_group = kit.parent(kit.empty('DeckGroup'), root)
-    kit.parent(deck(m, root), deck_group)
+    for obj in deck(m, root):
+        kit.parent(obj, deck_group)
     keys(deck_group, 'location', {0: Vector((0, 0, -0.15)), 10: Vector((0, 0, -0.15)), 24: Vector((0, 0, 0.004)), 27: Vector((0, 0, 0))})
 
     # ---- the landing circle is painted; the pad node on it
@@ -175,7 +190,7 @@ def build():
     # parents that are not scaled to nothing in Build (that spoils their Idle keys)
     lights = []
     housings = []
-    spots = [(0, 0.0)] + [(1 + k, r) for k in range(4) for r in (0.11, 0.21, 0.31, 0.41)]
+    spots = [(0, 0.0)] + [(1 + k, r) for k in range(4) for r in (0.15, 0.29, 0.43, 0.57)]
     for i, (arm, r) in enumerate(spots):
         a = math.pi / 2 * (arm - 1)
         p = CENTRE + Vector((math.cos(a), math.sin(a), 0)) * r + Vector((0, 0, DECK + 0.012))
@@ -184,7 +199,7 @@ def build():
         bulb = sphere(f'CrossBulb{i}', m['lamp_amber'] if r else m['lamp_green'], 0.011, p + Vector((0, 0, 0.01)), 8)
         halo = sphere(f'CrossHalo{i}', m['glow_amber'] if r else m['glow_green'], 0.024, p + Vector((0, 0, 0.01)), 8)
         light = kit.parent(kit.merge(f'CrossLight{i}', [bulb, halo], p + Vector((0, 0, 0.01))), deck_group)
-        step = {0.0: 0, 0.11: 1, 0.21: 2, 0.31: 3, 0.41: 4}[r]
+        step = {0.0: 0, 0.15: 1, 0.29: 2, 0.43: 3, 0.57: 4}[r]
         # running out from the middle twice a loop
         lights.append((light, kit.flashes((step * 5, 6), (30 + step * 5, 6))))
     lamps = kit.parent(kit.merge('CrossLamps', housings, CENTRE + Vector((0, 0, DECK))), deck_group)
