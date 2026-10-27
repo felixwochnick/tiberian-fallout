@@ -2505,8 +2505,8 @@ export class Battlefield {
   /** Sends a unit to a point on the shortest way round the buildings. */
   walk(unit: Unit, to: THREE.Vector3) {
     const object = unit.object
-    // lamed by an electromagnetic pulse (see Combat.pulse)
-    if (object.userData.empSeconds > 0) return
+    // lamed by an electromagnetic pulse (see Combat.pulse), or hanging under a carryall
+    if (object.userData.empSeconds > 0 || object.userData.carried) return
     // aircraft and jumpjets fly there, straight over everything
     if (this.flight.has(unit)) {
       this.flight.flyTo(unit, to)

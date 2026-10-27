@@ -4,7 +4,7 @@ import { Battlefield } from '~/lib/game/battlefield'
 import { Combat } from '~/lib/game/combat'
 import { Harvesting } from '~/lib/game/harvesting'
 import { Repairs } from '~/lib/game/repairs'
-import { MODELS, UNIT_FALLBACK, type Side } from '~/lib/game/models'
+import { applyHouseColour, MODELS, UNIT_FALLBACK, type Side } from '~/lib/game/models'
 import { type BuildInfo, DEFAULT_SURVIVORS, DEFAULT_UPKEEP, type UnitVoice } from '~/lib/game/cameos'
 import type { Unit } from '~/lib/game/unit'
 import { type SuperWeaponCharge, SuperWeapons } from '~/lib/game/superweapons'
@@ -81,6 +81,7 @@ function frame(now: number) {
     for (const info of skirmish.arrivals.splice(0)) deliver(info)
     tickSpecials(gameSeconds)
     tickDepots(gameSeconds)
+    tickTakers()
   }
   syncPlacement()
   updatePowerLabel()
@@ -518,8 +519,83 @@ function boarders(transport: THREE.Object3D) {
 
 /** Whether the selected soldiers can get into this (an own transport with room): the enter cursor */
 function canEnter(object: THREE.Object3D) {
-  if (depotVehicles(object).length) return true
+  if (depotVehicles(object).length || hijackers(object).length || carryalls(object).length) return true
   return !!battlefield && Battlefield.capacity(object) > 0 && Battlefield.own(object) && boarders(object).length > 0
+}
+
+/** The selected mutant hijackers that could take this enemy vehicle over */
+function hijackers(object: THREE.Object3D) {
+  if (!battlefield || Battlefield.own(object) || object.userData.dead || infoOf(object)?.category !== 'vehicle' || object.userData.flyer) return []
+  return battlefield.selection.filter(o => o.userData.id === 'MHIJACK' && Battlefield.own(o) && !o.userData.dead)
+}
+
+/** The selected carryalls that could pick this own vehicle up */
+function carryalls(object: THREE.Object3D) {
+  if (!battlefield || !Battlefield.own(object) || object.userData.dead || infoOf(object)?.category !== 'vehicle' || object.userData.flyer) return []
+  return battlefield.selection.filter(o => o.userData.id === 'TRNSPORT' && Battlefield.own(o) && !o.userData.dead && !o.userData.carrying)
+}
+
+/** A hijacker this near (cells) to the vehicle gets into it */
+const HIJACK_REACH = 1
+/** How far below the carryall the vehicle it carries hangs (its Hook, see blender/TRNSPORT.py) */
+const CARRY_DROP = 0.35
+
+/**
+ * Hijackers and carryalls at work: a hijacker that reaches the enemy vehicle it went for
+ * takes it over (it becomes the player's, the mutant is gone into it); a carryall that
+ * reaches the vehicle it was sent for picks it up and carries it under itself, and sets
+ * it down where it comes to a stop.
+ */
+function tickTakers() {
+  if (!battlefield) return
+  for (const unit of battlefield.units) {
+    const object = unit.object
+    if (object.userData.dead) continue
+    const prize = object.userData.hijack as THREE.Object3D | undefined
+    if (prize) {
+      if (prize.userData.dead || Battlefield.own(prize)) object.userData.hijack = undefined
+      else if (Math.hypot(object.position.x - prize.position.x, object.position.z - prize.position.z) < HIJACK_REACH) {
+        object.userData.hijack = undefined
+        prize.userData.owner = 'player'
+        prize.traverse((node) => {
+          const mesh = node as THREE.Mesh
+          for (const mat of mesh.isMesh ? [mesh.material].flat() as THREE.MeshStandardMaterial[] : []) applyHouseColour(mat, props.colour, props.side)
+        })
+        combat?.stop([prize])
+        ;(prize.userData.unit as Unit).stop()
+        battlefield.remove(object)
+        sounds.speak('evaUnitReady')
+      }
+      else if (!unit.walking) battlefield.walk(unit, prize.position)
+    }
+    const load = object.userData.lift as THREE.Object3D | undefined
+    if (load && !load.userData.dead && Math.hypot(object.position.x - load.position.x, object.position.z - load.position.z) < 0.25) {
+      // hooked on: it hangs under the carryall from now on
+      object.userData.lift = undefined
+      object.userData.carrying = load
+      object.userData.carryMoved = false
+      object.userData.carryFrom = object.position.clone()
+      load.userData.offGround = true
+      load.userData.carried = true
+      ;(load.userData.unit as Unit).stop()
+    }
+    const carried = object.userData.carrying as THREE.Object3D | undefined
+    if (carried) {
+      // it sets the vehicle down only at the end of the next flight the player sends it on
+      const from = object.userData.carryFrom as THREE.Vector3 | undefined
+      if (battlefield.flight.travelling(unit) && (!from || Math.hypot(object.position.x - from.x, object.position.z - from.z) > 0.5)) object.userData.carryMoved = true
+      if (carried.userData.dead) object.userData.carrying = undefined
+      else if (!battlefield.flight.travelling(unit) && object.userData.carryMoved) {
+        object.userData.carryMoved = false
+        // at its destination: set down there
+        object.userData.carrying = undefined
+        carried.userData.offGround = false
+        carried.userData.carried = false
+        carried.position.copy(battlefield.openSpot(object.position.clone()))
+      }
+      else carried.position.copy(object.position).setY(object.position.y - CARRY_DROP)
+    }
+  }
 }
 
 /** Buildings vehicles drive onto to be repaired (the service depot) */
@@ -572,6 +648,24 @@ function tickDepots(seconds: number) {
 
 /** Sends the selected soldiers into a transport (vehicles onto a service depot); returns false if it is none they can get into */
 function enter(transport: THREE.Object3D) {
+  // mutant hijackers go for an enemy vehicle, a carryall for an own one
+  const thieves = hijackers(transport)
+  const lifters = carryalls(transport)
+  if (battlefield && (thieves.length || lifters.length)) {
+    for (const object of thieves) {
+      combat?.stop([object])
+      object.userData.hijack = transport
+      battlefield.walk(object.userData.unit as Unit, transport.position)
+    }
+    for (const object of lifters) {
+      object.userData.lift = transport
+      object.userData.carrying = undefined
+      battlefield.flight.flyTo(object.userData.unit as Unit, transport.position)
+    }
+    respond('move')
+    sounds.play('click')
+    return true
+  }
   const vehicles = depotVehicles(transport)
   if (battlefield && vehicles.length) {
     // one after the other onto the pad: the first drives on, the others wait next to it

@@ -102,6 +102,12 @@ export class Flight {
     return !!flyer && flyer.phase !== 'landed'
   }
 
+  /** It is on its way somewhere (not hovering, not on the ground) */
+  travelling(unit: Unit) {
+    const flyer = this.flyers.get(unit)
+    return !!flyer && (!!flyer.to || flyer.phase === 'rising')
+  }
+
   /** May it fire now: aircraft need shots left (and fly home when they run out) */
   canFire(unit: Unit) {
     const flyer = this.flyers.get(unit)
