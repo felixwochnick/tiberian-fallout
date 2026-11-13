@@ -8,6 +8,7 @@ import { Repairs } from '~/lib/game/repairs'
 import { applyHouseColour, MODELS, UNIT_FALLBACK, type Side } from '~/lib/game/models'
 import { type BuildInfo, DEFAULT_SURVIVORS, DEFAULT_UPKEEP, type UnitVoice } from '~/lib/game/cameos'
 import type { Unit } from '~/lib/game/unit'
+import type { WallLink } from '~/lib/game/walls'
 import { type SuperWeaponCharge, SuperWeapons } from '~/lib/game/superweapons'
 import type { Field } from '~/lib/game/field'
 import type { Dropship, DropshipSound } from '~/lib/game/dropship'
@@ -1071,7 +1072,8 @@ function syncPlacement() {
   if (info?.powersUp) battlefield.startPlacement(1, 1, 0, (x, z) => towerTop(info, x, z))
   // pavement is laid on the free cells of its 4 × 4, the others are left out
   else if (info && PAVING.has(info.id)) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent, undefined, true)
-  else if (info) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent)
+  // a wall shows the cells it walls up to the next pieces of its kind
+  else if (info) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent, undefined, false, wallLink(info))
   else battlefield.cancelPlacement()
 }
 
@@ -1103,7 +1105,11 @@ function placeAt(info: BuildInfo, cell: [number, number]) {
     if (building) mountGun(building, info.id)
     return
   }
+  // a wall walls up the cells to the next pieces of its kind for free, like in the original
+  const link = wallLink(info)
+  const links = link ? battlefield!.linkedCells(link, cell[0], cell[1]) : []
   buildStructure(info.id, cell[0], cell[1])
+  for (const [x, z] of links) buildStructure(info.id, x, z, false)
   // the construction yard's crane lets a crate down into its hatch
   const yard = battlefield!.structuresOf('GACNST').filter(Battlefield.own).at(-1)
   if (yard) battlefield!.playClip(yard, 'Deliver')
@@ -1111,6 +1117,9 @@ function placeAt(info: BuildInfo, cell: [number, number]) {
 
 /** Structures that are laid on the ground instead of standing on it (ToTile= in ART.INI: pavement) */
 const PAVING = new Set(['GAPAVE'])
+
+/** How a wall links up with the next pieces of its kind, if it does (see wallLinks) */
+const wallLink = (info: BuildInfo): WallLink | undefined => info.linkRange > 0 ? { id: info.id, range: info.linkRange } : undefined
 
 /** Whether a gun (the Vulcan, the SAM) can go onto this building: an own component tower without one */
 function towerFor(info: BuildInfo, object: THREE.Object3D) {

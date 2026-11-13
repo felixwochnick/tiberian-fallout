@@ -222,6 +222,12 @@ export interface BuildInfo {
   powersUp?: string
   /** A wall piece that joins its neighbours (Wall=) */
   wall: boolean
+  /**
+   * How many cells a wall or firestorm section placed reaches to the next piece of its
+   * kind, walling up the cells between (GuardRange= of a Wall= or FirestormWall=, see
+   * wallLinks); 0: it does not
+   */
+  linkRange: number
   /** A gate that opens for its own side's units (Gate=) */
   gate: boolean
   /** Soldiers come out when it is sold or destroyed (Crewed=) */
@@ -385,6 +391,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       fearless: yes(section?.get('FEARLESS')),
       powersUp: section?.get('POWERSUPBUILDING')?.toUpperCase(),
       wall: yes(section?.get('WALL')),
+      linkRange: yes(section?.get('WALL')) || yes(section?.get('FIRESTORMWALL')) ? Number(section?.get('GUARDRANGE') ?? 0) : 0,
       gate: yes(section?.get('GATE')),
       crewed: yes(section?.get('CREWED')),
       crushSound: list(section?.get('CRUSHSOUND')),

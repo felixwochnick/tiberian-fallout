@@ -129,7 +129,8 @@ E2E_BASE=http://localhost:3000 pnpm test
 | `blender/NAGATE_B.py` | Nod-Tor um 90° gedreht (1 × 3), aus `NAGATE_A.py`; Arme `ArmZP/ZN` zur Mauer → `public/models/NAGATE_B.glb` |
 | `blender/PROC.py` | Tiberium-Raffinerie: flache, breite dunkle Metallschürze mit Rippen in Hausfarbe, Turm mit Abfackelung, Tank; Plattform nach unten rechts mit Andockbucht (`Dock`) → `public/models/PROC.glb` |
 | `app/lib/game/superweapons.ts` | Superwaffen aus `[SuperWeaponTypes]`: kommen mit ihren Gebäuden, laden über `RechargeTime=` (bei genug Strom), stehen oben in der Gebäudespalte; Ionenkanone, EM-Puls, chemische Rakete, Hunter-Seeker, Landekapseln, Feuersturm |
-| `app/lib/game/gamefiles.ts` | Liest `RULES.INI`/`ART.INI` mit den Änderungen von Feuersturm (`FIRESTRM.INI`/`ARTFS.INI` aus `EXPAND01.MIX`) |
+| `app/lib/game/gamefiles.ts` | Liest `RULES.INI`/`ART.INI` mit den Änderungen von Feuersturm (`FIRESTRM.INI`/`ARTFS.INI` aus `EXPAND01.MIX`); wie im Original haben dabei die neueren Kopien von `RULES.INI`/`ART.INI` aus `EXPAND01.MIX` Vorrang vor denen aus `LOCAL.MIX` (dort steht z. B. `GuardRange=5` der Mauern) |
+| `app/lib/game/walls.ts` | Mauern verbinden sich beim Platzieren wie im Original: in jeder Achsenrichtung (nicht diagonal) bis zum nächsten eigenen Stück derselben Art höchstens `GuardRange=` Felder entfernt (5, also bis zu 4 Felder dazwischen), wenn alle Felder dazwischen bebaubar sind; die Lücke wird kostenlos zugemauert, die Platzierungsvorschau zeigt sie blass |
 | `app/composables/` | `useGameAssets` (Import/Status), `useMusicPlayer` (Web Audio) |
 | `app/components/` | Downloader, Importer, Musikplayer, Startanimation + Hauptmenü (`/menu`, im Dev-Modus mit `?t=2.5` einfrierbar) |
 
