@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { Battlefield } from '~/lib/game/battlefield'
 import { Combat } from '~/lib/game/combat'
 import { Harvesting } from '~/lib/game/harvesting'
+import { type TiberiumKind, TiberiumStore } from '~/lib/game/tiberium'
 import { Repairs } from '~/lib/game/repairs'
 import { applyHouseColour, MODELS, UNIT_FALLBACK, type Side } from '~/lib/game/models'
 import { type BuildInfo, DEFAULT_SURVIVORS, DEFAULT_UPKEEP, type UnitVoice } from '~/lib/game/cameos'
@@ -82,6 +83,8 @@ function frame(now: number) {
     tickSpecials(gameSeconds)
     tickDepots(gameSeconds)
     tickTakers()
+    // what was spent came out of the refineries and silos first
+    silos.follow(skirmish.credits.value, storageCapacity())
   }
   syncPlacement()
   updatePowerLabel()
@@ -404,6 +407,16 @@ const FACTORY_IDS = new Set(Object.values(FACTORIES).flat())
 const HARVESTER_STORAGE = 28
 const TIBERIUM_VALUE = 25
 const BLUE_TIBERIUM_VALUE = 50
+/** Credits a bale of the kind is worth: Value= of [Riparius], [Vinifera] */
+const tiberiumValue = (kind: TiberiumKind) => kind === 'blue'
+  ? skirmish?.rules?.blueTiberiumValue ?? BLUE_TIBERIUM_VALUE
+  : skirmish?.rules?.tiberiumValue ?? TIBERIUM_VALUE
+/** The Tiberium in the player's refineries and silos (their pips) */
+const silos = new TiberiumStore(tiberiumValue)
+/** Bales the player's refineries and silos hold (Storage=) */
+function storageCapacity() {
+  return battlefield?.structureObjects.reduce((sum, o) => sum + (Battlefield.own(o) && !o.userData.dead ? infoOf(o)?.storage ?? 0 : 0), 0) ?? 0
+}
 /** Seconds the refinery takes to build up (its Build clip, see blender/PROC.py) */
 const REFINERY_BUILD_SECONDS = 3.4
 
@@ -1299,6 +1312,8 @@ onMounted(() => {
     .catch(error => console.error('Gebäude-Symbole konnten nicht geladen werden', error))
   // fighting with the values of RULES.INI; shots and death cries from SOUNDS.MIX
   // aircraft taking off and landing (AuxSound1=, AuxSound2=)
+  // how full the player's refineries and silos are
+  battlefield.storedTiberium = object => Battlefield.own(object) && infoOf(object)?.storage ? silos.fill(storageCapacity()) : undefined
   battlefield.flight.sound = (unit, event) => {
     const info = skirmish?.rules?.info.get(unit.object.userData.id)
     sounds.effect((event === 'takeOff' ? info?.takeOffSound : info?.landSound) ?? [])
@@ -1367,11 +1382,11 @@ onMounted(() => {
   // the harvesters at work: Storage= and the Tiberium's Value= from RULES.INI
   harvesting = markRaw(new Harvesting(battlefield, () => ({
     capacity: unit => skirmish?.rules?.info.get(unit.object.userData.id)?.storage || HARVESTER_STORAGE,
-    value: kind => kind === 'blue'
-      ? skirmish?.rules?.blueTiberiumValue ?? BLUE_TIBERIUM_VALUE
-      : skirmish?.rules?.tiberiumValue ?? TIBERIUM_VALUE,
-    earn(owner, credits) {
-      if (owner === 'player' && skirmish) skirmish.credits.value += credits
+    value: tiberiumValue,
+    earn(owner, credits, kind) {
+      if (owner !== 'player' || !skirmish) return
+      skirmish.credits.value += credits
+      silos.bring(kind, credits, storageCapacity())
     },
   })))
   emit('ready', battlefield)

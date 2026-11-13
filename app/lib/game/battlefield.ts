@@ -459,6 +459,10 @@ const DIGGERS = new Set(['TTNK', 'ART2', 'LPST', 'JUGG', 'LIMPET', 'SGEN'])
 const TUNNELLERS = new Set(['SAPC', 'SUBTANK'])
 /** Farther than this (cells) the subterranean APC goes under the ground; nearer it drives */
 const TUNNEL_MIN = 8
+/** Colours of the pips: Tiberium (and passengers) */
+const PIP_COLOURS: Record<TiberiumKind, [number, number, number]> = { green: [0.2, 0.9, 0.2], blue: [0.25, 0.55, 1] }
+/** An empty cube of a building's health bar or pips */
+const CUBE_DARK: [number, number, number] = [0.12, 0.12, 0.12]
 /** How many soldiers the transports carry (Passengers=) */
 const TRANSPORTS: Record<string, number> = { SAPC: 5, APC: 5 }
 /** Where aircraft come from and reload (Helipad=) */
@@ -1484,8 +1488,13 @@ export class Battlefield {
     const white: [number, number, number] = [0.95, 0.95, 0.95]
     const health = THREE.MathUtils.clamp(object.userData.health ?? 1, 0, 1)
     const colour: [number, number, number] = health > 0.5 ? [0.1, 0.95, 0.15] : health > 0.25 ? [1, 0.85, 0.1] : [1, 0.15, 0.1]
-    // a building's health bar lies inside its frame, under the frame's strokes
-    if (object.userData.kind !== 'unit') this.drawBuildingHealth(bounds, w, h, health, colour, quad)
+    // a building's health bar lies inside its frame, under the frame's strokes; along its
+    // lower edge the Tiberium it keeps
+    if (object.userData.kind !== 'unit') {
+      this.drawBuildingHealth(bounds, w, h, health, colour, quad)
+      const stored = this.storedTiberium(object)
+      if (stored) this.drawStorage(bounds, w, h, stored, quad)
+    }
     if (object.userData.kind === 'unit') {
       // units: a flat frame facing the camera, only its corners: two strokes each, a
       // sixth of the shorter side long, 2 px thick
@@ -1535,35 +1544,79 @@ export class Battlefield {
       const x = left + gap + i * (cell + gap)
       rect(x, barTop + gap, x + cell, barTop + gap + cell, colour)
     }
+    // in the lower left corner of the frame its pips, like in the original (PipScale=):
+    // a harvester's load, a transport's passengers, an aircraft's shots
     const cargo = object.userData.cargo as CargoSlot[] | undefined
-    if (cargo) this.drawCargo(cargo, left, bottom, rect)
-
+    const unit = object.userData.unit as Unit | undefined
+    const ammo = unit && Battlefield.own(object) ? this.flight.ammoOf(unit) : undefined
+    const capacity = Battlefield.own(object) ? Battlefield.capacity(object) : 0
+    if (cargo) {
+      this.drawSquares(Array.from({ length: CARGO_SLOTS }, (_, i) => {
+        const slot = cargo[i]
+        return slot && { colour: PIP_COLOURS[slot.kind], share: slot.stages / SLOT_STAGES }
+      }), left, bottom, rect)
+    }
+    else if (capacity) {
+      const aboard = Battlefield.passengers(object).length
+      this.drawSquares(Array.from({ length: capacity }, (_, i) => i < aboard ? { colour: PIP_COLOURS.green, share: 1 } : undefined), left, bottom, rect)
+    }
+    else if (ammo) this.drawShells(ammo.shots, ammo.ammo, left, bottom, rect)
   }
 
   /**
-   * A harvester's load in the lower left corner of its frame, like in the original:
-   * five squares, filled green or blue by the Tiberium in them (a part-filled one from
-   * the bottom up, a third per small cell), empty ones dark.
+   * Pips in the lower left corner of a unit's frame: a row of squares, filled from the
+   * bottom up with their colour by their share (a harvester's part-filled square), empty
+   * ones dark.
    */
-  private drawCargo(
-    cargo: CargoSlot[],
+  private drawSquares(
+    slots: ({ colour: [number, number, number], share: number } | undefined)[],
     left: number,
     bottom: number,
     rect: (x0: number, y0: number, x1: number, y1: number, colour: [number, number, number]) => void,
   ) {
     const size = 6
     const gap = 1
-    const colours: Record<TiberiumKind, [number, number, number]> = { green: [0.2, 0.9, 0.2], blue: [0.25, 0.55, 1] }
     const x0 = left + 4
     const y1 = bottom - 4
-    rect(x0 - gap, y1 - size - gap, x0 + CARGO_SLOTS * (size + gap), y1 + gap, [0.02, 0.02, 0.02])
-    for (let i = 0; i < CARGO_SLOTS; i++) {
+    rect(x0 - gap, y1 - size - gap, x0 + slots.length * (size + gap), y1 + gap, [0.02, 0.02, 0.02])
+    slots.forEach((slot, i) => {
       const x = x0 + i * (size + gap)
       rect(x, y1 - size, x + size, y1, [0.16, 0.16, 0.14])
-      const slot = cargo[i]
-      if (!slot) continue
-      const filled = Math.round(size * slot.stages / SLOT_STAGES)
-      rect(x, y1 - filled, x + size, y1, colours[slot.kind])
+      if (!slot) return
+      const filled = Math.round(size * slot.share)
+      rect(x, y1 - filled, x + size, y1, slot.colour)
+    })
+  }
+
+  /**
+   * An aircraft's shots in the lower left corner of its frame, like the original's
+   * ammunition pips (PIPS2.SHP): a row of upright brass shells, one for each it carries,
+   * the spent ones dark.
+   */
+  private drawShells(
+    shots: number,
+    ammo: number,
+    left: number,
+    bottom: number,
+    rect: (x0: number, y0: number, x1: number, y1: number, colour: [number, number, number]) => void,
+  ) {
+    const width = 3
+    const height = 9
+    const gap = 1
+    const x0 = left + 4
+    const y1 = bottom - 4
+    type Colour = [number, number, number]
+    rect(x0 - gap, y1 - height - gap, x0 + ammo * (width + gap), y1 + gap, [0.02, 0.02, 0.02])
+    for (let i = 0; i < ammo; i++) {
+      const x = x0 + i * (width + gap)
+      const [body, light, tip]: [Colour, Colour, Colour] = i < shots
+        ? [[0.77, 0.69, 0.38], [0.89, 0.78, 0.44], [0.55, 0.55, 0.55]]
+        : [[0.16, 0.16, 0.14], [0.2, 0.2, 0.18], [0.12, 0.12, 0.12]]
+      // the case, lit on its left, and the round tip on top
+      rect(x, y1 - height + 3, x + width, y1, body)
+      rect(x, y1 - height + 3, x + 1, y1 - 1, light)
+      rect(x, y1 - height + 1, x + width, y1 - height + 3, tip)
+      rect(x + 1, y1 - height, x + 2, y1 - height + 1, tip)
     }
   }
 
@@ -1571,7 +1624,7 @@ export class Battlefield {
    * A building's health bar runs along the top of its frame like in the original: a row
    * of small cubes from the left corner of the box's top face to its back corner (top
    * middle on screen), just inside the box under that edge. Lost health shows as dark
-   * cubes. The cubes are about 4 px on screen whatever the zoom.
+   * cubes.
    */
   private drawBuildingHealth(
     bounds: THREE.Box3,
@@ -1581,15 +1634,58 @@ export class Battlefield {
     colour: [number, number, number],
     quad: (corners: [number, number][], colour: [number, number, number]) => void,
   ) {
+    this.drawCubes(bounds, w, h, 'top', (cells) => {
+      const full = Math.ceil(cells * health)
+      return Array.from({ length: cells }, (_, i) => i < full ? colour : CUBE_DARK)
+    }, quad)
+  }
+
+  /**
+   * The Tiberium a refinery or silo keeps, like the original's pips (PIPS.SHP): a row of
+   * cubes along the lower left edge of its frame, from its left corner to the front one,
+   * green and then blue by the share of each kind, the empty rest dark.
+   */
+  private drawStorage(
+    bounds: THREE.Box3,
+    w: number,
+    h: number,
+    stored: Record<TiberiumKind, number>,
+    quad: (corners: [number, number][], colour: [number, number, number]) => void,
+  ) {
+    this.drawCubes(bounds, w, h, 'bottom', (cells) => {
+      // whole cubes, rounded so that a little Tiberium shows and only a full store fills all
+      const filled = (share: number) => share <= 0 ? 0 : share >= 1 ? cells : Math.min(cells - 1, Math.max(1, Math.round(cells * share)))
+      const all = filled(stored.green + stored.blue)
+      const blue = Math.min(all, filled(stored.blue))
+      return Array.from({ length: cells }, (_, i) => i < all - blue ? PIP_COLOURS.green : i < all ? PIP_COLOURS.blue : CUBE_DARK)
+    }, quad)
+  }
+
+  /**
+   * A row of small cubes just inside a building's box (its health bar, its pips): along
+   * the edge from the left corner of its top face to the back one (`top`, under that
+   * edge), or of its bottom face to the front one (`bottom`, on it). The cubes are about
+   * 4 px on screen whatever the zoom; `colours` gives each its colour, for as many as fit.
+   */
+  private drawCubes(
+    bounds: THREE.Box3,
+    w: number,
+    h: number,
+    edge: 'top' | 'bottom',
+    colours: (cells: number) => [number, number, number][],
+    quad: (corners: [number, number][], colour: [number, number, number]) => void,
+  ) {
     const toScreen = (p: THREE.Vector3): [number, number] => {
       const at = p.clone().project(this.camera)
       return [(at.x + 1) / 2 * w, (1 - at.y) / 2 * h]
     }
-    const corners = [0, 1, 2, 3].map(i => new THREE.Vector3(i & 1 ? bounds.max.x : bounds.min.x, bounds.max.y, i & 2 ? bounds.max.z : bounds.min.z))
+    const y = edge === 'top' ? bounds.max.y : bounds.min.y
+    const corners = [0, 1, 2, 3].map(i => new THREE.Vector3(i & 1 ? bounds.max.x : bounds.min.x, y, i & 2 ? bounds.max.z : bounds.min.z))
     const screen = corners.map(toScreen)
     const left = corners[screen.indexOf(screen.reduce((a, b) => (b[0] < a[0] ? b : a)))]!
-    const back = corners[screen.indexOf(screen.reduce((a, b) => (b[1] < a[1] ? b : a)))]!
-    const along = back.clone().sub(left)
+    // the back corner (highest on screen) or the front one (lowest)
+    const end = corners[screen.indexOf(screen.reduce((a, b) => ((edge === 'top' ? b[1] < a[1] : b[1] > a[1]) ? b : a)))]!
+    const along = end.clone().sub(left)
     const length = along.length()
     if (length <= 0) return
     along.divideScalar(length)
@@ -1601,23 +1697,24 @@ export class Battlefield {
 
     // world units per screen pixel along the edge
     const [lx, ly] = toScreen(left)
-    const [bx, by] = toScreen(back)
-    const perPixel = length / (Math.hypot(bx - lx, by - ly) || 1)
+    const [ex, ey] = toScreen(end)
+    const perPixel = length / (Math.hypot(ex - lx, ey - ly) || 1)
     const size = 4 * perPixel
     const gap = 1.2 * perPixel
     const cells = Math.max(1, Math.floor((length - gap) / (size + gap)))
-    const full = Math.ceil(cells * health)
-    const dark: [number, number, number] = [0.12, 0.12, 0.12]
+    const colour = colours(cells)
     const view = this.camera.getWorldDirection(new THREE.Vector3())
     const shade = (c: [number, number, number], f: number): [number, number, number] => [c[0] * f, c[1] * f, c[2] * f]
 
-    // the back cubes first, the front ones are drawn over them
-    for (let i = cells - 1; i >= 0; i--) {
+    // the far cubes first, the near ones are drawn over them
+    const order = Array.from({ length: cells }, (_, i) => i)
+    if (along.dot(view) > 0) order.reverse()
+    for (const i of order) {
       const base = left.clone()
         .addScaledVector(along, gap + i * (size + gap))
         .addScaledVector(across, gap)
-        .addScaledVector(up, -size - gap)
-      const c = i < full ? colour : dark
+        .addScaledVector(up, edge === 'top' ? -size - gap : gap)
+      const c = colour[i] ?? CUBE_DARK
       // the faces that look at the camera: the sides first, the top over them
       const faces: [THREE.Vector3, THREE.Vector3, THREE.Vector3, number][] = [
         [along, across, up, 0.55],
@@ -2749,6 +2846,9 @@ export class Battlefield {
 
   /** A unit's speed in cells per second (Speed=, see Combat); undefined: the model's own */
   speedOf: (object: THREE.Object3D) => number | undefined = () => undefined
+
+  /** How full a refinery or silo of the player is, by kind (0 … 1, see TiberiumStore); undefined: it keeps none */
+  storedTiberium: (object: THREE.Object3D) => Record<TiberiumKind, number> | undefined = () => undefined
 
   /**
    * Whether a cell is on the map and not under a building; for a crusher of `crusher`'s
