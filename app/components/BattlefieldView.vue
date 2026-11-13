@@ -10,7 +10,7 @@ import type { Unit } from '~/lib/game/unit'
 import { type SuperWeaponCharge, SuperWeapons } from '~/lib/game/superweapons'
 import type { Field } from '~/lib/game/field'
 import type { Dropship, DropshipSound } from '~/lib/game/dropship'
-import { cursorScale, type CursorKind } from '~/lib/input/cursor'
+import { spriteScale, type CursorKind } from '~/lib/input/cursor'
 import { loadSigns } from '~/lib/game/signs'
 import { getAssetStore } from '~/lib/storage/asset-store'
 import type { BaseMode } from '~/composables/useSkirmish'
@@ -1273,7 +1273,7 @@ onMounted(() => {
   // the original signs over buildings (repair wrench, switched off)
   getAssetStore()
     .then(store => loadSigns(store))
-    .then(frames => frames && battlefield?.setSigns(frames, cursorScale()))
+    .then(frames => frames && battlefield?.setSigns(frames, spriteScale()))
     .catch(error => console.error('Gebäude-Symbole konnten nicht geladen werden', error))
   // fighting with the values of RULES.INI; shots and death cries from SOUNDS.MIX
   // aircraft taking off and landing (AuxSound1=, AuxSound2=)

@@ -158,6 +158,9 @@ const DEPLOY_HEADING = 0
 
 export const ZOOM = { min: 0.75, max: 2.5, step: 1.15 }
 
+/** Pixels beside a unit's frame on screen where a click still means the unit (see objectAt) */
+const PICK_MARGIN = 4
+
 /**
  * Towards the sun: in front of the map on the left of the screen, high up (55°), so the
  * shadows fall backwards to the right. Along the ground, the screen's right is
@@ -1136,18 +1139,68 @@ export class Battlefield {
     if (x < -1 || x > 1 || y < -1 || y > 1) return undefined
     this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera)
     const hit = this.raycaster.intersectObjects(this.selectables, true)[0]
-    if (!hit) {
-      // between a building's parts (its pad's edge, a gap under a pipe) the ray misses
-      // the model: a click on its foundation still means the building, not the ground
-      const ground = this.pickGround(this.raycaster.ray)
-      return ground ? this.selectables.find((object) => {
-        const f = object.userData.footprint as Footprint | undefined
-        return f && ground.x >= f.x && ground.x < f.x + f.w && ground.z >= f.z && ground.z < f.z + f.h
-      }) : undefined
-    }
-    let node: THREE.Object3D | null = hit.object
+    let node: THREE.Object3D | null = hit?.object ?? null
     while (node && !this.selectables.includes(node)) node = node.parent
-    return node ?? undefined
+    if (node?.userData.kind === 'unit') return node
+    // small units are hard to hit on the model: a click in a unit's frame still means it,
+    // like in the original, if it stands in front of what the ray hit
+    const unit = this.unitInFrame(clientX, clientY, hit?.distance)
+    if (unit) return unit
+    if (node) return node
+    // between a building's parts (its pad's edge, a gap under a pipe) the ray misses
+    // the model: a click on its foundation still means the building, not the ground
+    const ground = this.pickGround(this.raycaster.ray)
+    return ground ? this.selectables.find((object) => {
+      const f = object.userData.footprint as Footprint | undefined
+      return f && ground.x >= f.x && ground.x < f.x + f.w && ground.z >= f.z && ground.z < f.z + f.h
+    }) : undefined
+  }
+
+  /**
+   * The unit whose frame on screen holds a point of the screen (client pixels), the one
+   * whose middle is nearest if several do. The frame is the outline of an upright
+   * cylinder of the unit's frame size (see unitBounds), so it doesn't change with the
+   * unit's heading. Only units nearer the camera than `distance` along the ray of
+   * objectAt; with nothing hit (no distance) the frame reaches a few pixels further.
+   */
+  private unitInFrame(clientX: number, clientY: number, distance = Infinity) {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const margin = distance === Infinity ? PICK_MARGIN : 0
+    const { origin, direction } = this.raycaster.ray
+    const point = new THREE.Vector3()
+    const toScreen = (at: THREE.Vector3) => {
+      at.project(this.camera)
+      return [rect.left + (at.x + 1) / 2 * rect.width, rect.top + (1 - at.y) / 2 * rect.height] as const
+    }
+    let nearest: THREE.Object3D | undefined
+    let nearestOff = Infinity
+    for (const object of this.selectables) {
+      if (object.userData.kind !== 'unit' || !object.userData.frameSize || object.userData.dead || !Battlefield.shown(object)) continue
+      const { radius, height } = object.userData.frameSize as { radius: number, height: number }
+      if (point.copy(object.position).setY(object.position.y + height / 2).sub(origin).dot(direction) >= distance) continue
+      const [x, bottom] = toScreen(point.copy(object.position))
+      const [, top] = toScreen(point.copy(object.position).setY(object.position.y + height))
+      // the round base and top, seen at a slant
+      const across = radius * PIXELS_PER_CELL * this.zoom + margin
+      const deep = radius * PIXELS_PER_CELL * this.zoom * Math.sin(ELEVATION) + margin
+      if (Math.abs(clientX - x) > across || clientY < top - deep || clientY > bottom + deep) continue
+      const off = Math.hypot(clientX - x, clientY - (top + bottom) / 2)
+      if (off < nearestOff) {
+        nearest = object
+        nearestOff = off
+      }
+    }
+    return nearest
+  }
+
+  /** Whether an object is on the map and drawn (not underground, not hidden with a parent) */
+  private static shown(object: THREE.Object3D) {
+    let node = object
+    while (node.parent) {
+      if (!node.visible) return false
+      node = node.parent
+    }
+    return (node as THREE.Scene).isScene === true
   }
 
   /**

@@ -47,6 +47,10 @@ let inside = false
 let users = 0
 let attached = false
 let cursors: Partial<Record<CursorKind, CursorImage>> = {}
+/** Size of the game cursor, times the original's pixels (see setCursorScale) */
+let cursorScale = 1.5
+/** Counts the loads of the cursors, so only the latest one is shown */
+let cursorLoads = 0
 let cursorKind: CursorKind = 'default'
 let cursor: CursorImage | undefined
 let cursorElement: HTMLCanvasElement | undefined
@@ -99,6 +103,13 @@ export function release() {
 
 /** Where the game cursor is, in CSS pixels of the viewport. */
 export const pointer = () => ({ x, y, inside: inside || mouseCapture.locked })
+
+/** Size of the game cursor, times the original's pixels (from the options); loads it anew. */
+export function setCursorScale(scale: number) {
+  if (scale === cursorScale) return
+  cursorScale = scale
+  if (attached) loadCursorImages()
+}
 
 /** Switches the game cursor, e.g. to a scroll arrow. */
 export function setCursor(kind: CursorKind) {
@@ -301,17 +312,24 @@ export function attach() {
   // a game, not a document: nothing to select
   document.documentElement.style.userSelect = 'none'
   cursorKind = 'default'
-  if (!cursors.default) cursors = fallbackCursors()
+  if (!cursors.default) cursors = fallbackCursors(cursorScale)
   showCursor()
+  loadCursorImages()
+  sync()
+}
+
+/** The original cursors in the current size, the plain ones while the game data is missing. */
+function loadCursorImages() {
+  const load = ++cursorLoads
+  const scale = cursorScale
   getAssetStore()
-    .then(store => loadCursors(store))
+    .then(store => loadCursors(store, scale))
     .then((loaded) => {
-      if (!loaded) return
-      cursors = { ...fallbackCursors(), ...loaded }
+      if (load !== cursorLoads) return
+      cursors = { ...fallbackCursors(scale), ...loaded }
       if (attached) showCursor()
     })
     .catch(error => console.error('Mauszeiger konnte nicht geladen werden', error))
-  sync()
 }
 
 let animation: ReturnType<typeof setInterval> | undefined

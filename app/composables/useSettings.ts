@@ -8,6 +8,8 @@ const SETTINGS_KEY = 'tiberian-fallout:settings'
 
 export const AI_LEVELS = ['Leicht', 'Normal', 'Schwer']
 export const SPEEDS = ['Sehr langsam', 'Langsam', 'Gemächlich', 'Normal', 'Schnell', 'Sehr schnell', 'Maximal']
+/** Sizes of the mouse cursor: name and scale of the original's pixels */
+export const CURSOR_SIZES = [['Klein', 1], ['Mittel', 1.5], ['Groß', 2]] as const
 
 /** House colours of a skirmish like in Tiberian Sun's multiplayer, as name and colour */
 export const HOUSE_COLOURS = [
@@ -58,6 +60,8 @@ const settings = reactive({
   speed: 4,
   /** Edge scroll speed, index into SPEEDS */
   scrollSpeed: 3,
+  /** Size of the mouse cursor, index into CURSOR_SIZES */
+  cursorSize: 1,
   /** Full screen with the mouse kept inside the game */
   mouseCapture: true,
   /**
