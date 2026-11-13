@@ -461,6 +461,12 @@ const TUNNELLERS = new Set(['SAPC', 'SUBTANK'])
 const TUNNEL_MIN = 8
 /** How many soldiers the transports carry (Passengers=) */
 const TRANSPORTS: Record<string, number> = { SAPC: 5, APC: 5 }
+/** Where aircraft come from and reload (Helipad=) */
+const HELIPADS = new Set(['GAHPAD', 'NAHPAD'])
+/** How far round a point (cells) the ground must be flat and free for an aircraft to land there */
+const LANDING_ROOM = 0.55
+/** How near (cells) to a vehicle or soldier an aircraft does not land */
+const LANDING_CLEARANCE = 0.6
 /** A soldier this near (cells) to its transport gets in */
 const BOARD_REACH = 0.8
 /** How far from the transport (cells) the soldiers get out */
@@ -1794,9 +1800,11 @@ export class Battlefield {
     if (this.terrain.flatLevel(cx, cz, 1, 1) === undefined || this.obstacles.has(`${cx},${cz}`)) return false
     if (this.footprints.some(f => cx >= f.x && cx < f.x + f.w && cz >= f.z && cz < f.z + f.h)) return false
     if (this.tiberium.has(`${cx},${cz}`)) return false
-    // a unit standing on it, own or enemy (not one in the air): as far round as it is big
-    return !this.units.some(({ object }) => {
-      if (object === except || object.userData.dead || object.userData.offGround) return false
+    // a unit standing on it, own or enemy (not one in the air, but a landed aircraft): as far round as it is big
+    return !this.units.some((unit) => {
+      const object = unit.object
+      if (object === except || object.userData.dead) return false
+      if (this.flight.has(unit) ? this.flight.airborne(unit) : object.userData.offGround) return false
       const radius = ((object.userData.frameSize?.radius as number | undefined) ?? 0) * UNIT_BLOCK_SHARE
       const at = object.position
       const dx = Math.max(cx - at.x, 0, at.x - (cx + 1))
@@ -2774,6 +2782,31 @@ export class Battlefield {
       if (best) return best
     }
     return at.clone()
+  }
+
+  /** The helipads of a side that still stand (see Flight) */
+  helipads(owner: string) {
+    return [...HELIPADS].flatMap(id => this.structuresOf(id)).filter(o => !o.userData.dead && (o.userData.owner ?? 'player') === owner)
+  }
+
+  /** Whether an object is a helipad */
+  static isHelipad(object: THREE.Object3D) {
+    return HELIPADS.has(object.userData.id)
+  }
+
+  /**
+   * Whether an aircraft can come down at a point: on flat ground round it (not on a
+   * slope, a ramp or a cliff), on the map, not on a building, wall or tree, and with no
+   * vehicle or soldier standing there (other aircraft: see Flight)
+   */
+  landable(at: THREE.Vector3) {
+    for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+      const x = Math.floor(at.x + dx * LANDING_ROOM)
+      const z = Math.floor(at.z + dz * LANDING_ROOM)
+      if (!this.free(x, z) || this.terrain.cell(x, z) !== Cell.Flat) return false
+    }
+    return !this.units.some(({ object }) => !object.userData.dead && !object.userData.offGround && object.parent === this.scene
+      && Math.hypot(object.position.x - at.x, object.position.z - at.z) < LANDING_CLEARANCE)
   }
 
   /** Whether a cell's middle is on the map */

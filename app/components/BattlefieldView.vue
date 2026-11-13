@@ -519,7 +519,7 @@ function boarders(transport: THREE.Object3D) {
 
 /** Whether the selected soldiers can get into this (an own transport with room): the enter cursor */
 function canEnter(object: THREE.Object3D) {
-  if (depotVehicles(object).length || hijackers(object).length || carryalls(object).length) return true
+  if (depotVehicles(object).length || hijackers(object).length || carryalls(object).length || pilots(object).length) return true
   return !!battlefield && Battlefield.capacity(object) > 0 && Battlefield.own(object) && boarders(object).length > 0
 }
 
@@ -533,6 +533,12 @@ function hijackers(object: THREE.Object3D) {
 function carryalls(object: THREE.Object3D) {
   if (!battlefield || !Battlefield.own(object) || object.userData.dead || infoOf(object)?.category !== 'vehicle' || object.userData.flyer) return []
   return battlefield.selection.filter(o => o.userData.id === 'TRNSPORT' && Battlefield.own(o) && !o.userData.dead && !o.userData.carrying)
+}
+
+/** The selected own aircraft that could reload on this helipad (an own one) */
+function pilots(object: THREE.Object3D) {
+  if (!battlefield || !Battlefield.isHelipad(object) || !Battlefield.own(object) || object.userData.dead) return []
+  return battlefield.selection.filter(o => Battlefield.own(o) && !o.userData.dead && o.userData.unit && battlefield!.flight.reloads(o.userData.unit))
 }
 
 /** A hijacker this near (cells) to the vehicle gets into it */
@@ -569,6 +575,7 @@ function tickTakers() {
       else if (!unit.walking) battlefield.walk(unit, prize.position)
     }
     const load = object.userData.lift as THREE.Object3D | undefined
+    if (load?.userData.dead) object.userData.lift = undefined
     if (load && !load.userData.dead && Math.hypot(object.position.x - load.position.x, object.position.z - load.position.z) < 0.25) {
       // hooked on: it hangs under the carryall from now on
       object.userData.lift = undefined
@@ -595,6 +602,8 @@ function tickTakers() {
       }
       else carried.position.copy(object.position).setY(object.position.y - CARRY_DROP)
     }
+    // a carryall with nothing to carry (or to fetch) lands where it is, like the other aircraft
+    if (object.userData.id === 'TRNSPORT' && !object.userData.lift && !object.userData.carrying) battlefield.flight.done(unit)
   }
 }
 
@@ -646,7 +655,10 @@ function tickDepots(seconds: number) {
   }
 }
 
-/** Sends the selected soldiers into a transport (vehicles onto a service depot); returns false if it is none they can get into */
+/**
+ * Sends the selected soldiers into a transport (vehicles onto a service depot, aircraft
+ * onto a helipad); returns false if it is none they can get into
+ */
 function enter(transport: THREE.Object3D) {
   // mutant hijackers go for an enemy vehicle, a carryall for an own one
   const thieves = hijackers(transport)
@@ -662,6 +674,16 @@ function enter(transport: THREE.Object3D) {
       object.userData.carrying = undefined
       battlefield.flight.flyTo(object.userData.unit as Unit, transport.position)
     }
+    respond('move')
+    sounds.play('click')
+    return true
+  }
+  // aircraft onto a helipad to reload: one onto each free pad, the others land by it and wait
+  const aircraft = pilots(transport)
+  if (battlefield && aircraft.length) {
+    combat?.stop(aircraft)
+    battlefield.clearWaypoints(aircraft)
+    battlefield.flight.dock(aircraft.map(object => object.userData.unit as Unit), transport)
     respond('move')
     sounds.play('click')
     return true

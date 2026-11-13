@@ -86,6 +86,12 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
         && info.techLevel >= 0 && info.techLevel <= ctx.techLevel())
   }
 
+  /** Shots an aircraft has left of those it carries ("3/5") */
+  function ammo(unit: Unit) {
+    const load = battlefield.flight.ammoOf(unit)
+    return load && `${load.shots}/${load.ammo}`
+  }
+
   function describe(object: THREE.Object3D) {
     const data = object.userData
     const unit = data.unit as Unit | undefined
@@ -105,6 +111,8 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
       ...(data.repairing ? { repairing: true } : {}),
       ...(data.poweredOff ? { offline: true } : {}),
       ...(Battlefield.capacity(object) ? { passengers: Battlefield.passengers(object).length } : {}),
+      ...(unit && ammo(unit) ? { ammo: ammo(unit) } : {}),
+      ...(unit && battlefield.flight.airborne(unit) ? { flying: true } : {}),
     }
   }
 
@@ -355,6 +363,17 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
       if (!objects.length || target.userData.id !== 'PROC' || !Battlefield.own(target)) throw new Error('Sammler und eigene Raffinerie nötig')
       harvesting.unloadAt(objects, target)
       return { unloading: refOf(target) }
+    },
+
+    /** Aircraft fly onto a helipad to reload (one onto each free pad, the others land by it and wait) */
+    dock(units: Ref | Ref[], helipad: Ref) {
+      const objects = ownUnits(units).filter(o => battlefield.flight.reloads(o.userData.unit))
+      const target = find(helipad)
+      if (!objects.length || !Battlefield.isHelipad(target) || !Battlefield.own(target)) throw new Error('Flugzeuge mit Munition und eigene Landeplattform nötig')
+      combat.stop(objects)
+      battlefield.clearWaypoints(objects)
+      battlefield.flight.dock(objects.map(o => o.userData.unit as Unit), target)
+      return { docking: refOf(target) }
     },
 
     /** Where a factory sends what it produces */

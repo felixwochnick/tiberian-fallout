@@ -308,6 +308,14 @@ export class Combat {
         fighter.target = undefined
         fighter.spot = undefined
       }
+      // an aircraft without shots left does not fight: it flies to a helipad to reload
+      if (!this.battlefield.flight.canFire(unit)) {
+        fighter.target = undefined
+        fighter.attackMove = undefined
+        fighter.spot = undefined
+        this.battlefield.flight.done(unit)
+        continue
+      }
       // attack-move: stop for every enemy in range, go on when it is down
       if (fighter.attackMove && !fighter.target) {
         const enemy = this.nearestEnemy(object, weapon, fighter, other => this.range(object.position, weapon, other))
@@ -315,8 +323,10 @@ export class Combat {
           fighter.target = enemy
           fighter.ordered = false
         }
-        else if (!unit.walking) {
-          if (fixed || object.position.distanceTo(fighter.attackMove) < 0.6) fighter.attackMove = undefined
+        else if (!unit.walking && !this.battlefield.flight.travelling(unit)) {
+          // there: across the ground (aircraft are up in the air)
+          const way = Math.hypot(object.position.x - fighter.attackMove.x, object.position.z - fighter.attackMove.z)
+          if (fixed || way < 0.6) fighter.attackMove = undefined
           else this.battlefield.walk(unit, fighter.attackMove)
         }
       }
@@ -328,7 +338,7 @@ export class Combat {
       }
       const target = fighter.target
       if (!target) {
-        // an aircraft whose work is done flies home
+        // an aircraft whose work is done lands where it is (out of shots: on a helipad)
         this.battlefield.flight.done(unit)
         continue
       }
@@ -372,11 +382,6 @@ export class Combat {
         continue
       }
       if (unit.walking) unit.stop()
-      // an aircraft without shots left flies home to reload
-      if (!this.battlefield.flight.canFire(unit)) {
-        fighter.target = undefined
-        continue
-      }
       // dug in, the Tick Tank turns its turret; set up without one (the artillery) it turns as a whole
       const faced = fixed && this.part(object, 'Turret')
         ? this.traverse(object, Battlefield.closestPoint(object.position, target), dt)
