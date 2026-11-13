@@ -1,16 +1,20 @@
 """
 Tiberian Fallout – GDI Juggernaut (JUGG), after Tiberian Sun Firestorm.
 
-A walking artillery piece: a boxy cabin in desert camouflage (raked front with a lit
-window band, a roof rack, an antenna, house-colour bands) on a short pelvis and two
-legs like the Titan's. Low in front of the cabin hangs the gun block with three long
-barrels side by side. Two folded spades lie under the cabin pointing back like a tail.
+A walking artillery piece: a compact, angular head in desert camouflage (chamfered
+corners, sides leaning in, a lit window band in its raked front, swept fins on the
+roof's corners, a house-colour number plate on each side, a mast with two antennas at
+the back) on a short pelvis and two sturdy legs (slanted knee plates, shins widening
+down, wide feet with three spread toes and a heel spur). On the head lies a long
+cradle reaching far forward with three long barrels side by side: thick breech
+sleeves held by clamps, slim tubes, square muzzle blocks. Two folded spades lie under
+the head pointing back like a tail.
 
 Like the original it has to set up to fire: the legs crouch, the spades swing down
-behind it into the ground, and the gun block raises its three barrels; set up, the
-cabin with the guns turns towards the target.
+behind it into the ground, and the cradle raises its three barrels; set up, the head
+with the guns turns towards the target.
 
-Rig: empties, no armature (see walker.py): Body → pelvis, spades, Turret (the cabin)
+Rig: empties, no armature (see walker.py): Body → pelvis, spades, Turret (the head)
 → Cradle (raised when deployed) → Cannon (the three barrels); two legs Hip → Knee →
 Ankle.
 
@@ -39,6 +43,7 @@ import math
 import os
 import sys
 
+import bmesh
 from mathutils import Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -63,16 +68,19 @@ FIRE_FRAMES = 30
 DEPLOY_FRAMES = 60
 CROUCH = 0.75                                   # hip angle when set up (knee twice that)
 DROP = (THIGH + SHIN) * (1 - math.cos(CROUCH))  # how far the body sinks
-TURRET = Vector((0, 0.02, HIP_Z + 0.07))        # the cabin's pivot over the pelvis
-LOW, TOP = TURRET.z + 0.01, TURRET.z + 0.33     # the cabin's bottom and roof
-FRONT, BACK = -0.17, 0.24
-GUN = Vector((0, -0.2, LOW + 0.07))             # the gun block's trunnion, in front of the cabin
-BARRELS_X = (-0.07, 0.0, 0.07)
-BARREL = 0.5
-RAISE = math.radians(-30)
+TURRET = Vector((0, 0.02, HIP_Z + 0.07))        # the head's pivot over the pelvis
+LOW, TOP = TURRET.z + 0.01, TURRET.z + 0.31     # the head's bottom and roof
+FRONT, BACK = -0.17, 0.23
+SIDE = 0.2                                      # half the head's width
+GUN = Vector((0, -0.04, TOP + 0.035))           # the cradle's trunnion on the roof
+BARREL_Z = GUN.z + 0.03                         # the barrels' axis
+BARRELS_X = (-0.075, 0.0, 0.075)
+BREECH = (0.07, -0.25)                          # the breech sleeves' ends (y)
+BARREL = 0.6                                    # from the breech sleeve's front to the muzzle
+RAISE = math.radians(-36)
 SPADE_HINGE = Vector((0, 0.2, HIP_Z + 0.02))
 SPADES_X = (-0.07, 0.07)
-SCALE = 1.0
+SCALE = 1.04                                    # the whole walker: a little bigger than the Titan
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
 
@@ -84,8 +92,19 @@ def materials():
         'hazard': material('HazardYellow', srgb('#e0b21c'), 0.6),
         'seam': material('Seam', srgb('#3a3a34'), 0.8),
         'flash': material('GlowFlash', (0, 0, 0), 1.0, emission=srgb('#ffd27a'), strength=6, alpha=0.7),
+        'plate': plate_material(),
     })
     return m
+
+
+def plate_material():
+    """The camouflage's sand as a plain colour, recoloured like it (extras): armour plates,
+    the cradle and the feet, which need no baked pattern of their own."""
+    mat = material('PlateSand', srgb(kit.CAMO['sand']), 0.8)
+    mat['remapLightness'] = kit.CAMO_LIGHTNESS
+    mat['remapSaturation'] = kit.CAMO_SATURATION
+    mat['remapLuminance'] = kit.CAMO_LUMINANCE
+    return mat
 
 
 def camo(obj, root):
@@ -94,9 +113,48 @@ def camo(obj, root):
     return obj
 
 
+# --------------------------------------------------------------------------- shapes
+
+def hull(name, mat, points, bevel=0.008):
+    """A convex solid around `points`: chamfered blocks, wedges, fins, armour plates."""
+    def build(bm):
+        result = bmesh.ops.convex_hull(bm, input=[bm.verts.new(p) for p in points])
+        loose = {v for v in result['geom_interior'] + result['geom_unused'] if isinstance(v, bmesh.types.BMVert)}
+        bmesh.ops.delete(bm, geom=list(loose), context='VERTS')
+        bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(0.5), verts=bm.verts[:], edges=bm.edges[:])
+
+    obj = kit.finish(kit.mesh_object(name, build), mat, bevel)
+    if bevel:  # every edge left is a real one: bevelled (hardened normals), so the facets stay flat
+        obj.modifiers['Bevel'].angle_limit = math.radians(5)
+    return obj
+
+
+def mirrored(points):
+    """The points and their mirror images across x = 0."""
+    return [(s * x, y, z) for x, y, z in points for s in (-1, 1)]
+
+
+def ring(half_x, y0, y1, z, chamfer):
+    """The corners of a rectangle with chamfered corners (the head's plan) at height z."""
+    return [(sx * half_x, y, z) for sx in (-1, 1) for y in (y0 + chamfer, y1 - chamfer)] + \
+           [(sx * (half_x - chamfer), y, z) for sx in (-1, 1) for y in (y0, y1)]
+
+
+def rod(name, mat, p0, p1, radius, segments=10):
+    """A round bar from p0 to p1 (pistons)."""
+    p0, p1 = Vector(p0), Vector(p1)
+    obj = cylinder(name, mat, radius, (p1 - p0).length, (p0 + p1) / 2, segments=segments)
+    obj.rotation_mode = 'QUATERNION'
+    obj.rotation_quaternion = (p1 - p0).to_track_quat('Z', 'Y')
+    return obj
+
+
+RAKE = math.atan2(0.06, TOP - LOW - 0.045)     # the head's front leans back above its foot
+
+
 def front(z):
-    """The cabin's raked front (y) at height z."""
-    return FRONT + (z - LOW) / (TOP - LOW) * 0.08
+    """The head's raked front (y) at height z."""
+    return FRONT + max(z - LOW - 0.045, 0.0) * math.tan(RAKE)
 
 
 # --------------------------------------------------------------------------- body
@@ -109,80 +167,109 @@ def pelvis(m):
         cylinder('Ring', m['steel'], 0.13, 0.03, (TURRET.x, TURRET.y, TURRET.z - 0.0), segments=24),
         box('PelvisBand', m['hazard'], (0.204, 0.02, 0.025), (0, -0.105, HIP_Z + 0.03), bevel=0.003),
         *[box(f'PelvisStripe{k}', m['dark'], (0.02, 0.022, 0.026), (-0.08 + 0.04 * k, -0.106, HIP_Z + 0.03), bevel=0) for k in range(5)],
+        hull('PelvisPlate', m['plate'], mirrored(((0.06, -0.11, HIP_Z + 0.0), (0.045, -0.12, HIP_Z - 0.09),
+                                                  (0.06, -0.09, HIP_Z + 0.0), (0.045, -0.1, HIP_Z - 0.09))), 0.006),
         box('SpadeMount', m['steel'], (0.2, 0.04, 0.04), (0, SPADE_HINGE.y - 0.02, SPADE_HINGE.z), bevel=0.005),
     ])
 
 
 def cabin(m, root):
-    """The cabin with its fittings; returns (shell, details), origin on the turret's pivot."""
-    shell = camo(kit.merge('Cabin', [kit.hexahedron('Cabin', m['sand'], (
-        (-0.19, FRONT, LOW), (0.19, FRONT, LOW), (0.19, BACK, LOW), (-0.19, BACK, LOW),
-        (-0.17, front(TOP), TOP), (0.17, front(TOP), TOP), (0.17, BACK - 0.02, TOP), (-0.17, BACK - 0.02, TOP)), bevel=0.016)], TURRET), root)
-    zw = LOW + 0.24
+    """The head with its fittings; returns (shell, details), origin on the turret's pivot."""
+    mid = LOW + 0.045
+    shell = camo(kit.merge('Cabin', [hull('Cabin', m['sand'], [
+        *ring(SIDE - 0.03, FRONT + 0.035, BACK - 0.035, LOW, 0.025),
+        *ring(SIDE, FRONT, BACK, mid, 0.035),
+        *ring(SIDE, front(TOP - 0.075), BACK, TOP - 0.075, 0.035),
+        *ring(SIDE - 0.035, front(TOP) + 0.015, BACK - 0.03, TOP, 0.025)], 0.01)], TURRET), root)
+    zw = LOW + 0.15
     parts = [
-        box('Window', m['window'], (0.28, 0.012, 0.045), (0, front(zw) - 0.003, zw), bevel=0.004, rotation=(math.radians(-14), 0, 0)),
-        box('WindowBrow', m['pod_dark'], (0.32, 0.03, 0.018), (0, front(zw + 0.04) - 0.01, zw + 0.04), bevel=0.004),
-        *[box(f'WindowBar{k}', m['steel'], (0.01, 0.016, 0.05), (x, front(zw) - 0.006, zw), bevel=0.002, rotation=(math.radians(-14), 0, 0))
-          for k, x in enumerate((-0.05, 0.05))],
-        box('FrontBand', m['remap'], (0.34, 0.012, 0.03), (0, front(LOW + 0.16) - 0.004, LOW + 0.16), bevel=0.003, rotation=(math.radians(-14), 0, 0)),
-        # the roof: a plate, a dark rack with slats as in the cameo, a hatch, the antenna
-        box('Roof', m['sand_light'], (0.3, 0.3, 0.014), (0, 0.06, TOP + 0.006), bevel=0.004),
-        box('Rack', m['pod_dark'], (0.2, 0.18, 0.03), (0.02, 0.1, TOP + 0.026), bevel=0.005),
-        *[box(f'RackSlat{k}', m['steel'], (0.2, 0.01, 0.008), (0.02, 0.03 + 0.035 * k, TOP + 0.044), bevel=0) for k in range(5)],
-        cylinder('Hatch', m['steel'], 0.04, 0.02, (-0.11, -0.03, TOP + 0.016), segments=16),
-        cylinder('HatchLid', m['steel_light'], 0.032, 0.01, (-0.11, -0.03, TOP + 0.03), segments=16),
-        beam('Antenna', m['steel'], (0.14, BACK - 0.05, TOP), (0.16, BACK - 0.02, TOP + 0.4), 0.006),
-        box('AntennaBase', m['steel'], (0.03, 0.03, 0.03), (0.14, BACK - 0.05, TOP + 0.012), bevel=0.004),
-        *detail.lamp('Searchlight', m['steel'], m['lamp_white'], (-0.15, front(TOP) + 0.02, TOP + 0.03), (0, -1, 0), 0.017),
-        box('SearchlightMount', m['steel'], (0.03, 0.04, 0.02), (-0.15, front(TOP) + 0.05, TOP + 0.012), bevel=0.003),
-        *detail.grille('BackVent', m['steel'], m['dark'], (0, BACK + 0.004, LOW + 0.16), 0.2, 0.1, 'Y', 5, 0.008),
-        *detail.lamp('TailLight', m['dark'], m['lamp_red'], (0.13, BACK + 0.006, LOW + 0.26), (0, 1, 0), 0.011),
-        # the trunnion cheeks carrying the gun block's pin
-        *[kit.hexahedron(f'Cheek{s}', m['pod_dark'], (
-            (s * 0.13, GUN.y - 0.03, GUN.z - 0.05), (s * 0.16, GUN.y - 0.03, GUN.z - 0.05), (s * 0.16, FRONT + 0.06, GUN.z - 0.05),
-            (s * 0.13, FRONT + 0.06, GUN.z - 0.05),
-            (s * 0.13, GUN.y - 0.03, GUN.z + 0.04), (s * 0.16, GUN.y - 0.03, GUN.z + 0.04), (s * 0.16, FRONT + 0.06, GUN.z + 0.08),
-            (s * 0.13, FRONT + 0.06, GUN.z + 0.08)), bevel=0.006) for s in (-1, 1)],
+        # the lit window band in the raked front, under a brow
+        box('Window', m['window'], (0.24, 0.012, 0.04), (0, front(zw) - 0.004, zw), bevel=0.004, rotation=(-RAKE, 0, 0)),
+        box('WindowBrow', m['pod_dark'], (0.28, 0.03, 0.016), (0, front(zw + 0.035) - 0.01, zw + 0.035), bevel=0.004),
+        *[box(f'WindowBar{k}', m['steel'], (0.01, 0.016, 0.045), (x, front(zw) - 0.007, zw), bevel=0.002, rotation=(-RAKE, 0, 0))
+          for k, x in enumerate((-0.04, 0.04))],
+        box('FrontBand', m['remap'], (0.3, 0.012, 0.026), (0, front(LOW + 0.07) - 0.006, LOW + 0.07), bevel=0.003, rotation=(-RAKE, 0, 0)),
+        *detail.lamp('HeadlightL', m['dark'], m['lamp_white'], (-0.13, front(zw) - 0.004, zw - 0.005), (0, -1, 0), 0.012),
+        *detail.lamp('HeadlightR', m['dark'], m['lamp_white'], (0.13, front(zw) - 0.004, zw - 0.005), (0, -1, 0), 0.012),
+        # the roof: a plate, the cheeks carrying the cradle's trunnion, a hatch, the mast
+        box('Roof', m['sand_light'], (0.22, 0.26, 0.012), (0, 0.04, TOP + 0.003), bevel=0.004),
+        *[hull(f'Cheek{s}', m['pod_dark'], [
+            (s * 0.13, GUN.y - 0.06, TOP), (s * 0.155, GUN.y - 0.06, TOP), (s * 0.13, GUN.y + 0.08, TOP), (s * 0.155, GUN.y + 0.08, TOP),
+            (s * 0.13, GUN.y - 0.035, GUN.z + 0.025), (s * 0.155, GUN.y - 0.035, GUN.z + 0.025),
+            (s * 0.13, GUN.y + 0.035, GUN.z + 0.025), (s * 0.155, GUN.y + 0.035, GUN.z + 0.025)], 0.005) for s in (-1, 1)],
+        cylinder('Hatch', m['steel'], 0.035, 0.016, (-0.06, 0.14, TOP + 0.012), segments=16),
+        cylinder('HatchLid', m['steel_light'], 0.028, 0.01, (-0.06, 0.14, TOP + 0.024), segments=16),
+        hull('Mast', m['pod_dark'], [(0.03, BACK - 0.08, TOP), (0.12, BACK - 0.08, TOP), (0.03, BACK - 0.03, TOP), (0.12, BACK - 0.03, TOP),
+                                     (0.035, BACK - 0.07, TOP + 0.13), (0.115, BACK - 0.07, TOP + 0.13), (0.035, BACK - 0.035, TOP + 0.13),
+                                     (0.115, BACK - 0.035, TOP + 0.13)], 0.006),
+        box('MastWindow', m['window'], (0.05, 0.008, 0.03), (0.075, BACK - 0.083, TOP + 0.09), bevel=0.002),
+        beam('AntennaL', m['steel'], (0.05, BACK - 0.05, TOP + 0.13), (0.055, BACK - 0.03, TOP + 0.42), 0.006),
+        beam('AntennaR', m['steel'], (0.1, BACK - 0.05, TOP + 0.13), (0.11, BACK - 0.03, TOP + 0.38), 0.006),
+        *detail.grille('BackVent', m['steel'], m['dark'], (0, BACK + 0.004, LOW + 0.13), 0.18, 0.09, 'Y', 5, 0.008),
+        *detail.lamp('TailLight', m['dark'], m['lamp_red'], (-0.12, BACK + 0.004, LOW + 0.2), (0, 1, 0), 0.011),
     ]
     for s in (-1, 1):
-        sx = s * 0.19
+        # swept fins: forward ones rising back from the roof's front corners, rear ones
+        # pointing back and out
+        fx, fy = s * (SIDE - 0.032), front(TOP) + 0.03
         parts += [
-            box(f'SideBand{s}', m['remap'], (0.01, 0.38, 0.03), (s * 0.188, 0.03, LOW + 0.05), bevel=0.003),
-            *detail.grille(f'SideVent{s}', m['steel'], m['dark'], (s * 0.184, 0.1, LOW + 0.17), 0.12, 0.06, 'X', 4, 0.008),
-            *detail.rivets(f'SideRivets{s}', m['steel_light'], (s * 0.181, -0.08, LOW + 0.28), (s * 0.181, 0.2, LOW + 0.28), 6, axis='X'),
-            *detail.seam(f'SideSeam{s}', m['seam'], (s * 0.185, -0.02, LOW + 0.08), (s * 0.18, -0.02, TOP - 0.02)),
-            box(f'Step{s}', m['steel'], (0.03, 0.06, 0.01), (sx + s * 0.012, 0.16, LOW + 0.08), bevel=0.002),
+            hull(f'FinFront{s}', m['plate'], [
+                (fx, fy, TOP - 0.03), (fx + s * 0.014, fy, TOP - 0.03), (fx, fy + 0.12, TOP - 0.03), (fx + s * 0.014, fy + 0.12, TOP - 0.03),
+                (fx, fy + 0.15, TOP + 0.085), (fx + s * 0.014, fy + 0.15, TOP + 0.085),
+                (fx, fy + 0.11, TOP + 0.085), (fx + s * 0.014, fy + 0.11, TOP + 0.085)], 0.003),
+            hull(f'FinBack{s}', m['plate'], [
+                (fx, BACK - 0.12, TOP - 0.03), (fx + s * 0.014, BACK - 0.12, TOP - 0.03),
+                (fx, BACK - 0.02, TOP - 0.03), (fx + s * 0.014, BACK - 0.02, TOP - 0.03),
+                (fx + s * 0.04, BACK + 0.07, TOP + 0.035), (fx + s * 0.054, BACK + 0.07, TOP + 0.035),
+                (fx + s * 0.03, BACK + 0.03, TOP + 0.035), (fx + s * 0.044, BACK + 0.03, TOP + 0.035)], 0.003),
+            # the number plate on the side, bolted on
+            box(f'NumberPlate{s}', m['remap'], (0.012, 0.13, 0.075), (s * (SIDE + 0.005), -0.02, LOW + 0.14), bevel=0.003),
+            *detail.rivets(f'PlateRivets{s}', m['steel_light'], (s * (SIDE + 0.012), -0.07, LOW + 0.166), (s * (SIDE + 0.012), 0.03, LOW + 0.166), 4,
+                           axis='X'),
+            *detail.grille(f'SideVent{s}', m['steel'], m['dark'], (s * (SIDE + 0.002), 0.135, LOW + 0.14), 0.08, 0.06, 'X', 4, 0.008),
+            *detail.seam(f'SideSeam{s}', m['seam'], (s * (SIDE + 0.002), 0.065, mid + 0.01), (s * (SIDE + 0.002), 0.065, TOP - 0.08)),
+            *detail.rivets(f'SideRivets{s}', m['steel_light'], (s * (SIDE + 0.003), -0.13, TOP - 0.085), (s * (SIDE + 0.003), 0.2, TOP - 0.085), 8,
+                           axis='X'),
+            box(f'Step{s}', m['steel'], (0.03, 0.06, 0.01), (s * (SIDE - 0.02), 0.16, LOW + 0.012), bevel=0.002),
         ]
     return shell, kit.merge('CabinDetails', parts, TURRET)
 
 
 def gun(m, turret):
-    """Cradle → Cannon with the gun block, the three barrels (each its own object, they
-    recoil in turn) and their flashes; returns (cradle, barrels, flashes)."""
+    """Cradle → Cannon with the cradle's tray, the three barrels (each its own object,
+    they recoil in turn) and their flashes; returns (cradle, barrels, flashes)."""
     cradle = kit.parent(kit.empty('Cradle', GUN), turret)
     pivot = kit.parent(walker.joint('Cannon', None, GUN), cradle)
-    y0, y1 = GUN.y - 0.005, GUN.y - 0.17
-    block = [
-        kit.hexahedron('GunBlock', m['sand_light'], (
-            (-0.12, y1, GUN.z - 0.06), (0.12, y1, GUN.z - 0.06), (0.12, y0, GUN.z - 0.06), (-0.12, y0, GUN.z - 0.06),
-            (-0.11, y1 + 0.02, GUN.z + 0.06), (0.11, y1 + 0.02, GUN.z + 0.06), (0.11, y0, GUN.z + 0.05), (-0.11, y0, GUN.z + 0.05)), bevel=0.012),
-        box('GunBand', m['remap'], (0.244, 0.03, 0.08), (0, y0 - 0.05, GUN.z - 0.005), bevel=0.004),
-        cylinder('GunPin', m['steel_light'], 0.025, 0.3, GUN, rotation=(0, math.pi / 2, 0), segments=12),
-        box('GunFace', m['pod_dark'], (0.23, 0.012, 0.1), (0, y1 - 0.004, GUN.z), bevel=0.003),
-        *detail.rivets('GunRivets', m['steel_light'], (-0.09, y1 + 0.03, GUN.z + 0.062), (0.09, y1 + 0.03, GUN.z + 0.062), 5, axis='Z'),
+    back, nose = BREECH[0] + 0.02, BREECH[1] - 0.05
+    tray = [
+        # the tray under the barrels, its nose bevelled, side walls with ribs
+        hull('Tray', m['plate'], mirrored(((0.125, back, GUN.z - 0.03), (0.125, back, GUN.z + 0.02), (0.125, nose + 0.04, GUN.z - 0.03),
+                                           (0.125, nose, GUN.z + 0.02), (0.11, nose, GUN.z - 0.005)))),
+        cylinder('GunPin', m['steel_light'], 0.022, 0.32, GUN, rotation=(0, math.pi / 2, 0), segments=12),
+        box('TrayBand', m['hazard'], (0.254, 0.03, 0.03), (0, nose + 0.035, GUN.z + 0.0), bevel=0.003),
+        *[box(f'TrayStripe{k}', m['dark'], (0.018, 0.032, 0.032), (-0.1 + 0.04 * k, nose + 0.035, GUN.z + 0.0), bevel=0) for k in range(6)],
+        *detail.rivets('TrayRivetsL', m['steel_light'], (-0.127, back - 0.03, GUN.z - 0.005), (-0.127, nose + 0.08, GUN.z - 0.005), 6, axis='X'),
+        *detail.rivets('TrayRivetsR', m['steel_light'], (0.127, back - 0.03, GUN.z - 0.005), (0.127, nose + 0.08, GUN.z - 0.005), 6, axis='X'),
     ]
-    kit.parent(kit.merge('GunBlock', block, GUN), pivot)
+    # clamps over the breech sleeves
+    for k, y in enumerate((BREECH[0] - 0.06, BREECH[1] + 0.06)):
+        tray += [box(f'Clamp{k}', m['pod_dark'], (0.26, 0.028, 0.02), (0, y, BARREL_Z + 0.036), bevel=0.004),
+                 *[box(f'ClampPost{k}{s}', m['pod_dark'], (0.016, 0.028, 0.07), (s * 0.122, y, BARREL_Z + 0.005), bevel=0.003) for s in (-1, 1)]]
+    kit.parent(kit.merge('GunBlock', tray, GUN), pivot)
     barrels, flashes = [], []
     for k, x in enumerate(BARRELS_X):
-        at = Vector((x, y1, GUN.z))
+        at = Vector((x, BREECH[1], BARREL_Z))
         tip = at - Vector((0, BARREL, 0))
+        sleeve = BREECH[0] - BREECH[1]
         parts = [
-            cylinder(f'Sleeve{k}', m['steel'], 0.03, 0.12, at - Vector((0, 0.04, 0)), rotation=(math.pi / 2, 0, 0), segments=14),
-            cylinder(f'Tube{k}', m['steel_light'], 0.02, BARREL - 0.08, at - Vector((0, (BARREL - 0.08) / 2 + 0.06, 0)), rotation=(math.pi / 2, 0, 0),
+            cylinder(f'Sleeve{k}', m['plate'], 0.033, sleeve, at + Vector((0, sleeve / 2, 0)), rotation=(math.pi / 2, 0, 0), segments=14),
+            cylinder(f'SleeveCap{k}', m['steel'], 0.028, 0.012, at + Vector((0, sleeve + 0.004, 0)), rotation=(math.pi / 2, 0, 0), segments=12),
+            cylinder(f'Collar{k}', m['steel'], 0.03, 0.03, at - Vector((0, 0.01, 0)), rotation=(math.pi / 2, 0, 0), segments=12),
+            cylinder(f'Tube{k}', m['steel_light'], 0.02, BARREL - 0.06, at - Vector((0, (BARREL - 0.06) / 2, 0)), rotation=(math.pi / 2, 0, 0),
                      segments=12),
-            cylinder(f'Collar{k}', m['steel'], 0.025, 0.025, at - Vector((0, 0.28, 0)), rotation=(math.pi / 2, 0, 0), segments=12),
-            cylinder(f'Brake{k}', m['pod_dark'], 0.028, 0.05, tip + Vector((0, 0.025, 0)), rotation=(math.pi / 2, 0, 0), segments=12),
-            cylinder(f'Bore{k}', m['dark'], 0.012, 0.004, tip - Vector((0, 0.001, 0)), rotation=(math.pi / 2, 0, 0), segments=10, bevel=0),
+            cylinder(f'Band{k}', m['steel'], 0.023, 0.02, at - Vector((0, BARREL * 0.5, 0)), rotation=(math.pi / 2, 0, 0), segments=12),
+            box(f'Muzzle{k}', m['pod_dark'], (0.058, 0.07, 0.058), tip + Vector((0, 0.035, 0)), bevel=0.006),
+            cylinder(f'Bore{k}', m['dark'], 0.013, 0.004, tip - Vector((0, 0.001, 0)), rotation=(math.pi / 2, 0, 0), segments=10, bevel=0),
         ]
         barrels.append(kit.parent(kit.merge(f'Barrel{k}', parts, at), pivot))
         muzzle = tip - Vector((0, 0.05, 0))
@@ -196,7 +283,7 @@ def gun(m, turret):
 def spade(m, x):
     """A spade, built set up (down and back into the ground behind the crouching
     walker); origin on its hinge. Returns it and its stowed rotation (pointing back,
-    a little up, under the cabin)."""
+    a little up, under the head)."""
     hinge = Vector((x, SPADE_HINGE.y, SPADE_HINGE.z))
     foot = Vector((x, SPADE_HINGE.y + 0.24, 0.02 + DROP))   # on the ground once the body has sunk
     d = foot - hinge
@@ -218,47 +305,79 @@ def spade(m, x):
 # --------------------------------------------------------------------------- legs
 
 def leg(m, root, name, hip, body):
-    """One heavy leg on its joints, centred under the hip; returns the walker.Leg."""
+    """One sturdy leg on its joints, centred under the hip; returns the walker.Leg."""
     joints = walker.Leg(name, body, hip, THIGH, SHIN)
     knee, ankle = hip - Vector((0, 0, THIGH)), hip - Vector((0, 0, THIGH + SHIN))
     x, y = hip.x, hip.y
     s = 1 if x > 0 else -1
-    thigh = camo(kit.merge(f'{name}Thigh', [kit.hexahedron(f'{name}Thigh', m['sand'], (
-        (x - 0.055, y - 0.065, knee.z + 0.02), (x + 0.055, y - 0.065, knee.z + 0.02), (x + 0.055, y + 0.055, knee.z + 0.02), (x - 0.055, y + 0.055, knee.z + 0.02),
-        (x - 0.065, y - 0.085, hip.z - 0.02), (x + 0.065, y - 0.085, hip.z - 0.02), (x + 0.065, y + 0.075, hip.z - 0.02), (x - 0.065, y + 0.075, hip.z - 0.02)),
-        bevel=0.014)], hip), root)
+    thigh = camo(kit.merge(f'{name}Thigh', [hull(f'{name}Thigh', m['sand'], [
+        (x - 0.055, y - 0.065, knee.z + 0.02), (x + 0.055, y - 0.065, knee.z + 0.02), (x + 0.055, y + 0.06, knee.z + 0.02), (x - 0.055, y + 0.06, knee.z + 0.02),
+        (x - 0.068, y - 0.095, hip.z - 0.07), (x + 0.068, y - 0.095, hip.z - 0.07),
+        (x - 0.068, y - 0.075, hip.z + 0.01), (x + 0.068, y - 0.075, hip.z + 0.01), (x + 0.068, y + 0.08, hip.z + 0.01), (x - 0.068, y + 0.08, hip.z + 0.01)],
+        0.012)], hip), root)
     kit.parent(thigh, joints.hip)
+    out = x + s * 0.069
     top, low = hip.z - 0.04, knee.z + 0.05
-    ox = x + s * 0.062
     kit.parent(kit.merge(f'{name}ThighDetails', [
-        box(f'{name}ThighPlate', m['sand_light'], (0.09, 0.012, 0.08), (x, y - 0.083, hip.z - 0.09), bevel=0.003),
-        *detail.rivets(f'{name}ThighRivetsF', m['steel_light'], (ox, y - 0.045, top), (ox, y - 0.045, low), 4, axis='X'),
-        *detail.rivets(f'{name}ThighRivetsB', m['steel_light'], (ox, y + 0.045, top), (ox, y + 0.045, low), 4, axis='X'),
-        cylinder(f'{name}HipJoint', m['steel'], 0.055, 0.09, hip, rotation=(0, math.pi / 2, 0), segments=16),
+        hull(f'{name}ThighPlate', m['plate'], [(out, y - 0.075, hip.z - 0.02), (out, y + 0.07, hip.z - 0.02), (out, y - 0.06, knee.z + 0.05),
+                                               (out, y + 0.055, knee.z + 0.05), (out + s * 0.014, y - 0.065, hip.z - 0.03),
+                                               (out + s * 0.014, y + 0.06, hip.z - 0.03), (out + s * 0.014, y - 0.05, knee.z + 0.06),
+                                               (out + s * 0.014, y + 0.045, knee.z + 0.06)], 0.004),
+        *detail.rivets(f'{name}ThighRivetsF', m['steel_light'], (out + s * 0.015, y - 0.045, top), (out + s * 0.015, y - 0.045, low), 4, axis='X'),
+        *detail.rivets(f'{name}ThighRivetsB', m['steel_light'], (out + s * 0.015, y + 0.04, top), (out + s * 0.015, y + 0.04, low), 4, axis='X'),
+        cylinder(f'{name}HipJoint', m['steel'], 0.058, 0.1, hip, rotation=(0, math.pi / 2, 0), segments=16),
     ], hip), joints.hip)
-    shin = camo(kit.merge(f'{name}Shin', [kit.hexahedron(f'{name}Shin', m['sand'], (
-        (x - 0.06, y - 0.075, ankle.z + 0.05), (x + 0.06, y - 0.075, ankle.z + 0.05), (x + 0.06, y + 0.055, ankle.z + 0.05), (x - 0.06, y + 0.055, ankle.z + 0.05),
-        (x - 0.05, y - 0.065, knee.z - 0.01), (x + 0.05, y - 0.065, knee.z - 0.01), (x + 0.05, y + 0.045, knee.z - 0.01), (x - 0.05, y + 0.045, knee.z - 0.01)),
-        bevel=0.014)], knee), root)
+    shin = camo(kit.merge(f'{name}Shin', [hull(f'{name}Shin', m['sand'], [
+        (x - 0.05, y - 0.06, knee.z - 0.02), (x + 0.05, y - 0.06, knee.z - 0.02), (x + 0.05, y + 0.05, knee.z - 0.02), (x - 0.05, y + 0.05, knee.z - 0.02),
+        (x - 0.065, y - 0.095, ankle.z + 0.08), (x + 0.065, y - 0.095, ankle.z + 0.08),
+        (x - 0.065, y - 0.075, ankle.z + 0.045), (x + 0.065, y - 0.075, ankle.z + 0.045),
+        (x + 0.062, y + 0.06, ankle.z + 0.05), (x - 0.062, y + 0.06, ankle.z + 0.05)], 0.012)], knee), root)
     kit.parent(shin, joints.knee)
     kit.parent(kit.merge(f'{name}Knee', [
         cylinder(f'{name}KneeJoint', m['steel'], 0.045, 0.14, knee, rotation=(0, math.pi / 2, 0), segments=14),
-        box(f'{name}KneeCap', m['pod_dark'], (0.1, 0.05, 0.08), knee + Vector((0, -0.07, 0.0)), bevel=0.012),
-        box(f'{name}ShinPlate', m['remap'], (0.09, 0.02, 0.1), knee + Vector((0, -0.077, -0.11)), bevel=0.006, rotation=(math.radians(-3), 0, 0)),
-        beam(f'{name}Piston', m['steel_light'], knee + Vector((0, 0.06, -0.02)), ankle + Vector((0, 0.055, 0.07)), 0.02),
-        beam(f'{name}PistonSleeve', m['steel'], knee + Vector((0, 0.057, -0.02)), knee + Vector((0, 0.057, -0.1)), 0.03),
-        *detail.grille(f'{name}ShinVent', m['steel'], m['dark'], (x + s * 0.058, y - 0.01, knee.z - 0.11), 0.06, 0.06, 'X', 3, 0.008),
-        box(f'{name}AnkleGuard', m['pod_dark'], (0.11, 0.03, 0.05), ankle + Vector((0, -0.082, 0.06)), bevel=0.006),
+        # the slanted knee plate, leaning forward over the joint
+        hull(f'{name}KneePlate', m['plate'], [(x - 0.058, y - 0.055, knee.z + 0.065), (x + 0.058, y - 0.055, knee.z + 0.065),
+                                              (x - 0.062, y - 0.105, knee.z - 0.01), (x + 0.062, y - 0.105, knee.z - 0.01),
+                                              (x - 0.052, y - 0.078, knee.z - 0.065), (x + 0.052, y - 0.078, knee.z - 0.065),
+                                              (x - 0.058, y - 0.03, knee.z), (x + 0.058, y - 0.03, knee.z)], 0.008),
+        box(f'{name}KneeStripe', m['remap'], (0.112, 0.012, 0.018), (x, y - 0.098, knee.z + 0.018), bevel=0.002, rotation=(math.radians(-58), 0, 0)),
+        hull(f'{name}ShinPlate', m['remap'], [(x - 0.042, y - 0.068, knee.z - 0.085), (x + 0.042, y - 0.068, knee.z - 0.085),
+                                              (x - 0.05, y - 0.1, ankle.z + 0.09), (x + 0.05, y - 0.1, ankle.z + 0.09),
+                                              (x - 0.042, y - 0.056, knee.z - 0.085), (x + 0.042, y - 0.056, knee.z - 0.085),
+                                              (x - 0.05, y - 0.088, ankle.z + 0.09), (x + 0.05, y - 0.088, ankle.z + 0.09)], 0.004),
+        rod(f'{name}Piston', m['steel_light'], knee + Vector((0, 0.065, -0.02)), ankle + Vector((0, 0.06, 0.06)), 0.012),
+        rod(f'{name}PistonSleeve', m['steel'], knee + Vector((0, 0.065, -0.02)), knee + Vector((0, 0.065, -0.1)), 0.018),
+        *detail.grille(f'{name}ShinVent', m['steel'], m['dark'], (x + s * 0.058, y - 0.015, knee.z - 0.1), 0.06, 0.06, 'X', 3, 0.008),
     ], knee), joints.knee)
+    # the foot: a wide plate, three toes spread forward, a heel spur
     foot = [
-        box(f'{name}Foot', m['pod_dark'], (0.14, 0.18, 0.045), ankle + Vector((0, -0.02, -0.008)), bevel=0.01),
-        box(f'{name}Heel', m['steel'], (0.07, 0.07, 0.035), ankle + Vector((0, 0.1, -0.013)), bevel=0.008),
-        cylinder(f'{name}AnkleJoint', m['steel'], 0.032, 0.11, ankle + Vector((0, 0, 0.02)), rotation=(0, math.pi / 2, 0), segments=12),
+        hull(f'{name}Foot', m['plate'], [
+            (x - 0.09, -0.11, ankle.z - 0.03), (x + 0.09, -0.11, ankle.z - 0.03), (x + 0.09, 0.1, ankle.z - 0.03), (x - 0.09, 0.1, ankle.z - 0.03),
+            (x - 0.075, -0.09, ankle.z + 0.008), (x + 0.075, -0.09, ankle.z + 0.008), (x + 0.075, 0.085, ankle.z + 0.008),
+            (x - 0.075, 0.085, ankle.z + 0.008)], 0.008),
+        box(f'{name}FootSole', m['pod_dark'], (0.184, 0.214, 0.01), ankle + Vector((0, -0.005, -0.026)), bevel=0.003),
+        hull(f'{name}AnkleBlock', m['pod_dark'], [(x - 0.055, -0.065, ankle.z), (x + 0.055, -0.065, ankle.z), (x + 0.055, 0.065, ankle.z),
+                                                  (x - 0.055, 0.065, ankle.z), (x - 0.045, -0.045, ankle.z + 0.045), (x + 0.045, -0.045, ankle.z + 0.045),
+                                                  (x + 0.045, 0.05, ankle.z + 0.045), (x - 0.045, 0.05, ankle.z + 0.045)], 0.008),
+        cylinder(f'{name}AnkleJoint', m['steel'], 0.032, 0.12, ankle + Vector((0, 0, 0.022)), rotation=(0, math.pi / 2, 0), segments=12),
+        hull(f'{name}Heel', m['plate'], [(x - 0.03, 0.09, ankle.z - 0.03), (x + 0.03, 0.09, ankle.z - 0.03), (x - 0.02, 0.18, ankle.z - 0.03),
+                                         (x + 0.02, 0.18, ankle.z - 0.03), (x - 0.03, 0.085, ankle.z + 0.01), (x + 0.03, 0.085, ankle.z + 0.01),
+                                         (x - 0.016, 0.17, ankle.z - 0.012), (x + 0.016, 0.17, ankle.z - 0.012)], 0.005),
     ]
     for t in (-1, 0, 1):
-        foot.append(box(f'{name}Toe{t}', m['steel'], (0.04, 0.09, 0.035), ankle + Vector((t * 0.045, -0.135, -0.013)), bevel=0.008, rotation=(0, 0, t * 0.2)))
-        foot.append(box(f'{name}Claw{t}', m['dark'], (0.03, 0.035, 0.022), ankle + Vector((t * 0.055, -0.19, -0.02)), bevel=0.005,
-                        rotation=(math.radians(-15), 0, t * 0.2)))
+        a = t * 0.25
+        d, n = Vector((math.sin(a), -math.cos(a), 0)), Vector((math.cos(a), math.sin(a), 0))
+        base = Vector((x + t * 0.055, -0.1, ankle.z))
+        tip = base + d * 0.085
+        foot += [
+            hull(f'{name}Toe{t}', m['plate'], [base + n * 0.027 + Vector((0, 0, -0.03)), base - n * 0.027 + Vector((0, 0, -0.03)),
+                                               base + n * 0.025 + Vector((0, 0, 0.004)), base - n * 0.025 + Vector((0, 0, 0.004)),
+                                               tip + n * 0.019 + Vector((0, 0, -0.03)), tip - n * 0.019 + Vector((0, 0, -0.03)),
+                                               tip + n * 0.017 + Vector((0, 0, -0.014)), tip - n * 0.017 + Vector((0, 0, -0.014))], 0.005),
+            hull(f'{name}Claw{t}', m['steel'], [tip + n * 0.017 + Vector((0, 0, -0.03)), tip - n * 0.017 + Vector((0, 0, -0.03)),
+                                                tip + n * 0.015 + Vector((0, 0, -0.014)), tip - n * 0.015 + Vector((0, 0, -0.014)),
+                                                tip + d * 0.03 + Vector((0, 0, -0.03)), tip + d * 0.026 + Vector((0, 0, -0.025))], 0.003),
+        ]
     kit.parent(kit.merge(f'{name}Foot', foot, ankle), joints.ankle)
     return joints
 
