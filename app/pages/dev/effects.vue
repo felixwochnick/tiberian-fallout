@@ -40,7 +40,7 @@ const info = (object: THREE.Object3D): BuildInfo | undefined => {
   const id = object.userData.id as string
   return {
     id, name: id, structure: !!object.userData.footprint, cost: 0, seconds: 0, power: 0, foundation: [1, 1], adjacent: 2,
-    voices: { select: [], move: [], attack: [], die: [], feedback: [] }, techLevel: 1, sight: 6, speed: 0, category: object.userData.footprint ? 'structure' : 'vehicle', passengers: 0, ammo: 0, jumpjet: false, fearless: false, crewed: false, crushSound: [], cloakable: false, cloakDeployed: false, cloakRadius: 0, cloakRadiusDeployed: false, sensors: false, manualOnly: false, takeOffSound: [], landSound: [], wall: false, gate: false, strength: 100000, repairable: true, sellable: true, storage: 10,
+    voices: { select: [], move: [], attack: [], die: [], feedback: [] }, techLevel: 1, sight: 6, speed: 0, category: object.userData.footprint ? 'structure' : 'vehicle', passengers: 0, ammo: 0, jumpjet: false, fearless: false, crewed: false, crushSound: [], cloakable: false, cloakDeployed: false, cloakRadius: 0, cloakRadiusDeployed: false, sensors: false, deployToFire: false, manualOnly: false, takeOffSound: [], landSound: [], wall: false, gate: false, strength: 100000, repairable: true, sellable: true, storage: 10,
     armor: ['E1', 'E2', 'E3', 'ENGINEER'].includes(id) ? 0 : 2, weapon: WEAPONS[id],
     crusher: ['MMCH', 'HARV'].includes(id), crushable: ['E1', 'E2', 'E3', 'ENGINEER', 'GASAND'].includes(id), explosionReports: [],
   }
