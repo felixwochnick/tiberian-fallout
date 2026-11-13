@@ -10,6 +10,9 @@ Gilt auf jedem Rechner (diese Datei liegt im Repo). Überblick über Aufbau und 
 - Fehlt die Git-Identität auf dem Rechner, nicht global konfigurieren, sondern pro Commit:
   `git -c "user.name=Felix Wochnick" -c user.email=felix@wochnick.me commit …`
 - Nicht pushen und nicht auf `main` committen, außer es wird ausdrücklich verlangt.
+- `.blend`-Dateien liegen in Git LFS (`.gitattributes`). Vor dem ersten Commit auf einem Rechner prüfen, dass
+  `git lfs version` geht, sonst landen sie roh im Repo; nach dem Klonen `git lfs install --local` und `git lfs pull`
+  (ohne LFS sind die `.blend` nur Verweise, die Blender nicht öffnen kann).
 
 ## Testen
 
