@@ -1,15 +1,19 @@
 """
 Tiberian Fallout – GDI Carryall (TRNSPORT), after Tiberian Sun.
 
-A long transport VTOL, after the build icon (about one and a half cells long): a slim
-fuselage with a glazed nose cockpit, a spine with intakes and a tail with a fin and
-house-colour tips; two pairs of short wings, at the front and at the back, carry four
-ducted fans (rings round four-bladed fans with hubs in the house colour). Under the
-middle of the fuselage the cargo clamp: a winch housing with four clamp arms; the
-carried vehicle hangs there. Four gear legs with pads.
+A long transport VTOL (about one and a half cells long). In front a rounded cockpit
+under a wide, faceted glass canopy (light frame, two red chin lamps, an intake behind
+it); the middle carries the cargo frame: a broad hood with sloped side plates and two
+house-colour stripes on top, under its edges four hinged clamp arms on each side and
+under its middle the cargo clamp (winch housing, cable, clamp plate): the carried
+vehicle hangs there. A narrower boom runs back to a tall, rounded tail fin with the GDI
+emblem and a house-colour tip. Two pairs of short arms with house-colour stripes, at
+the front and at the back, carry four ducted fans: thick faceted rings with a dark
+skirt and vents below, a fan of five blades round a house-colour hub over a stator.
+Four gear legs with pads.
 
-The fuselage, wings and ducts wear the light camouflage of GDI (baked, tinted with the
-house colour in the game: GAPILE.camo_material).
+The fuselage, hood, boom, fin, arms and ducts wear the light camouflage of GDI (baked,
+tinted with the house colour in the game: GAPILE.camo_material).
 
 Nodes for the game: "Hook" (under the clamp, where the carried vehicle hangs; it sways
 with the body); the ducts tilt on "Duct0"…"Duct3", their fans turn on "Fan0"…"Fan3",
@@ -32,13 +36,13 @@ import math
 import os
 import sys
 
-import bmesh
 from mathutils import Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import GAPILE as kit  # noqa: E402
-import DSHP  # noqa: E402 – loft()
+import DSHP  # noqa: E402 – decal_material(), quad(), on_side(): the GDI emblem
+import ORCA  # noqa: E402 – section_loft(), canopy(), ring()
 import aircraft as air  # noqa: E402
 import detail  # noqa: E402
 
@@ -46,28 +50,45 @@ OUT = os.path.join(air.PROJECT, 'public', 'models', 'TRNSPORT.glb')
 BLEND = os.path.join(HERE, 'TRNSPORT.blend')
 
 BELLY = 0.2                        # underside of the fuselage, landed
-DUCT_X = 0.36
+DUCT_X = 0.37
 DUCT_Z = 0.31
-DUCT_Y = (-0.36, 0.4)              # front and rear pair
-DUCT_R, DUCT_H = 0.13, 0.07        # inner radius, height; the ring is 0.025 thick
+DUCT_Y = (-0.42, 0.42)             # front and rear pair
+DUCT_R, DUCT_OUT, DUCT_H = 0.13, 0.165, 0.075  # inner and outer radius, height of a duct's ring
 TILT_FLY = -12                     # degrees about x: the ducts lean forward in flight
-HOOK_AT = Vector((0, 0.02, BELLY - 0.1))
+HOOD = (-0.32, 0.2)                # the cargo hood from y to y
+HOOK_AT = Vector((0, -0.05, BELLY - 0.1))
 FAN_SPEED = 2 * (2 * math.pi) / air.FLY_FRAMES   # two turns per Fly loop
 
 box, cylinder, sphere, beam, srgb, material = kit.box, kit.cylinder, kit.sphere, kit.beam, kit.srgb, kit.material
-loft = DSHP.loft
 HIDDEN = kit.HIDDEN
 
-HULL = (  # y, half width, bottom, top
-    (-0.76, 0.03, 0.27, 0.31), (-0.7, 0.08, 0.23, 0.36), (-0.58, 0.11, BELLY, 0.39), (0.0, 0.11, BELLY, 0.39),
-    (0.45, 0.09, 0.22, 0.37), (0.62, 0.05, 0.26, 0.35), (0.72, 0.03, 0.29, 0.34),
+# y, right half of the cross section (x, z) from the bottom up: the nose, the cockpit,
+# the middle under the hood, the boom narrowing to the tail
+HULL = (
+    (-0.78, ((0.03, 0.255), (0.05, 0.265), (0.052, 0.3), (0.032, 0.315))),
+    (-0.73, ((0.065, 0.225), (0.098, 0.24), (0.104, 0.3), (0.07, 0.35))),
+    (-0.63, ((0.08, 0.205), (0.118, 0.222), (0.124, 0.3), (0.08, 0.39))),
+    (-0.5, ((0.085, BELLY), (0.122, 0.215), (0.126, 0.31), (0.085, 0.4))),
+    (0.22, ((0.085, BELLY), (0.12, 0.215), (0.124, 0.33), (0.08, 0.395))),
+    (0.45, ((0.055, 0.24), (0.085, 0.252), (0.088, 0.345), (0.058, 0.38))),
+    (0.78, ((0.025, 0.3), (0.036, 0.305), (0.036, 0.345), (0.025, 0.358))),
 )
+CANOPY = range(1, 4)   # the hull sections the glass runs over
+HOOD_SECTIONS = (  # the side plates: upright below, sloping in above
+    (HOOD[0], ((0.14, 0.29), (0.18, 0.302), (0.18, 0.33), (0.155, 0.39), (0.11, 0.418))),
+    (HOOD[0] + 0.05, ((0.17, 0.262), (0.222, 0.276), (0.222, 0.33), (0.19, 0.4), (0.14, 0.432))),
+    (HOOD[1] - 0.06, ((0.17, 0.262), (0.222, 0.276), (0.222, 0.33), (0.19, 0.4), (0.14, 0.432))),
+    (HOOD[1], ((0.13, 0.29), (0.17, 0.302), (0.17, 0.33), (0.145, 0.385), (0.1, 0.414))),
+)
+CLAWS = (-0.24, -0.11, 0.02, 0.13)  # y of the clamp arms under the hood's edges
+# the tail fin's outline (y, z): the root on the boom, the trailing edge, a rounded top
+FIN = ((0.48, 0.36), (0.775, 0.33), (0.78, 0.47),
+       *[(0.7 + 0.08 * math.cos(math.radians(a)), 0.47 + 0.08 * math.sin(math.radians(a))) for a in range(15, 131, 23)])
 
 
 def materials():
-    m = kit.materials()
+    m = ORCA.materials()
     m.update({
-        'glass': material('Canopy', srgb('#1a2632'), 0.1, 0.6, emission=srgb('#22384a'), strength=0.4),
         'blade': material('FanBlade', srgb('#3a3d40'), 0.5, 0.6),
         'blur': material('FanBlur', srgb('#2a2c2e'), 0.8, alpha=0.25),
     })
@@ -81,22 +102,18 @@ def camo(obj, root, name):
     return obj
 
 
-def ring(name, mat, centre, inner, outer, height, segments=24):
-    """An open ring (a duct) round the vertical through `centre`."""
+def lathe(name, mat, centre, profile, segments=16):
+    """A solid of revolution round the vertical through `centre`: the closed outline
+    `profile` ((r, z) points) turned once round; flat shaded."""
     def build(bm):
-        rings = []
-        for r in (inner, outer):
-            for z in (-height / 2, height / 2):
-                rings.append([bm.verts.new((r * math.cos(2 * math.pi * k / segments), r * math.sin(2 * math.pi * k / segments), z))
-                              for k in range(segments)])
-        ib, it, ob, ot = rings
+        rings = [[bm.verts.new((r * math.cos(a), r * math.sin(a), z)) for r, z in profile]
+                 for a in (2 * math.pi * (k + 0.5) / segments for k in range(segments))]
+        n = len(profile)
         for k in range(segments):
-            j = (k + 1) % segments
-            bm.faces.new((ib[k], ib[j], it[j], it[k]))
-            bm.faces.new((ob[k], ot[k], ot[j], ob[j]))
-            bm.faces.new((it[k], it[j], ot[j], ot[k]))
-            bm.faces.new((ib[k], ob[k], ob[j], ib[j]))
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+            a, b = rings[k], rings[(k + 1) % segments]
+            for i in range(n):
+                j = (i + 1) % n
+                bm.faces.new((a[i], a[j], b[j], b[i]))
 
     obj = kit.mesh_object(name, build)
     obj.location = centre
@@ -106,82 +123,139 @@ def ring(name, mat, centre, inner, outer, height, segments=24):
     return obj
 
 
+def plate(name, mat, outline, x, half):
+    """A flat plate (the fin) from a convex outline of (y, z) points, `half` thick each
+    way of x."""
+    def build(bm):
+        sides = [[bm.verts.new((x + d, y, z)) for y, z in outline] for d in (-half, half)]
+        bm.faces.new(sides[0])
+        bm.faces.new(list(reversed(sides[1])))
+        n = len(outline)
+        for k in range(n):
+            j = (k + 1) % n
+            bm.faces.new((sides[0][k], sides[0][j], sides[1][j], sides[1][k]))
+
+    obj = kit.mesh_object(name, build)
+    kit.finish(obj, mat, 0)
+    return obj
+
+
 def hull(m, root):
-    """Fuselage and wings in camouflage (one object) and their fittings."""
-    wings = []
-    for i, y in enumerate(DUCT_Y):
-        x0 = DUCT_X - DUCT_R
-        wings.append(kit.hexahedron(f'Wing{i}', m['sand'], (
-            (-x0, y - 0.06, 0.29), (x0, y - 0.06, 0.29), (x0, y + 0.06, 0.29), (-x0, y + 0.06, 0.29),
-            (-x0, y - 0.05, 0.325), (x0, y - 0.05, 0.325), (x0, y + 0.06, 0.32), (-x0, y + 0.06, 0.32)), bevel=0))
-    shell = kit.merge('Hull', [loft('Fuselage', m['sand'], HULL, chamfer=0.45), *wings])
+    """Fuselage, hood, fin and the ducts' arms in camouflage (one object), their
+    fittings and the emblems."""
+    arms = []
+    for y in DUCT_Y:
+        x1 = DUCT_X - DUCT_R - 0.01   # into the duct's wall
+        arms.append(kit.hexahedron(f'Arm{y}', m['sand'], (
+            (-x1, y - 0.055, DUCT_Z - 0.022), (x1, y - 0.055, DUCT_Z - 0.022), (x1, y + 0.05, DUCT_Z - 0.022), (-x1, y + 0.05, DUCT_Z - 0.022),
+            (-x1, y - 0.045, DUCT_Z + 0.018), (x1, y - 0.045, DUCT_Z + 0.018), (x1, y + 0.05, DUCT_Z + 0.014), (-x1, y + 0.05, DUCT_Z + 0.014)),
+            bevel=0))
+    shell = kit.merge('Hull', [
+        ORCA.section_loft('Fuselage', m['sand'], HULL),
+        ORCA.section_loft('Hood', m['sand'], HOOD_SECTIONS),
+        plate('Fin', m['sand'], FIN, 0, 0.012),
+        *arms,
+    ])
     for poly in shell.data.polygons:
         poly.use_smooth = False
     camo(shell, root, 'Hull')
 
+    top = 0.432
     parts = [
-        loft('Canopy', m['glass'], ((-0.74, 0.03, 0.28, 0.31), (-0.7, 0.075, 0.25, 0.35), (-0.6, 0.1, 0.26, 0.4),
-                                    (-0.5, 0.08, 0.33, 0.405))),
-        box('CanopyFrame', m['dark'], (0.012, 0.24, 0.012), (0, -0.62, 0.41), bevel=0.003),
-        box('Spine', m['sand_light'], (0.1, 0.8, 0.03), (0, -0.04, 0.395), bevel=0.01),
-        box('SpineStripe', m['remap'], (0.04, 0.6, 0.032), (0, -0.04, 0.398), bevel=0.004),
-        *[box(f'IntakeSlat{k}', m['dark'], (0.08, 0.012, 0.014), (0, 0.4 + 0.024 * k, 0.4), bevel=0) for k in range(4)],
-        # the tail fin with a house-colour tip
-        kit.hexahedron('Fin', m['sand_light'], (
-            (-0.01, 0.52, 0.36), (0.01, 0.52, 0.36), (0.01, 0.7, 0.34), (-0.01, 0.7, 0.34),
-            (-0.008, 0.66, 0.5), (0.008, 0.66, 0.5), (0.008, 0.75, 0.5), (-0.008, 0.75, 0.5)), bevel=0.003),
-        kit.hexahedron('FinTip', m['remap'], (
-            (-0.011, 0.645, 0.47), (0.011, 0.645, 0.47), (0.011, 0.742, 0.47), (-0.011, 0.742, 0.47),
-            (-0.009, 0.66, 0.502), (0.009, 0.66, 0.502), (0.009, 0.752, 0.502), (-0.009, 0.752, 0.502)), bevel=0.002),
-        box('TailLight', m['lamp_white'], (0.016, 0.012, 0.012), (0, 0.73, 0.32), bevel=0),
-        # the cargo clamp: winch housing, cable drum, four arms reaching down and in
-        box('Winch', m['steel'], (0.14, 0.2, 0.05), (0, HOOK_AT.y, BELLY - 0.02), bevel=0.01),
+        *ORCA.canopy('Canopy', m, [HULL[k] for k in CANOPY], (2, 3), frame=0.009),
+        # behind the canopy an intake, a spine with a stripe along the boom
+        box('IntakeFrame', m['steel'], (0.1, 0.08, 0.014), (0, -0.44, 0.402), bevel=0.003),
+        *[box(f'IntakeSlat{k}', m['dark'], (0.086, 0.009, 0.014), (0, -0.47 + 0.015 * k, 0.405), bevel=0) for k in range(5)],
+        box('BoomSpine', m['sand_light'], (0.06, 0.34, 0.02), (0, 0.38, 0.39), bevel=0.006),
+        box('BoomStripe', m['remap'], (0.062, 0.05, 0.022), (0, 0.27, 0.39), bevel=0.004),
+        # the hood: two house-colour stripes, a hatch and seams between them
+        *[box(f'HoodStripe{s}', m['remap'], (0.03, HOOD[1] - HOOD[0] - 0.12, 0.008), (s * 0.095, (HOOD[0] + HOOD[1]) / 2, top + 0.002),
+              bevel=0.002) for s in (-1, 1)],
+        box('HoodHatch', m['sand_light'], (0.1, 0.12, 0.01), (0, -0.16, top + 0.003), bevel=0.003),
+        *[detail.seam(f'HoodSeam{k}', m['dark'], (-0.075, y, top + 0.002), (0.075, y, top + 0.002), 0.004, 0.003)[0]
+          for k, y in enumerate((-0.02, 0.08))],
+        *detail.lamp('Beacon', m['dark'], m['lamp_red'], (0, 0.05, top + 0.004), (0, 0, 1), 0.012),
+        # the tail fin's house-colour tip and lights
+        plate('FinTip', m['remap'], [(0.7 + 0.083 * math.cos(math.radians(a)), 0.47 + 0.083 * math.sin(math.radians(a))) for a in range(0, 131, 26)],
+              0, 0.014),
+        box('TailLight', m['lamp_white'], (0.016, 0.012, 0.012), (0, 0.785, 0.32), bevel=0),
+        # the cargo clamp under the hood's middle: winch housing, cable drum, cable, clamp plate
+        box('Winch', m['steel'], (0.15, 0.22, 0.05), (0, HOOK_AT.y, BELLY - 0.02), bevel=0.01),
+        box('WinchStripe', m['remap'], (0.152, 0.03, 0.052), (0, HOOK_AT.y - 0.07, BELLY - 0.02), bevel=0.004),
         cylinder('WinchDrum', m['dark'], 0.025, 0.12, (0, HOOK_AT.y, BELLY - 0.05), rotation=(0, math.pi / 2, 0), segments=12, bevel=0),
-        box('ClampPlate', m['steel_light'], (0.09, 0.09, 0.015), (0, HOOK_AT.y, HOOK_AT.z + 0.02), bevel=0.004),
         beam('HookCable', m['dark'], (0, HOOK_AT.y, BELLY - 0.05), (0, HOOK_AT.y, HOOK_AT.z + 0.02), 0.008),
-        box('HookStripe', m['remap'], (0.142, 0.03, 0.052), (0, HOOK_AT.y, BELLY - 0.02), bevel=0.004),
+        box('ClampPlate', m['steel_light'], (0.1, 0.1, 0.016), (0, HOOK_AT.y, HOOK_AT.z + 0.02), bevel=0.004),
+        *[beam(f'ClampHook{k}', m['dark'], (sx * 0.04, HOOK_AT.y, HOOK_AT.z + 0.015), (sx * 0.045, HOOK_AT.y, HOOK_AT.z - 0.012), 0.012)
+          for k, sx in enumerate((-1, 1))],
     ]
-    for sx in (-1, 1):
-        for sy in (-1, 1):
-            top = Vector((sx * 0.05, HOOK_AT.y + sy * 0.07, BELLY - 0.03))
-            knee = Vector((sx * 0.1, HOOK_AT.y + sy * 0.12, BELLY - 0.08))
-            tip = Vector((sx * 0.08, HOOK_AT.y + sy * 0.1, HOOK_AT.z - 0.01))
-            parts += [beam(f'ClampArm{sx}{sy}', m['steel'], top, knee, 0.016),
-                      beam(f'ClampClaw{sx}{sy}', m['dark'], knee, tip, 0.014)]
     for s in (-1, 1):
         parts += [
-            *detail.lamp(f'ChinLamp{s}', m['dark'], m['lamp_red'], (s * 0.05, -0.72, 0.25), (0, -1, -0.3), 0.012),
-            box(f'NoseStripe{s}', m['remap'], (0.01, 0.14, 0.024), (s * 0.108, -0.45, 0.3), bevel=0.003),
-            *[box(f'SideSlit{s}{k}', m['dark'], (0.008, 0.06, 0.012), (s * 0.112, -0.2 + 0.12 * k, 0.33), bevel=0.002) for k in range(4)],
-            box(f'Door{s}', m['sand_light'], (0.008, 0.14, 0.1), (s * 0.111, -0.4, 0.28), bevel=0.002),
+            *detail.lamp(f'ChinLamp{s}', m['dark'], m['lamp_red'], (s * 0.05, -0.75, 0.25), (0, -1, -0.3), 0.012),
+            box(f'NoseStripe{s}', m['remap'], (0.008, 0.16, 0.016), (s * 0.121, -0.54, 0.222), bevel=0.002),
+            box(f'Door{s}', m['sand_light'], (0.008, 0.09, 0.058), (s * 0.123, -0.58, 0.264), bevel=0.002),
+            # the hood's side plate: a vent and rivets
+            *detail.grille(f'HoodVent{s}', m['steel'], m['dark'], (s * 0.225, -0.05, 0.303), 0.12, 0.034, 'X', slats=3, depth=0.01),
+            *detail.rivets(f'HoodRivets{s}', m['steel'], (s * 0.224, -0.25, 0.322), (s * 0.224, 0.13, 0.322), 9, 0.005, 'X'),
+            *detail.seam(f'HoodSideSeam{s}', m['dark'], (s * 0.207, -0.25, 0.364), (s * 0.207, 0.13, 0.364), 0.005, 0.004),
         ]
-    return shell, kit.merge('HullDetails', parts)
+        # the clamp arms under the hood's edge: a hinge, the arm, the claw turned in
+        for k, y in enumerate(CLAWS):
+            top_at = Vector((s * 0.2, y, 0.27))
+            knee = Vector((s * 0.215, y, 0.165))
+            tip = Vector((s * 0.175, y, 0.095))
+            parts += [
+                cylinder(f'ClawHinge{s}{k}', m['steel_light'], 0.014, 0.04, top_at, rotation=(math.pi / 2, 0, 0), segments=10, bevel=0.002),
+                beam(f'ClawArm{s}{k}', m['steel'], top_at, knee, 0.022, 0.03),
+                cylinder(f'ClawKnee{s}{k}', m['dark'], 0.012, 0.034, knee, rotation=(math.pi / 2, 0, 0), segments=8, bevel=0),
+                beam(f'ClawTip{s}{k}', m['dark'], knee, tip, 0.018, 0.026),
+            ]
+        # the arms' house-colour stripes
+        for y in DUCT_Y:
+            x0, x1 = 0.11 if y < 0 else 0.08, DUCT_X - DUCT_OUT + 0.006
+            parts.append(box(f'ArmStripe{s}{y}', m['remap'], (x1 - x0, 0.03, 0.008), (s * (x0 + x1) / 2, y + 0.005, DUCT_Z + 0.018), bevel=0.002))
+    details = kit.merge('HullDetails', parts)
+
+    emblem = DSHP.decal_material()
+    emblems = kit.merge('Emblems', [DSHP.on_side(DSHP.quad(f'Emblem{s}', emblem, 0.1, 0.1), s, Vector((s * 0.012, 0.68, 0.43)))
+                                    for s in (-1, 1)])
+    return shell, details, emblems
 
 
 def duct(m, root, i, centre):
-    """A duct with its pylon (tilting about x on the empty), the fan inside it and
-    the fan's blur disc."""
+    """A duct (tilting about x on the empty), the fan inside it and the fan's blur
+    disc."""
     s = 1 if centre.x > 0 else -1
-    shell = ring(f'DuctRing{i}', m['sand'], centre, DUCT_R, DUCT_R + 0.025, DUCT_H)
+    h = DUCT_H / 2
+    shell = lathe(f'DuctRing{i}', m['sand'], centre, (
+        (DUCT_R, -h + 0.012), (DUCT_R, h), (DUCT_OUT - 0.018, h), (DUCT_OUT, h - 0.016), (DUCT_OUT, -h + 0.02), (DUCT_OUT - 0.012, -h + 0.012)))
     shell = kit.merge(f'DuctShell{i}', [shell], centre)
     camo(shell, root, f'Duct{i}')
+    vents = []
+    for k in range(8):
+        a = 2 * math.pi * (k + 0.5) / 8
+        out = Vector((math.cos(a), math.sin(a), 0))
+        vents.append(box(f'Vent{i}{k}', m['dark'], (0.006, 0.034, 0.018), centre + out * (DUCT_OUT - 0.001) + Vector((0, 0, -h + 0.03)),
+                         bevel=0, rotation=(0, 0, a)))
     parts = [
-        ring(f'DuctLip{i}', m['remap'], centre + Vector((0, 0, DUCT_H / 2 + 0.004)), DUCT_R + 0.002, DUCT_R + 0.027, 0.008),
-        ring(f'DuctBand{i}', m['steel'], centre - Vector((0, 0, DUCT_H / 2 + 0.004)), DUCT_R + 0.002, DUCT_R + 0.027, 0.008),
+        # the skirt under the ring, a light rim round the top
+        ORCA.ring(f'Skirt{i}', m['steel'], centre - Vector((0, 0, h)), DUCT_R, DUCT_OUT - 0.014, 0.026, 16),
+        ORCA.ring(f'Rim{i}', m['steel_light'], centre + Vector((0, 0, h + 0.002)), DUCT_R - 0.002, DUCT_R + 0.01, 0.006, 16),
+        *vents,
         # stator struts across the duct under the fan, the motor in the middle
         *[beam(f'Stator{i}{k}', m['dark'], centre + Vector((math.cos(a) * DUCT_R, math.sin(a) * DUCT_R, -0.025)),
-               centre + Vector((-math.cos(a) * DUCT_R, -math.sin(a) * DUCT_R, -0.025)), 0.012, 0.008)
-          for k, a in enumerate((0.0, math.pi / 2))],
-        cylinder(f'Motor{i}', m['steel'], 0.03, 0.03, centre - Vector((0, 0, 0.025)), segments=12, bevel=0.003),
+               centre + Vector((0, 0, -0.025)), 0.012, 0.008)
+          for k, a in enumerate(2 * math.pi * (k + 0.25) / 3 for k in range(3))],
+        cylinder(f'Motor{i}', m['steel'], 0.034, 0.034, centre - Vector((0, 0, 0.024)), segments=12, bevel=0.003),
         *detail.lamp(f'Nav{i}', m['dark'], m['lamp_green' if s > 0 else 'lamp_red'],
-                     centre + Vector((s * (DUCT_R + 0.03), 0, 0)), (s, 0, 0), 0.01),
+                     centre + Vector((s * (DUCT_OUT + 0.004), 0, 0.012)), (s, 0, 0), 0.011),
     ]
     details = kit.merge(f'DuctDetails{i}', parts, centre)
-    blades = [cylinder(f'FanHub{i}', m['remap'], 0.025, 0.025, centre + Vector((0, 0, 0.005)), segments=12, bevel=0.003)]
-    for k in range(4):
-        a = math.pi / 4 + k * math.pi / 2
+    blades = [cylinder(f'FanHub{i}', m['remap'], 0.03, 0.022, centre + Vector((0, 0, 0.004)), segments=12, bevel=0.003),
+              cylinder(f'FanCone{i}', m['steel_light'], 0.024, 0.026, centre + Vector((0, 0, 0.026)), segments=12, bevel=0, radius2=0.006)]
+    for k in range(5):
+        a = 0.1 + k * 2 * math.pi / 5
         d = Vector((math.cos(a), math.sin(a), 0))
-        blades.append(beam(f'FanBlade{i}{k}', m['blade'], centre + d * 0.02, centre + d * (DUCT_R - 0.008), 0.032, 0.006))
+        blades.append(beam(f'FanBlade{i}{k}', m['blade'], centre + d * 0.024, centre + d * (DUCT_R - 0.008), 0.006, 0.036))
     fan = kit.merge(f'Fan{i}', blades, centre)
     blur = kit.merge(f'FanBlur{i}', [cylinder(f'FanDisc{i}', m['blur'], DUCT_R - 0.005, 0.004, centre + Vector((0, 0, 0.012)),
                                               segments=24, bevel=0)], centre)
@@ -190,10 +264,11 @@ def duct(m, root, i, centre):
 
 def gear(m):
     parts = []
-    for name, (x, y) in (('FrontL', (-0.08, -0.45)), ('FrontR', (0.08, -0.45)), ('RearL', (-0.08, 0.35)), ('RearR', (0.08, 0.35))):
+    for name, (x, y) in (('FrontL', (-0.08, -0.52)), ('FrontR', (0.08, -0.52)), ('RearL', (-0.08, 0.2)), ('RearR', (0.08, 0.2))):
         parts += [
             cylinder(f'Leg{name}', m['steel_light'], 0.013, BELLY, (x, y, BELLY / 2), segments=8, bevel=0),
             cylinder(f'Strut{name}', m['steel'], 0.02, 0.05, (x, y, BELLY - 0.035), segments=8, bevel=0.002),
+            beam(f'Link{name}', m['steel'], (x, y + 0.022, BELLY - 0.012), (x, y + 0.006, 0.045), 0.009),
             cylinder(f'Pad{name}', m['dark'], 0.032, 0.012, (x, y, 0.006), segments=12, bevel=0.002),
         ]
     return kit.merge('Gear', parts, (0, 0, BELLY))
