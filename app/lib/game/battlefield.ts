@@ -6,6 +6,7 @@ import { Flight } from './flight'
 import { findPath, type NavMap } from './pathfinding'
 import { Cell, LEVEL_HEIGHT, Terrain, type TerrainOptions } from './terrain'
 import { terrainGeometry } from './terrain-mesh'
+import { groundCover, type Prop, scatterProps, type Theater } from './landscape'
 import { Unit } from './unit'
 import { Dropship, type DropshipFlight } from './dropship'
 import { CARGO_SLOTS, type CargoSlot, SLOT_STAGES, TIBERIUM_RIPE, type TiberiumCell, type TiberiumKind } from './tiberium'
@@ -44,6 +45,14 @@ const SIGN_BLINK = 2
 const TIBERIUM_GROWTH = 15
 /** How far (cells) the green shine of Tiberium reaches over the ground round a field */
 const TIBERIUM_SHINE = 4
+/**
+ * Chance per frame of the original (15 per second) that a Tiberium tree puffs its spores:
+ * AnimationProbability= of [TIBTRE01] – on average every 333 frames, about 22 s
+ */
+const TREE_SPREAD_CHANCE = 0.003
+const TREE_FRAMES_PER_SECOND = 15
+/** Seconds into the tree's Spread clip when its spores lie over the cells round it (see blender/TIBTRE.py) */
+const TREE_SPORES = 1.2
 
 /** Height (cells) of the placeholder buildings until they have models */
 const PLACEHOLDER_HEIGHT: Record<string, number> = {
@@ -175,8 +184,14 @@ const SCROLL_SPEED = 1100
  */
 const SUN_LIGHT = { colour: 0xffeccc, intensity: 1.6 }
 const SKY_LIGHT = { sky: 0x9aa6b8, ground: 0x3a342a, intensity: 0.55 }
+/** On a snow map the light is cold: a pale bluish sun, the snow throwing light back up */
+const SNOW_SUN_LIGHT = { colour: 0xe6eeff, intensity: 1.5 }
+const SNOW_SKY_LIGHT = { sky: 0xa8b8d0, ground: 0x7a8494, intensity: 0.6 }
 const GROUND_LIGHT = 0.68
 const GROUND_GREY = 0.25
+/** The snow theater is brighter and keeps its blue-white (SNOW.INI's palette) */
+const SNOW_LIGHT = 0.78
+const SNOW_GREY = 0.08
 
 const NOISE = /* glsl */ `
   float hash(vec2 p) {
@@ -193,8 +208,11 @@ const NOISE = /* glsl */ `
 
 /**
 /**
- * Plain temperate ground: dry ochre earth like in Tiberian Sun (no cell grid, like the
- * original). Tiberium colours it, like in help/tiberium/: `tibMap` holds one texel per
+ * The ground: temperate, dry ochre earth like in Tiberian Sun (no cell grid, like the
+ * original) with patches of sand, grass and rough ground; on a snow map (`snow` = 1)
+ * snow with ice and rock showing through. `coverMap` holds the cells' cover (one texel
+ * per cell over `tibRect`, see landscape.ts groundCover), frayed at the edges by noise.
+ * Tiberium colours it, like in help/tiberium/: `tibMap` holds one texel per
  * cell over the rectangle `tibRect` (x, z of its corner, its size in cells), red = the
  * cell's growth stage / 3, green = the shine of the Tiberium round it (TIBERIUM_SHINE
  * cells far, see Battlefield.shineTiberium), blue = how much of that shine comes from
@@ -233,6 +251,8 @@ const GroundShader = {
     varying float vRamp;
     uniform sampler2D tibMap;
     uniform vec4 tibRect;
+    uniform sampler2D coverMap;
+    uniform float snow;
     uniform float time;
     uniform vec3 sun;
     uniform vec4 area;
@@ -261,6 +281,47 @@ const GroundShader = {
       earth = mix(earth, vec3(0.3, 0.23, 0.15), pebble * 0.7);
       float glint = smoothstep(0.9, 0.93, noise(c * 9.0 + 17.3));
       earth += vec3(0.08, 0.07, 0.05) * glint;
+      // the cells' cover (landscape.ts: sand, grass, rough ground; in the snow ice and rock),
+      // frayed at the edges like the original's LAT tiles
+      vec2 coverWarp = vec2(fbm(c * 0.7 + 13.1), fbm(c * 0.7 + 4.3)) - 0.5;
+      vec4 coverCell = texture2D(coverMap, (c + coverWarp * 1.4 - tibRect.xy) / tibRect.zw);
+      float fray = (fbm(c * 1.7 + 9.0) - 0.5) * 0.36 + (noise(c * 6.0 + 1.0) - 0.5) * 0.16;
+      float firstShare = smoothstep(0.25, 0.7, coverCell.r + fray);
+      float grassShare = smoothstep(0.25, 0.7, coverCell.g + fray);
+      float roughShare = smoothstep(0.25, 0.7, coverCell.b + fray * 1.2) * 0.8;
+      // snow: pale blue-grey, rippled by the wind (wavering ridges with a darker lee), a sparkle here and there
+      vec3 snowy = mix(vec3(0.68, 0.77, 0.89), vec3(0.84, 0.91, 0.98), fbm(c * 0.4 + 2.0)) * (0.95 + 0.08 * grain);
+      float drifts = smoothstep(0.45, 0.75, fbm(c * 0.25 + 17.0));
+      float ripple = sin(dot(c, vec2(3.4, 1.9)) * 2.0 + fbm(c * 1.3 + 3.0) * 9.0) * fbm(c * 2.0 + 5.0);
+      snowy *= 1.0 + (0.035 * ripple - 0.05 * smoothstep(0.25, 0.6, -ripple)) * drifts;
+      snowy += vec3(0.08) * smoothstep(0.93, 0.96, noise(c * 14.0 + 7.0));
+      if (snow < 0.5) {
+        // sand: pale and fine, with low ripples
+        vec3 sand = mix(vec3(0.5, 0.39, 0.25), vec3(0.63, 0.5, 0.33), fbm(c * 0.35 + 5.0));
+        sand *= 0.94 + 0.035 * sin(dot(c, vec2(1.3, 2.1)) * 2.4 + fbm(c * 0.8) * 6.0) + 0.06 * grain;
+        // grass: dark olive with lighter blades
+        vec3 grass = mix(vec3(0.17, 0.21, 0.06), vec3(0.3, 0.34, 0.1), fbm(c * 1.8 + 3.0));
+        grass = mix(grass, vec3(0.42, 0.44, 0.16), smoothstep(0.75, 0.9, noise(c * 11.0 + 2.0)) * 0.6);
+        grass *= 0.85 + 0.3 * fbm(c * 7.0 + 1.0);
+        // rough: dark grey-brown, strewn with stones lit on one side
+        vec3 rough = mix(vec3(0.31, 0.28, 0.23), vec3(0.45, 0.39, 0.3), fbm(c * 2.5 + 8.0));
+        rough *= 0.86 + 0.28 * grain;
+        float stone = smoothstep(0.66, 0.74, noise(c * 6.0 + 4.0));
+        rough = mix(rough, vec3(0.52, 0.5, 0.46), stone * 0.6);
+        rough = mix(rough, vec3(0.18, 0.16, 0.14), smoothstep(0.66, 0.74, noise(c * 6.0 + 4.06)) * (1.0 - stone) * 0.5);
+        earth = mix(earth, sand, firstShare);
+        earth = mix(earth, grass, grassShare);
+        earth = mix(earth, rough, roughShare);
+      }
+      else {
+        // ice: smooth, pale blue, with long streaks
+        vec3 ice = mix(vec3(0.6, 0.73, 0.9), vec3(0.75, 0.85, 0.97), fbm(vec2(c.x * 0.3, c.y * 3.0) + 4.0));
+        // rock showing through, snow in its hollows
+        vec3 bare = mix(vec3(0.4, 0.44, 0.5), vec3(0.58, 0.62, 0.68), fbm(c * 2.0 + 6.0));
+        bare = mix(snowy * 0.94, bare, smoothstep(0.52, 0.72, fbm(c * 2.6 + 1.0)) * 0.7);
+        earth = mix(snowy, ice, firstShare);
+        earth = mix(earth, bare, roughShare);
+      }
       // Tiberium: olive green far round a field, greener under the crystals
       vec2 warp = vec2(fbm(c * 0.9 + 3.1), fbm(c * 0.9 + 8.7)) - 0.5;
       vec4 tibCell = texture2D(tibMap, (c + warp * 0.9 - tibRect.xy) / tibRect.zw);
@@ -270,9 +331,11 @@ const GroundShader = {
       // colour the earth, not cover it: its grain, patches and pebbles stay as they are
       float tint = smoothstep(0.04, 0.55, shine + (fbm(c * 1.1 + 2.0) - 0.5) * 0.18);
       float lum = dot(earth, vec3(0.3, 0.55, 0.15));
-      earth = mix(earth, lum * mix(vec3(0.92, 1.12, 0.42), vec3(0.66, 0.86, 1.2), blue), tint * 0.85);
+      // on snow the light ground would turn lime: there the stain is weaker and darker
+      float stain = mix(1.0, 0.62, snow);
+      earth = mix(earth, lum * stain * mix(vec3(0.92, 1.12, 0.42), vec3(0.66, 0.86, 1.2), blue), tint * mix(0.85, 0.55, snow));
       float cover = smoothstep(0.12, 0.3, tib + (fbm(c * 2.3 + 5.0) - 0.5) * 0.2);
-      earth = mix(earth, lum * mix(vec3(0.7, 1.05, 0.36), vec3(0.5, 0.8, 1.25), blue), cover * 0.6);
+      earth = mix(earth, lum * stain * mix(vec3(0.7, 1.05, 0.36), vec3(0.5, 0.8, 1.25), blue), cover * 0.6);
       // grit of broken crystals
       float speck = smoothstep(0.87, 0.91, noise(c * 13.0 + 29.0)) * cover;
       earth = mix(earth, mix(vec3(0.3, 0.72, 0.24), vec3(0.25, 0.5, 0.9), blue), speck * 0.8);
@@ -281,6 +344,8 @@ const GroundShader = {
       vec3 gravel = mix(vec3(0.34, 0.32, 0.29), vec3(0.56, 0.53, 0.48), fbm(c * 4.0 + 3.0));
       gravel *= 0.8 + 0.4 * grain;
       gravel = mix(gravel, vec3(0.22, 0.21, 0.2), smoothstep(0.8, 0.86, noise(c * 7.0 + 5.0)) * 0.8);
+      // in the snow the broken rock lies half under snow
+      gravel = mix(gravel, mix(snowy, gravel * vec3(0.9, 0.97, 1.08), smoothstep(0.4, 0.6, fbm(c * 3.5 + 2.0))), snow);
       earth = mix(earth, gravel, stony * 0.85);
       // cliffs: grey rock in upright columns with dark clefts between them (like
       // Tiberian Sun's), lighter on the rim, darker and browner towards the scree at the foot
@@ -298,6 +363,12 @@ const GroundShader = {
       vec3 scree = mix(vec3(0.27, 0.24, 0.2), vec3(0.4, 0.36, 0.3), fbm(c * 7.0 + vHeight * 9.0));
       float screeLine = 0.12 + 0.14 * fbm(vec2(along * 3.0, 1.0));
       rock = mix(rock, scree, smoothstep(screeLine + 0.04, screeLine - 0.04, rise) * 0.75);
+      // snow: blue-grey rock, snow on its ledges and the rim, drifts at the foot
+      float drift = smoothstep(0.55, 0.75, fbm(vec2(along * 3.0, vHeight * 2.0) + 5.0));
+      vec3 frozen = rock * vec3(0.88, 0.97, 1.1);
+      frozen = mix(frozen, snowy * 0.9, max(smoothstep(0.75, 0.95, rise), drift * 0.7));
+      frozen = mix(frozen, snowy * 0.85, smoothstep(screeLine + 0.04, screeLine - 0.04, rise) * 0.8);
+      rock = mix(rock, frozen, snow);
       earth = mix(earth, rock, steep);
       // lit by the sun like the models: flat ground as before, slopes facing it brighter, the others darker
       vec3 l = normalize(sun);
@@ -312,28 +383,58 @@ const GroundShader = {
       float lit = (0.45 + 0.75 * max(dot(bumped, l), 0.0)) / (0.45 + 0.75 * l.y);
       // hollows hold shadow
       lit *= 1.0 - 0.25 * relief * smoothstep(0.5, 0.25, fbm(c * 2.2));
-      // ramps: rough broken rock and stony earth, ridges and clefts running down the
-      // slope, ragged where they meet the ground round them
+      // ramps: like the original's, rough brown earth and broken rock furrowed down the
+      // slope (ridges and clefts running downhill), ragged where they meet the ground round them
       vec2 down = normalize(n.xz + vec2(1e-4));
       vec2 slope = vec2(dot(c, down), dot(c, vec2(-down.y, down.x)));
       float ridges = fbm(vec2(slope.x * 1.2, slope.y * 4.5) + 31.0);
-      vec3 rampRock = mix(vec3(0.28, 0.26, 0.23), vec3(0.55, 0.52, 0.47), ridges);
-      rampRock = mix(rampRock, vec3(0.45, 0.36, 0.25), smoothstep(0.45, 0.7, fbm(c * 1.3 + 9.0)) * 0.5);
+      vec3 rampRock = mix(vec3(0.27, 0.23, 0.18), vec3(0.54, 0.47, 0.37), ridges);
+      rampRock = mix(rampRock, vec3(0.47, 0.37, 0.25), smoothstep(0.45, 0.7, fbm(c * 1.3 + 9.0)) * 0.5);
       rampRock *= 0.7 + 0.5 * fbm(c * 6.0 + 4.0);
       rampRock *= 1.0 - smoothstep(0.62, 0.7, fbm(vec2(slope.x * 2.0, slope.y * 7.0) + 2.0)) * 0.45;
-      // only where it slopes: a ramp's four steps (and a terrace's slope) show as bands
-      // of broken rock with earth between them, where one step levels out into the next
+      rampRock = mix(rampRock, mix(snowy * 0.92, rampRock * vec3(0.9, 0.97, 1.08), smoothstep(0.5, 0.7, ridges)), snow);
+      // only where it slopes: the ramp and a terrace's slope, not the level ground round them
       float sloping = smoothstep(0.995, 0.94, n.y);
       float onRamp = smoothstep(0.15, 0.45, vRamp + (fbm(c * 2.2 + 21.0) - 0.5) * 0.4) * sloping;
       earth = mix(earth, rampRock, onRamp * 0.9);
       earth *= lit * vShade;
       // the gloomy light of the map: darker and greyer
-      earth = mix(earth, vec3(dot(earth, vec3(0.3, 0.55, 0.15))), ${GROUND_GREY.toFixed(2)}) * ${GROUND_LIGHT.toFixed(2)};
+      earth = mix(earth, vec3(dot(earth, vec3(0.3, 0.55, 0.15))), mix(${GROUND_GREY.toFixed(2)}, ${SNOW_GREY.toFixed(2)}, snow))
+        * mix(${GROUND_LIGHT.toFixed(2)}, ${SNOW_LIGHT.toFixed(2)}, snow);
       // under the crystals the ground glows a little, pulsing slowly out of step
       float pulse = 0.5 + 0.5 * sin(time * 3.14159 + fbm(c * 0.5) * 6.0);
       earth *= 1.0 + mix(vec3(0.02, 0.12, 0.02), vec3(0.02, 0.06, 0.14), blue) * cover * pulse;
       gl_FragColor = vec4(earth, 1.0);
     }`,
+}
+
+/**
+ * The cliffs' rock on a snow map: bluish grey, with snow on whatever faces up (the
+ * ledges and the rim), like the snow theater's cliffs. A copy of the material.
+ */
+function snowCovered(source: THREE.MeshStandardMaterial) {
+  const material = source.clone()
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vSnowUp;\nvarying vec3 vSnowAt;')
+      .replace('#include <beginnormal_vertex>', /* glsl */ `#include <beginnormal_vertex>
+        vec3 snowNormal = objectNormal;
+        vec4 snowAt = vec4(position, 1.0);
+        #ifdef USE_INSTANCING
+          snowNormal = mat3(instanceMatrix) * snowNormal;
+          snowAt = instanceMatrix * snowAt;
+        #endif
+        vSnowUp = normalize(mat3(modelMatrix) * snowNormal).y;
+        vSnowAt = (modelMatrix * snowAt).xyz;`)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying float vSnowUp;\nvarying vec3 vSnowAt;\n${NOISE}`)
+      .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
+        // grey-blue stone; snow on what faces up and in streaks caught on the faces
+        vec3 stone = vec3(dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15))) * vec3(0.72, 0.86, 1.15);
+        float caught = smoothstep(0.5, 0.64, fbm(vec2(vSnowAt.x + vSnowAt.z, vSnowAt.y * 1.6) * 2.2)) * 0.85;
+        diffuseColor.rgb = mix(stone, vec3(0.84, 0.92, 1.05), max(smoothstep(0.25, 0.6, vSnowUp), caught));`)
+  }
+  return material
 }
 
 /** How much of a unit's size (half its longest side) keeps buildings off the cells round it */
@@ -417,8 +518,21 @@ export class Battlefield {
   /** Tiberium on the map by cell ("x,z"): its stage and its model (TIB.glb, one variant) */
   private readonly tiberium = new Map<string, TiberiumCell & { object: THREE.Object3D }>()
   private tiberiumTimer = 0
+  /** TIB.glb, loaded once (addTiberium) */
+  private tiberiumUrl?: string
+  private tiberiumModel?: Promise<GLTF>
   /** Seconds for the pulsing shine of the Tiberium on the ground (see GroundShader) */
   private readonly groundTime: THREE.IUniform<number>
+  /** 1 on a snow map (the ground shader's theater) */
+  private readonly groundSnow: THREE.IUniform<number>
+  /** The cells' cover for the ground shader (landscape.ts groundCover) */
+  private readonly cover: THREE.DataTexture
+  /** The map's theater (shapeTerrain) */
+  theater: Theater = 'temperate'
+  /** Cells taken by a terrain object that blocks them ("x,z"): trees, big rocks, Tiberium trees */
+  private readonly obstacles = new Set<string>()
+  /** The terrain objects (PROPS.glb), one instanced mesh per variant and mesh */
+  private props: THREE.InstancedMesh[] = []
   /** The cells' Tiberium stages for the ground shader (see GroundShader) */
   private readonly tiberiumGround: { texture: THREE.DataTexture, x: number, z: number, w: number, h: number }
   /** Preview of a structure being placed: its cells, green where it may go, red otherwise */
@@ -450,6 +564,7 @@ export class Battlefield {
   private readonly shadowLayer: THREE.Mesh
   /** The sun: lights the models and casts their shadows, round the part of the map in view */
   private readonly sun = new THREE.DirectionalLight(SUN_LIGHT.colour, SUN_LIGHT.intensity)
+  private readonly sky = new THREE.HemisphereLight(SKY_LIGHT.sky, SKY_LIGHT.ground, SKY_LIGHT.intensity)
 
   constructor(private readonly container: HTMLElement, readonly width: number, readonly height: number) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -475,11 +590,18 @@ export class Battlefield {
     texture.needsUpdate = true
     this.tiberiumGround = { texture, x: x0, z: z0, w, h }
     this.terrain = new Terrain(x0, z0, w, h)
+    // the cells' cover (sand, grass, rough …, see landscape.ts), over the same cells: bare until shapeTerrain
+    const cover = new THREE.DataTexture(new Uint8Array(w * h * 4), w, h)
+    cover.magFilter = cover.minFilter = THREE.LinearFilter
+    cover.needsUpdate = true
+    this.cover = cover
     const material = new THREE.ShaderMaterial({
       ...GroundShader,
       uniforms: {
         tibMap: { value: texture },
         tibRect: { value: new THREE.Vector4(x0, z0, w, h) },
+        coverMap: { value: cover },
+        snow: { value: 0 },
         time: { value: 0 },
         sun: { value: SUN_DIRECTION.clone() },
         area: { value: new THREE.Vector4(0, width, 0, height) },
@@ -488,7 +610,8 @@ export class Battlefield {
       },
     })
     this.groundTime = material.uniforms.time!
-    this.disposables.push(material, texture)
+    this.groundSnow = material.uniforms.snow!
+    this.disposables.push(material, texture, cover)
     this.ground = new THREE.Mesh(this.groundGeometry(), material)
     // the cliffs cast their shadows over the ground below them
     this.ground.castShadow = true
@@ -508,7 +631,7 @@ export class Battlefield {
     sun.shadow.bias = -0.0004
     sun.shadow.normalBias = 0.02
     sun.shadow.radius = 3
-    this.scene.add(sun, sun.target, new THREE.HemisphereLight(SKY_LIGHT.sky, SKY_LIGHT.ground, SKY_LIGHT.intensity))
+    this.scene.add(sun, sun.target, this.sky)
     this.overlayScene.add(this.selectionFrame)
     this.disposables.push(this.selectionFrame.geometry, this.selectionFrame.material as THREE.Material)
     this.u = (this.bounds.u[0] + this.bounds.u[1]) / 2
@@ -532,15 +655,80 @@ export class Battlefield {
    * Shapes the ground with plateaus, cliffs and ramps (Terrain.generate); the flat
    * zones (cells) stay level. Call it before anything is put on the map.
    */
-  shapeTerrain(options: TerrainOptions) {
+  shapeTerrain(options: TerrainOptions & { theater?: Theater }) {
     const { x, z, w, h } = this.tiberiumGround
+    const { theater = 'temperate', seed = 1 } = options
     // only the ways on the map count: every part of it has to be reached on it
     this.terrain = Terrain.generate(x, z, w, h, { inside: (cx, cz) => this.onMap(cx, cz), ...options })
     const geometry = this.groundGeometry()
     this.ground.geometry.dispose()
     this.ground.geometry = geometry
     this.shadowLayer.geometry = geometry
+    // the theater: the ground's cover, the snow, and the terrain objects on it
+    this.theater = theater
+    this.groundSnow.value = theater === 'snow' ? 1 : 0
+    const [sunLight, skyLight] = theater === 'snow' ? [SNOW_SUN_LIGHT, SNOW_SKY_LIGHT] : [SUN_LIGHT, SKY_LIGHT]
+    this.sun.color.set(sunLight.colour)
+    this.sun.intensity = sunLight.intensity
+    this.sky.color.set(skyLight.sky)
+    this.sky.groundColor.set(skyLight.ground)
+    this.sky.intensity = skyLight.intensity
+    const cover = groundCover(this.terrain, theater, seed)
+    this.cover.image.data!.set(cover)
+    this.cover.needsUpdate = true
+    const props = scatterProps(this.terrain, theater, seed, cover, { onMap: (cx, cz) => this.onMap(cx, cz), keep: options.flat })
+    this.obstacles.clear()
+    for (const prop of props) {
+      if (prop.blocks) this.obstacles.add(`${prop.x},${prop.z}`)
+    }
     void this.placeCliffs()
+    this.placeProps(MODELS.PROPS!, props).catch(error => console.error('Landschaft konnte nicht geladen werden', error))
+  }
+
+  /**
+   * Puts the terrain objects on the map: per variant of the model (a top-level node of
+   * PROPS.glb) and per mesh in it one instanced mesh with all of that variant's props,
+   * standing on the ground, turned and scaled. Variants the model lacks are left out.
+   */
+  private async placeProps(url: string, props: Prop[]) {
+    for (const mesh of this.props) {
+      mesh.removeFromParent()
+      mesh.dispose()
+    }
+    this.props = []
+    const gltf = await this.loadModel(url, 0)
+    gltf.scene.updateMatrixWorld(true)
+    const byKind = new Map<string, Prop[]>()
+    for (const prop of props) byKind.set(prop.kind, [...byKind.get(prop.kind) ?? [], prop])
+    const place = new THREE.Matrix4()
+    const turn = new THREE.Quaternion()
+    for (const [kind, list] of byKind) {
+      const variant = gltf.scene.getObjectByName(kind)
+      if (!variant) continue
+      // the meshes in the variant's own frame
+      const inverse = variant.matrixWorld.clone().invert()
+      const meshes: THREE.Mesh[] = []
+      variant.traverse((node) => {
+        if ((node as THREE.Mesh).isMesh) meshes.push(node as THREE.Mesh)
+      })
+      for (const mesh of meshes) {
+        const local = inverse.clone().multiply(mesh.matrixWorld)
+        const instanced = new THREE.InstancedMesh(mesh.geometry, mesh.material, list.length)
+        list.forEach((prop, i) => {
+          const cx = prop.x + 0.5
+          const cz = prop.z + 0.5
+          turn.setFromAxisAngle(new THREE.Vector3(0, 1, 0), prop.rotation)
+          place.compose(new THREE.Vector3(cx, this.heightAt(cx, cz), cz), turn, new THREE.Vector3(prop.scale, prop.scale, prop.scale))
+          instanced.setMatrixAt(i, place.clone().multiply(local))
+        })
+        instanced.instanceMatrix.needsUpdate = true
+        instanced.computeBoundingSphere()
+        instanced.castShadow = true
+        instanced.receiveShadow = true
+        this.scene.add(instanced)
+        this.props.push(instanced)
+      }
+    }
   }
 
   /** The rock on the cliffs (CLIFF.glb), one instanced mesh per piece */
@@ -635,7 +823,9 @@ export class Battlefield {
     for (const [name, matrices] of pieces) {
       const source = gltf.scene.getObjectByName(name) as THREE.Mesh | undefined
       if (!source?.isMesh) continue
-      const mesh = new THREE.InstancedMesh(source.geometry, source.material, matrices.length)
+      const material = this.theater === 'snow' ? snowCovered(source.material as THREE.MeshStandardMaterial) : source.material
+      if (material !== source.material) this.disposables.push(material as THREE.Material)
+      const mesh = new THREE.InstancedMesh(source.geometry, material, matrices.length)
       matrices.forEach((m, i) => mesh.setMatrixAt(i, m))
       mesh.castShadow = true
       mesh.receiveShadow = true
@@ -828,6 +1018,7 @@ export class Battlefield {
     this.updateBoarding()
     this.updateDeliveries()
     this.growTiberium(seconds)
+    this.growTiberiumTrees(seconds)
     this.groundTime.value = (this.groundTime.value + seconds) % 1000
     this.effects.update(seconds, this.renderer.getDrawingBufferSize(new THREE.Vector2()).y / (this.camera.top - this.camera.bottom))
     this.renderer.render(this.scene, this.camera)
@@ -1600,7 +1791,7 @@ export class Battlefield {
       const v = corner.dot(this.screenDown)
       if (u < this.bounds.u[0] || u > this.bounds.u[1] || v < this.bounds.v[0] || v > this.bounds.v[1]) return false
     }
-    if (this.terrain.flatLevel(cx, cz, 1, 1) === undefined) return false
+    if (this.terrain.flatLevel(cx, cz, 1, 1) === undefined || this.obstacles.has(`${cx},${cz}`)) return false
     if (this.footprints.some(f => cx >= f.x && cx < f.x + f.w && cz >= f.z && cz < f.z + f.h)) return false
     if (this.tiberium.has(`${cx},${cz}`)) return false
     // a unit standing on it, own or enemy (not one in the air): as far round as it is big
@@ -2122,10 +2313,15 @@ export class Battlefield {
    * The fields then grow on their own (see growTiberium).
    */
   async addTiberium(url: string, cells: TiberiumCell[]) {
-    const gltf = await this.loadModel(url, 0)
+    // loaded once: the trees seed single cells again and again
+    if (this.tiberiumUrl !== url || !this.tiberiumModel) {
+      this.tiberiumUrl = url
+      this.tiberiumModel = this.loadModel(url, 0)
+    }
+    const gltf = await this.tiberiumModel
     for (const { x, z, stage, kind = 'green' } of cells) {
       const key = `${x},${z}`
-      if (this.tiberium.has(key)) continue
+      if (this.tiberium.has(key) || this.obstacles.has(key)) continue
       const variant = 'ABC'[Math.floor(Math.random() * 3)]!
       const object = gltf.scene.clone()
       // only the three stages of this variant
@@ -2178,12 +2374,17 @@ export class Battlefield {
     cell.object.traverse((node) => {
       if (/^Stage\d[ABC]$/.test(node.name)) node.visible = node.name === shown
     })
+    this.showTiberiumGround(cell.x, cell.z, cell.stage)
+  }
+
+  /** Stains the ground under a cell for its Tiberium's growth stage (0: none) and round it */
+  private showTiberiumGround(x: number, z: number, stage: number) {
     const ground = this.tiberiumGround
-    const tx = cell.x - ground.x
-    const tz = cell.z - ground.z
+    const tx = x - ground.x
+    const tz = z - ground.z
     if (tx < 0 || tz < 0 || tx >= ground.w || tz >= ground.h) return
-    ground.texture.image.data![(tz * ground.w + tx) * 4] = Math.round(cell.stage / TIBERIUM_RIPE * 255)
-    this.shineTiberium(cell.x, cell.z)
+    ground.texture.image.data![(tz * ground.w + tx) * 4] = Math.round(stage / TIBERIUM_RIPE * 255)
+    this.shineTiberium(x, z)
   }
 
   /**
@@ -2253,6 +2454,116 @@ export class Battlefield {
     cell.stage--
     this.showTiberiumStage(cell)
     return true
+  }
+
+  /** The Tiberium trees on the map: each blocks its cell and puffs spores now and then (growTiberiumTrees) */
+  private readonly tiberiumTrees: { x: number, z: number, object: THREE.Object3D, mixer: THREE.AnimationMixer, spread?: THREE.AnimationClip, spores?: THREE.Object3D, puff?: number, seeded?: boolean }[] = []
+
+  /**
+   * Tiberium trees (TIBTRE.glb, TIBTRE01–03 of the original) on the given cells, one of
+   * the model's three variants each, turned at random; Tiberium on their cells goes,
+   * they block the cell like the original's terrain objects (1 × 1).
+   */
+  async addTiberiumTrees(url: string, cells: [number, number][]) {
+    const gltf = await this.loadModel(url, 0)
+    /** The clips of one variant: only the tracks of its own nodes (the others are taken off) */
+    const clips = new Map<string, THREE.AnimationClip[]>()
+    const clipsOf = (variant: string, object: THREE.Object3D) => {
+      if (!clips.has(variant)) {
+        clips.set(variant, gltf.animations.map(clip => new THREE.AnimationClip(clip.name, clip.duration,
+          clip.tracks.filter(track => object.getObjectByName(THREE.PropertyBinding.parseTrackName(track.name).nodeName)))))
+      }
+      return clips.get(variant)!
+    }
+    for (const [x, z] of cells) {
+      const key = `${x},${z}`
+      if (this.obstacles.has(key)) continue
+      const object = gltf.scene.clone()
+      const variant = `Tree${1 + Math.floor(Math.random() * 3)}`
+      const others: THREE.Object3D[] = []
+      object.traverse((node) => {
+        if (/^Tree\d$/.test(node.name) && node.name !== variant) others.push(node)
+      })
+      for (const node of others) node.removeFromParent()
+      object.position.set(x + 0.5, this.heightAt(x + 0.5, z + 0.5), z + 0.5)
+      object.rotation.y = Math.random() * Math.PI * 2
+      const cell = this.tiberium.get(key)
+      if (cell) {
+        cell.object.removeFromParent()
+        this.tiberium.delete(key)
+        this.showTiberiumGround(x, z, 0)
+      }
+      this.obstacles.add(key)
+      this.castShadows(object)
+      this.scene.add(object)
+      const mixer = new THREE.AnimationMixer(object)
+      const own = clipsOf(variant, object)
+      const idle = own.find(clip => clip.name === 'Idle')
+      // each tree breathes out of step with the others
+      if (idle) mixer.clipAction(idle).startAt(-Math.random() * idle.duration).play()
+      this.mixers.push(mixer)
+      // the spores only show while they fly (inside the pod they would only cost drawing)
+      const spores = object.getObjectByName(variant.replace('Tree', 'Spores'))
+      if (spores) spores.visible = false
+      this.tiberiumTrees.push({ x, z, object, mixer, spread: own.find(clip => clip.name === 'Spread'), spores })
+    }
+  }
+
+  /**
+   * Like the original's (AnimationProbability= of TIBTRE01: the chance per frame that it
+   * plays its animation) each tree now and then puffs a cloud of spores; when the cloud
+   * comes down, Tiberium sprouts on a random one of the eight cells round it, or grows a
+   * stage where there is some already (TREE_SPORES seconds into the puff).
+   */
+  private growTiberiumTrees(seconds: number) {
+    const chance = 1 - (1 - TREE_SPREAD_CHANCE) ** (seconds * TREE_FRAMES_PER_SECOND)
+    for (const tree of this.tiberiumTrees) {
+      if (tree.puff !== undefined) {
+        tree.puff += seconds
+        if (!tree.seeded && tree.puff >= TREE_SPORES) {
+          tree.seeded = true
+          this.seedAround(tree.x, tree.z)
+        }
+        if (tree.puff >= Math.max(TREE_SPORES, tree.spread?.duration ?? 0)) {
+          tree.puff = undefined
+          if (tree.spores) tree.spores.visible = false
+        }
+        continue
+      }
+      if (Math.random() >= chance) continue
+      tree.puff = 0
+      tree.seeded = false
+      if (tree.spores) tree.spores.visible = true
+      if (tree.spread) {
+        const action = tree.mixer.clipAction(tree.spread)
+        action.setLoop(THREE.LoopOnce, 1)
+        action.reset().play()
+      }
+    }
+  }
+
+  /** Tiberium sprouts on one of the open cells round (x, z), or one there grows a stage */
+  private seedAround(x: number, z: number) {
+    const around: [number, number][] = []
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx || dz) around.push([x + dx, z + dz])
+      }
+    }
+    const open = around.filter(([cx, cz]) => {
+      if (!this.free(cx, cz) || this.terrain.cell(cx, cz) !== Cell.Flat) return false
+      const cell = this.tiberium.get(`${cx},${cz}`)
+      return !cell || cell.stage < TIBERIUM_RIPE
+    })
+    const target = open[Math.floor(Math.random() * open.length)]
+    if (!target || !this.tiberiumUrl) return
+    const [cx, cz] = target
+    const cell = this.tiberium.get(`${cx},${cz}`)
+    if (cell) {
+      cell.stage++
+      this.showTiberiumStage(cell)
+    }
+    else void this.addTiberium(this.tiberiumUrl, [{ x: cx, z: cz, stage: 1 }])
   }
 
   /** Every TIBERIUM_GROWTH seconds a random cell that is not ripe yet grows a stage. */
@@ -2436,7 +2747,7 @@ export class Battlefield {
    * side the walls (sandbags) of its enemies are no obstacle, it drives over them
    */
   private free(x: number, z: number, crusher?: Owner, mover?: Owner) {
-    if (!this.onMap(x, z)) return false
+    if (!this.onMap(x, z) || this.obstacles.has(`${x},${z}`)) return false
     return !this.footprints.some(f => x >= f.x && x < f.x + f.w && z >= f.z && z < f.z + f.h
       && !(crusher && f.wall && f.owner !== crusher) && !(mover && f.gate && f.owner === mover))
   }

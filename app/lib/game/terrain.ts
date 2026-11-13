@@ -10,7 +10,7 @@
  * the cliff turns or runs diagonally, so plateaus have rounded corners and slanting
  * sides) or the foot of such a turn (one up). Nobody walks or builds on rock. A ramp
  * is a strip of cells two wide and RAMP_LENGTH long whose corners rise evenly by one
- * level, a terrace's step (STEP) a cell: four slopes one after the other; its cells
+ * level, a terrace's step (STEP) a cell: one even slope, like the original's; its cells
  * are open. Units go from a cell to its neighbour where both are open
  * and meet at the same height along their whole shared edge.
  *
@@ -193,12 +193,7 @@ export class Terrain {
     const [a, b, c, d] = this.corners(x, z)
     const fx = px - x
     const fz = pz - z
-    // a ramp's cell is one of its four steps: flat where it meets the next one, steep in
-    // its middle, like a terrace's slope
-    if (this.ramp(x, z)) {
-      if (a === c && b === d) return (a + (b - a) * step(fx)) * LEVEL_HEIGHT
-      if (a === b && c === d) return (a + (c - a) * step(fz)) * LEVEL_HEIGHT
-    }
+    // a ramp's cells are plain pieces of one even slope, like the original's ramps
     let level: number
     if (Terrain.splitsMain(a, b, c, d)) {
       // triangles (a, b, d) with fx ≥ fz and (a, d, c)
@@ -714,8 +709,6 @@ const TERRACE_SCALE = 20
 /** The part of the noise's range at either end that stays on the lowest / highest terrace (below 0.5) */
 const TERRACE_FROM = 0.15
 
-/** How much the steps of a ramp level out where they meet (see step()) */
-const RAMP_STEP_FLATNESS = 0.8
 
 /** A plateau gets a ramp for every so many of its cells */
 const RAMP_CELLS = 90
@@ -728,7 +721,7 @@ const NEIGHBOURS_4: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 const NEIGHBOURS_8: [number, number][] = [...NEIGHBOURS_4, [1, 1], [1, -1], [-1, 1], [-1, -1]]
 
 /** A small seeded random number generator (0 … 1) */
-function mulberry32(seed: number) {
+export function mulberry32(seed: number) {
   let a = seed >>> 0
   return () => {
     a = (a + 0x6D2B79F5) >>> 0
@@ -737,14 +730,6 @@ function mulberry32(seed: number) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
-}
-
-/**
- * The rise across one step of a ramp (t 0 … 1): flat at both ends, steepest in the
- * middle (RAMP_STEP_FLATNESS: 0 a straight slope, 1 level at the ends)
- */
-function step(t: number) {
-  return t - RAMP_STEP_FLATNESS * Math.sin(2 * Math.PI * t) / (2 * Math.PI)
 }
 
 /** Smooth value noise (0 … 1) on a fixed lattice, the same on every map */
@@ -765,7 +750,7 @@ function smoothNoise(x: number, z: number) {
 }
 
 /** Smooth value noise (0 … 1) on a lattice of random values */
-function valueNoise(random: () => number) {
+export function valueNoise(random: () => number) {
   const size = 256
   const values = Float32Array.from({ length: size * size }, random)
   const at = (i: number, j: number) => values[(((j % size) + size) % size) * size + (((i % size) + size) % size)]!

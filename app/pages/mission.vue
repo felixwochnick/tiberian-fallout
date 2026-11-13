@@ -48,6 +48,9 @@ function start(fresh: Field) {
     fresh.battlefield.addTiberium(MODELS.TIB!, tiberiumField(cx + dx, cz + dz, radius))
       .catch(error => console.error('Tiberium konnte nicht geladen werden', error))
   }
+  // a Tiberium tree in the middle of every field, which makes it grow
+  fresh.battlefield.addTiberiumTrees(MODELS.TIBTRE!, (mission.tiberium ?? []).map(({ at: [dx, dz] }) => [Math.floor(cx + dx), Math.floor(cz + dz)]))
+    .catch(error => console.error('Tiberium-Bäume konnten nicht geladen werden', error))
   finished = false
   checkMission = mission.start(missionContext(fresh))
   if (screen.value !== 'briefing') begin()

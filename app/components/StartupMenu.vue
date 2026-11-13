@@ -107,6 +107,12 @@ function addPlayer() {
   settings.players.push({ name: `Computer ${number}`, side: 'nod', colour: Math.max(0, colour), ai: 1 })
 }
 
+/** The next landscape of the skirmish dialog's choice */
+function nextTheater() {
+  const i = THEATER_CHOICES.findIndex(([id]) => id === settings.theater)
+  settings.theater = THEATER_CHOICES[(i + 1) % THEATER_CHOICES.length]![0]
+}
+
 function removePlayer(index: number) {
   sound('click')
   settings.players.splice(index, 1)
@@ -412,6 +418,14 @@ onBeforeUnmount(() => {
             <span title="Immer an: das Radar funktioniert von Anfang an. Sonst erst mit Radargebäude und genug Energie.">Radar</span>
             <button class="metal-btn" @click="sound('click'); settings.radarAlways = !settings.radarAlways">
               {{ settings.radarAlways ? 'Immer an' : 'Mit Gebäude' }}
+            </button>
+          </div>
+        </div>
+        <div class="slider-row">
+          <div class="toggle">
+            <span title="Gemäßigt: Erde, Sand, Gras und Wälder. Schnee: Schnee, Eis und verschneite Tannen. Zufall: jedes Gefecht neu.">Gelände</span>
+            <button class="metal-btn" @click="sound('click'); nextTheater()">
+              {{ THEATER_CHOICES.find(([id]) => id === settings.theater)?.[1] }}
             </button>
           </div>
         </div>

@@ -38,6 +38,12 @@ const TIBERIUM_RADIUS = 4
 /** A smaller field of blue Tiberium a little farther, on the other side (screen axes) */
 const BLUE_TIBERIUM_OFFSET: [number, number] = [-7, 8]
 const BLUE_TIBERIUM_RADIUS = 2.5
+/**
+ * Small, young fields elsewhere, each round a Tiberium tree that makes it grow (as
+ * fractions of the map along the screen axes, away from the starts)
+ */
+const TREE_FIELDS: [number, number][] = [[0.33, 0.64], [0.67, 0.36]]
+const TREE_FIELD_RADIUS = 1.5
 
 /** A fresh map: a Tiberium field near the player, one MCV for each player, then battle control */
 function start({ battlefield, addUnit }: Field) {
@@ -48,17 +54,26 @@ function start({ battlefield, addUnit }: Field) {
     const [fu, fv] = START_SPOTS[i % START_SPOTS.length]!
     return battlefield.mapPoint(fu * mapW, fv * mapH).round()
   })
+  const treeFields = TREE_FIELDS.map(([fu, fv]) => battlefield.mapPoint(fu * mapW, fv * mapH))
   // a new landscape every game; level round every start and the Tiberium fields
   const around = (at: THREE.Vector3, r: number): FlatZone => ({ x: Math.floor(at.x) - r, z: Math.floor(at.z) - r, w: 2 * r + 1, h: 2 * r + 1 })
+  const theater = settings.theater === 'random' ? (Math.random() < 0.5 ? 'temperate' : 'snow') : settings.theater
   battlefield.shapeTerrain({
     seed: Math.floor(Math.random() * 2 ** 31),
+    theater,
     flat: [around(battlefield.centre, 6), ...spots.map(spot => around(spot, 6)),
-      around(field, TIBERIUM_RADIUS + 1), around(blueField, Math.ceil(BLUE_TIBERIUM_RADIUS) + 1)],
+      around(field, TIBERIUM_RADIUS + 1), around(blueField, Math.ceil(BLUE_TIBERIUM_RADIUS) + 1),
+      ...treeFields.map(at => around(at, Math.ceil(TREE_FIELD_RADIUS) + 1))],
   })
+  const cell = (at: THREE.Vector3): [number, number] => [Math.floor(at.x), Math.floor(at.z)]
   battlefield.addTiberium(MODELS.TIB!, [
-    ...tiberiumField(Math.floor(field.x), Math.floor(field.z), TIBERIUM_RADIUS),
-    ...tiberiumField(Math.floor(blueField.x), Math.floor(blueField.z), BLUE_TIBERIUM_RADIUS, 'blue'),
+    ...tiberiumField(...cell(field), TIBERIUM_RADIUS),
+    ...tiberiumField(...cell(blueField), BLUE_TIBERIUM_RADIUS, 'blue'),
+    ...treeFields.flatMap(at => tiberiumField(...cell(at), TREE_FIELD_RADIUS).map(c => ({ ...c, stage: 1 }))),
   ]).catch(error => console.error('Tiberium konnte nicht geladen werden', error))
+  // the green fields grow round their Tiberium trees, like the original's (the blue one has none)
+  battlefield.addTiberiumTrees(MODELS.TIBTRE!, [cell(field), ...treeFields.map(cell)])
+    .catch(error => console.error('Tiberium-Bäume konnten nicht geladen werden', error))
   addUnit('MCV', battlefield.centre.clone().round(), houseColour(human.value), 'player', human.value?.side)
     .catch(error => console.error('MCV konnte nicht geladen werden', error))
   settings.players.filter(p => p.ai !== null).forEach((player, i) => {

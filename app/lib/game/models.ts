@@ -98,6 +98,10 @@ export const MODELS: Record<string, string> = {
   TIB: '/models/TIB.glb',
   /** Rock for the cliffs: nodes Straight0 … 3 (one cell edge), Outer0/1 and Inner0/1 (corners) */
   CLIFF: '/models/CLIFF.glb',
+  /** Tiberium tree (TIBTRE01–03): nodes Tree1 … Tree3, show one; clips Idle and Spread (the spore puff) */
+  TIBTRE: '/models/TIBTRE.glb',
+  /** The landscape's terrain objects: one node per variant (Oak1, Pine1, Rock1, SnowPine1 …), see landscape.ts */
+  PROPS: '/models/PROPS.glb',
 }
 
 /** Units without a model of their own yet use the light infantry's */

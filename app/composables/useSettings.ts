@@ -15,6 +15,10 @@ export const HOUSE_COLOURS = [
   ['Orange', 0xe07a1a], ['Lila', 0x8a3ab0], ['Türkis', 0x2aa8a8], ['Grau', 0x8a8a8a],
 ] as const
 
+/** The landscape of a skirmish: Tiberian Sun's two theaters, or one of them at random each game */
+export const THEATER_CHOICES = [['temperate', 'Gemäßigt'], ['snow', 'Schnee'], ['random', 'Zufall']] as const
+export type TheaterChoice = typeof THEATER_CHOICES[number][0]
+
 /** Most players in a skirmish */
 export const MAX_PLAYERS = 8
 
@@ -48,6 +52,8 @@ const settings = reactive({
   techLevel: 10,
   /** Skirmish: the radar works from the start, without a radar building */
   radarAlways: false,
+  /** Skirmish: the landscape (theater) */
+  theater: 'random' as TheaterChoice,
   /** Game speed, index into SPEEDS */
   speed: 4,
   /** Edge scroll speed, index into SPEEDS */
