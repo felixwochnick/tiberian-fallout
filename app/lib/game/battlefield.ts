@@ -339,14 +339,14 @@ const GroundShader = {
       // grit of broken crystals
       float speck = smoothstep(0.87, 0.91, noise(c * 13.0 + 29.0)) * cover;
       earth = mix(earth, mix(vec3(0.3, 0.72, 0.24), vec3(0.25, 0.5, 0.9), blue), speck * 0.8);
-      // round the cliffs: stony ground, grey gravel and broken rock, with a ragged edge
+      // round the cliffs: stony ground, brownish gravel and broken rock, with a ragged edge
       float stony = smoothstep(0.3, 0.7, vRock + (fbm(c * 1.6 + 13.0) - 0.5) * 0.8);
-      vec3 gravel = mix(vec3(0.34, 0.32, 0.29), vec3(0.56, 0.53, 0.48), fbm(c * 4.0 + 3.0));
+      vec3 gravel = mix(vec3(0.33, 0.29, 0.24), vec3(0.52, 0.46, 0.37), fbm(c * 4.0 + 3.0));
       gravel *= 0.8 + 0.4 * grain;
       gravel = mix(gravel, vec3(0.22, 0.21, 0.2), smoothstep(0.8, 0.86, noise(c * 7.0 + 5.0)) * 0.8);
       // in the snow the broken rock lies half under snow
       gravel = mix(gravel, mix(snowy, gravel * vec3(0.9, 0.97, 1.08), smoothstep(0.4, 0.6, fbm(c * 3.5 + 2.0))), snow);
-      earth = mix(earth, gravel, stony * 0.85);
+      earth = mix(earth, gravel, stony * 0.6);
       // cliffs: grey rock in upright columns with dark clefts between them (like
       // Tiberian Sun's), lighter on the rim, darker and browner towards the scree at the foot
       vec3 n = normalize(vNormal);
