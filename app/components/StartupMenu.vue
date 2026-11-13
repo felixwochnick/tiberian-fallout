@@ -69,6 +69,7 @@ watch(settings, () => {
 })
 const aiLevels = AI_LEVELS
 const speeds = SPEEDS
+const cursorSizes = CURSOR_SIZES
 
 function sound(name: UiSound) {
   play(uiSounds[name], 0, false, effectsGain)
@@ -448,6 +449,7 @@ onBeforeUnmount(() => {
         <MetalSlider v-model="settings.shots" label="Schüsse" :display="`${settings.shots} %`" />
         <MetalSlider v-model="settings.effects" label="Effekte" :display="`${settings.effects} %`" @change="sound('click')" />
         <MetalSlider v-model="settings.voices" label="Stimmen" :display="`${settings.voices} %`" />
+        <MetalSlider v-model="settings.cursorSize" label="Mauszeiger" :min="0" :max="cursorSizes.length - 1" :display="cursorSizes[settings.cursorSize]?.[0]" @change="sound('click')" />
         <div class="toggle">
           <span title="Klassisch: Linksklick wählt aus und gibt Befehle, Rechtsklick wählt ab. Modern: Linksklick wählt aus, Rechtsklick gibt Befehle.">Steuerung</span>
           <button class="metal-btn" @click="sound('click'); settings.controls = settings.controls === 'modern' ? 'classic' : 'modern'">
