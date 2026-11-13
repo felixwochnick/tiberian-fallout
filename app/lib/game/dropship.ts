@@ -87,7 +87,8 @@ export class Dropship {
     this.play('Crash')
   }
 
-  update(seconds: number) {
+  /** Flies on by `seconds` (game seconds); `ambient` scales the pace of its blinking lights (see Battlefield.render) */
+  update(seconds: number, ambient = 1) {
     const position = this.object.position
     switch (this.state) {
       case 'arriving': {
@@ -140,6 +141,8 @@ export class Dropship {
         if (this.timer > WRECK_SECONDS) this.gone()
         break
     }
+    const lights = this.actions.get('Lights')
+    if (lights) lights.timeScale = ambient
     this.mixer.update(seconds)
   }
 
