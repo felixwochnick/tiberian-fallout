@@ -2,7 +2,7 @@
 Tiberian Fallout – GDI construction yard (GACNST), after Tiberian Sun: the hall.
 
 The deployed MCV (MCV.vehicle()): its rear half sinks into the slab, its front half
-drives to the front of the grey end wall as the crane; the grey boom turns towards
+drives to the front of the grey end wall as the crane; the stepped boom turns towards
 the gate, rises and lets its hook down in front of it. Frame 0
 of the Build clip shows exactly the MCV in the middle, so the game can swap the vehicle for
 the yard.
