@@ -119,7 +119,7 @@ E2E_BASE=http://localhost:3000 pnpm test
 | `blender/NASTLH.py` | Nod-Stealth-Generator (3 × 2): dunkle gelochte Kugel mit roten Ringen auf Betonhügel, Rohr mit drei roten Spulen; Tarnfeld-Leuchten → `public/models/NASTLH.glb` |
 | `blender/NATMPL.py` | Tempel von Nod (4 × 3): lange Kuppel unter vier dunklen Bogenschalen mit roten Rändern, hohes gebogenes Horn, rotes Auge → `public/models/NATMPL.glb` |
 | `blender/NAWAST.py` | Tiberium-Abfallverwertung (Nod, 3 × 3): Stern aus dunklen Keilen um einen Trog mit grün leuchtendem Schlamm, Dock (`Dock`) für den Weed Eater → `public/models/NAWAST.glb` |
-| `blender/NAOBEL.py` | Obelisk des Lichts (Nod, 2 × 2): geneigter Schaft mit rotem Kristall; `Fire` lädt und entlädt, Knoten `Flash` an der Spitze → `public/models/NAOBEL.glb` |
+| `blender/NAOBEL.py` | Obelisk des Lichts (Nod, 2 × 2), nach Tiberian Sun Rising: facettierte, genietete Kuppel mit roter Sechseckplatte, darum eine sichelförmige Klinge, die hinten herum nach rechts ausschwingt und flach über dem Boden spitz ausläuft; stark geneigter, gegliederter Schaft mit Lüftungsleiste und rotem Kristall; `Fire` lädt (Glühen läuft die Leiste hinauf) und entlädt, Knoten `Flash` an der Spitze → `public/models/NAOBEL.glb` |
 | `blender/NAMISL.py` | Nod-Raketensilo (2 × 2): Bunker mit zwei Silodeckeln, die Rakete (`Missile`) fährt beim Öffnen (`Open`) hoch, Startpunkt `Launch` → `public/models/NAMISL.glb` |
 | `blender/NAPOST.py` | Laserzaun-Pfosten (Nod, 1 × 1): Kuppel mit Säule, blauer Linsenring (`Emitter`, Höhe des Zauns) → `public/models/NAPOST.glb` |
 | `blender/NAGATE_B.py` | Nod-Tor um 90° gedreht (1 × 3), aus `NAGATE_A.py`; Arme `ArmZP/ZN` zur Mauer → `public/models/NAGATE_B.glb` |
