@@ -13,6 +13,7 @@ import { CARGO_SLOTS, type CargoSlot, SLOT_STAGES, TIBERIUM_RIPE, type TiberiumC
 import { applyHouseColour, MODELS, type Side } from './models'
 import { Effects } from './effects'
 import { SIGN_FPS, type SignFrames, type SignKind } from './signs'
+import { LOCAL_PLAYER, type Owner, ownerOf } from './players'
 
 /**
  * The battlefield in Tiberian Sun's view: a 3D scene seen through an orthographic
@@ -61,7 +62,7 @@ const PLACEHOLDER_HEIGHT: Record<string, number> = {
 
 interface Footprint { x: number, z: number, w: number, h: number, owner: Owner, wall?: boolean, gate?: boolean }
 
-export type Owner = 'player' | 'enemy'
+export type { Owner } from './players'
 
 /**
  * Whether what is being placed fits on a cell, for things put onto a building: the
@@ -1169,9 +1170,9 @@ export class Battlefield {
     return u >= u0 && u <= u1 && v >= v0 && v <= v1 ? point : undefined
   }
 
-  /** Whether an object belongs to the player (enemies have userData.owner = 'enemy') */
+  /** Whether an object belongs to the human player at this screen (the others' have their id in userData.owner) */
   static own(object: THREE.Object3D) {
-    return (object.userData.owner ?? 'player') === 'player'
+    return ownerOf(object) === LOCAL_PLAYER
   }
 
   /** Whether own units are selected that can be ordered to move. */
@@ -1184,13 +1185,20 @@ export class Battlefield {
    * in a small grid, so they do not all stand on the same spot.
    */
   orderMove(point: THREE.Vector3) {
-    this.clearWaypoints(this.selection)
-    const units = this.selection.filter(Battlefield.own).map(object => object.userData.unit).filter(Boolean)
-    const columns = Math.ceil(Math.sqrt(units.length))
-    units.forEach((unit, i) => {
-      const offset = new THREE.Vector3((i % columns) - (columns - 1) / 2, 0, Math.floor(i / columns) - (columns - 1) / 2).multiplyScalar(0.45)
-      this.walk(unit, point.clone().add(offset))
-    })
+    this.moveUnits(this.selection.filter(Battlefield.own), point)
+  }
+
+  /** Sends units to a point on the ground, spread round it in a small grid (whoever they belong to) */
+  moveUnits(objects: THREE.Object3D[], point: THREE.Vector3) {
+    this.clearWaypoints(objects)
+    const units = objects.map(object => object.userData.unit as Unit | undefined).filter((unit): unit is Unit => !!unit)
+    units.forEach((unit, i) => this.walk(unit, point.clone().add(Battlefield.spread(i, units.length))))
+  }
+
+  /** Where the i-th of `count` units stands round a point they were sent to: a small grid */
+  static spread(i: number, count: number) {
+    const columns = Math.ceil(Math.sqrt(count))
+    return new THREE.Vector3((i % columns) - (columns - 1) / 2, 0, Math.floor(i / columns) - (columns - 1) / 2).multiplyScalar(0.45)
   }
 
   /**
@@ -1810,7 +1818,7 @@ export class Battlefield {
    * `free` gets for each cell (x first, then z) whether it can be built on; `except` is
    * a unit that may stand there (the MCV that unfolds there).
    */
-  canPlace(x: number, z: number, w: number, h: number, adjacent: number, { free = [], except }: { free?: boolean[], except?: THREE.Object3D } = {}) {
+  canPlace(x: number, z: number, w: number, h: number, adjacent: number, { free = [], except, owner = LOCAL_PLAYER }: { free?: boolean[], except?: THREE.Object3D, owner?: Owner } = {}) {
     free.length = 0
     for (let i = 0; i < w; i++) {
       for (let j = 0; j < h; j++) free.push(this.cellFree(x + i, z + j, except))
@@ -1820,8 +1828,8 @@ export class Battlefield {
     if (this.terrain.flatLevel(x, z, w, h) === undefined) return false
     // gap in cells to the nearest building of the base
     const gap = (f: Footprint) => Math.max(f.x - (x + w), x - (f.x + f.w), f.z - (z + h), z - (f.z + f.h), 0)
-    // only the player's own base counts
-    const own = this.footprints.filter(f => f.owner === 'player')
+    // only the builder's own base counts
+    const own = this.footprints.filter(f => f.owner === owner)
     return !own.length || own.some(f => gap(f) <= adjacent)
   }
 
@@ -1833,9 +1841,9 @@ export class Battlefield {
    * The cells of w × h at (x, z) that pavement can be laid on: free, flat, not paved yet;
    * none if the area is too far from the base (`adjacent` cells, like a building)
    */
-  paveCells(x: number, z: number, w: number, h: number, adjacent: number) {
+  paveCells(x: number, z: number, w: number, h: number, adjacent: number, owner: Owner = LOCAL_PLAYER) {
     const gap = (f: Footprint) => Math.max(f.x - (x + w), x - (f.x + f.w), f.z - (z + h), z - (f.z + f.h), 0)
-    const own = this.footprints.filter(f => f.owner === 'player')
+    const own = this.footprints.filter(f => f.owner === owner)
     if (own.length && !own.some(f => gap(f) <= adjacent)) return []
     const cells: [number, number][] = []
     for (let i = 0; i < w; i++) {
@@ -1957,7 +1965,7 @@ export class Battlefield {
    * model from `url` (built up by its own animation), or else a simple placeholder
    * that rises out of the ground.
    */
-  async addStructure(id: string, x: number, z: number, w: number, h: number, url?: string, houseColour = 0xd8b43a, owner: Owner = 'player', side: Side = 'gdi') {
+  async addStructure(id: string, x: number, z: number, w: number, h: number, url?: string, houseColour = 0xd8b43a, owner: Owner = LOCAL_PLAYER, side: Side = 'gdi') {
     // on its level (the foundation is flat, see canPlace)
     const centre = new THREE.Vector3(x + w / 2, (this.terrain.flatLevel(x, z, w, h) ?? 0) * LEVEL_HEIGHT, z + h / 2)
     const footprint: Footprint = { x, z, w, h, owner, wall: CRUSHABLE_WALLS.has(id), gate: GATES.has(id) || DRIVE_ONTO.has(id) }
@@ -1967,6 +1975,7 @@ export class Battlefield {
     object.userData.owner = owner
     object.userData.side = side
     object.userData.footprint = footprint
+    object.userData.netId = ++this.lastNetId
     this.structures.set(id, [...(this.structures.get(id) ?? []), object])
     // a firestorm wall's fields show only while the firestorm is on
     if (id === 'GAFSDF') object.traverse(node => node.name.startsWith('Field') && (node.visible = false))
@@ -2249,7 +2258,7 @@ export class Battlefield {
     if (!cell) return Promise.resolve(undefined)
     // the cells are taken from now on
     const [x, z] = cell
-    const footprint: Footprint = { x, z, w, h, owner: (unit.object.userData.owner ?? 'player') as Owner }
+    const footprint: Footprint = { x, z, w, h, owner: ownerOf(unit.object) }
     this.footprints.push(footprint)
     unit.walkTo(new THREE.Vector3(x + w / 2, 0, z + h / 2))
     return new Promise<THREE.Object3D | undefined>((resolve) => {
@@ -2276,7 +2285,7 @@ export class Battlefield {
       if (Math.abs(off) > 0.02) continue
       unit.object.rotation.y = DEPLOY_HEADING
       finish()
-      const owner = (unit.object.userData.owner ?? 'player') as Owner
+      const owner = ownerOf(unit.object)
       const wasSelected = this.selection.includes(unit.object)
       this.remove(unit.object)
       this.addStructure(job.id, job.x, job.z, job.footprint.w, job.footprint.h, job.url, job.houseColour, owner, unit.object.userData.side ?? 'gdi').then((yard) => {
@@ -2672,7 +2681,7 @@ export class Battlefield {
    * The material "Remap" (and its shades, e.g. the camouflage) gets the house colour,
    * Nod's units wear dark armour (applyHouseColour). Move it with `walkTo`.
    */
-  async addUnit(url: string, at: THREE.Vector3, houseColour = 0xd8b43a, owner: 'player' | 'enemy' = 'player', side: Side = 'gdi') {
+  async addUnit(url: string, at: THREE.Vector3, houseColour = 0xd8b43a, owner: Owner = LOCAL_PLAYER, side: Side = 'gdi') {
     let model = this.unitModels.get(url)
     if (!model) {
       model = new GLTFLoader().loadAsync(url)
@@ -2719,6 +2728,7 @@ export class Battlefield {
     object.userData.frameSize = { radius: Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2, height: box.max.y - at.y }
     this.castShadows(object)
     object.userData.owner = owner
+    object.userData.netId = ++this.lastNetId
     this.scene.add(object)
     this.addSelectable(object)
     object.userData.unit = unit
@@ -2792,7 +2802,7 @@ export class Battlefield {
 
   /** The map for one unit's way: a crusher's leads over enemy walls */
   navFor(object: THREE.Object3D): NavMap {
-    const owner = (object.userData.owner ?? 'player') as Owner
+    const owner = ownerOf(object)
     // over enemy sandbags (crushers), through their own side's gates (everybody)
     const crusher = this.crusher(object) ? owner : undefined
     return { free: (x, z) => this.free(x, z, crusher, owner), step: this.step }
@@ -3070,6 +3080,18 @@ export class Battlefield {
   /** All buildings on the map */
   get structureObjects() {
     return [...this.structures.values()].flat()
+  }
+
+  /** The last network id handed out: units and buildings are numbered as they come */
+  private lastNetId = 0
+
+  /**
+   * A unit or building still on the map by its network id (userData.netId), the number
+   * orders name it by – the same on every machine of a network match
+   */
+  objectById(id: number) {
+    return this.units.find(u => u.object.userData.netId === id && !u.object.userData.dead)?.object
+      ?? this.structureObjects.find(o => o.userData.netId === id && !o.userData.dead)
   }
 
   /** Distance from a point to an object: to the edge of a building's foundation, else to its position */

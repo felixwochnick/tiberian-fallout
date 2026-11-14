@@ -1,32 +1,25 @@
 import type { InjectionKey } from 'vue'
-import type { BuildInfo, BuildRules } from '~/lib/game/cameos'
+import type { BuildInfo } from '~/lib/game/cameos'
+import type { Economy } from '~/lib/game/economy'
 import type { Side } from '~/lib/game/models'
 import { Production } from '~/lib/game/production'
 
+export { basePower, onlineBuildings, powerFactor } from '~/lib/game/economy'
+
 /**
  * State of a running skirmish, shared by the battlefield, the sidebar and the top bar:
- * money, the player's buildings (and so power and what can be built) and production.
+ * the human player's economy (money, buildings, production; the computer players have
+ * their own, see Economy) and what the HUD shows.
  */
-export interface Skirmish {
-  credits: { value: number }
-  /** The human player's side: what the sidebar offers */
-  side: Side
-  rules?: BuildRules
-  /** Buildings on the map (RULES.INI ids) */
-  buildings: string[]
-  /** Buildings switched off with the power button (one id per building): they use no power and do not work */
-  offline: string[]
+export interface Skirmish extends Economy {
   /** Mode of the sidebar buttons: clicks on the battlefield repair, sell, switch off or set waypoints */
   mode?: BaseMode
-  production: Production
   /** A finished structure is being placed on the map */
   placing?: BuildInfo
   /** The player's special weapons, charging or ready (for the sidebar) */
   specials: Special[]
   /** A special weapon waits for the player to pick its target on the map (its id) */
   targeting?: string
-  /** Units that left their factory, to be put on the map by the battlefield */
-  arrivals: BuildInfo[]
   /**
    * Battle control has been established ("Battle control online"): until then the
    * player sees no cursor and can neither scroll nor click anything.
@@ -159,34 +152,6 @@ export function useBattleControl(skirmish: Skirmish) {
       announcement = announce ? sounds.speakNow('evaStartGame') : undefined
     },
   }
-}
-
-/** The buildings that work: those on the map, less those switched off */
-export function onlineBuildings(skirmish: Skirmish) {
-  const online = [...skirmish.buildings]
-  for (const id of skirmish.offline) {
-    const i = online.indexOf(id)
-    if (i >= 0) online.splice(i, 1)
-  }
-  return online
-}
-
-/** Power output and drain of the buildings (switched off ones use none) */
-export function basePower(skirmish: Skirmish) {
-  let output = 0
-  let drain = 0
-  for (const id of onlineBuildings(skirmish)) {
-    const power = skirmish.rules?.info.get(id)?.power ?? 0
-    if (power > 0) output += power
-    else drain -= power
-  }
-  return { output, drain }
-}
-
-/** Production slows down when the base uses more power than it has */
-export function powerFactor(skirmish: Skirmish) {
-  const { output, drain } = basePower(skirmish)
-  return drain > output ? Math.max(0.3, output / drain) : 1
 }
 
 /** "1:05" */
