@@ -13,6 +13,7 @@ import { CARGO_SLOTS, type CargoSlot, SLOT_STAGES, TIBERIUM_RIPE, type TiberiumC
 import { applyHouseColour, MODELS, type Side } from './models'
 import { Effects } from './effects'
 import { SIGN_FPS, type SignFrames, type SignKind } from './signs'
+import { type WallLink, wallLinks } from './walls'
 
 /**
  * The battlefield in Tiberian Sun's view: a 3D scene seen through an orthographic
@@ -553,10 +554,13 @@ export class Battlefield {
   /** Preview of a structure being placed: its cells, green where it may go, red otherwise */
   private placement?: {
     w: number, h: number, adjacent: number, preview: THREE.Group,
-    materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial },
+    materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial, link: THREE.MeshBasicMaterial },
     cell?: [number, number], valid: boolean, fits?: PlacementFit,
     /** Laid where it can be, the other cells left out (pavement) */
     partial?: boolean
+    /** A wall: it walls up the cells to the next pieces of its kind (see linkedCells), shown fainter in `links` */
+    link?: WallLink
+    links: THREE.Group
   }
 
   /** Aircraft and jumpjets in the air (see Flight) */
@@ -2044,12 +2048,12 @@ export class Battlefield {
   }
 
   /** Starts placing a structure of w × h cells: its cells follow the cursor (see updatePlacement). */
-  startPlacement(w: number, h: number, adjacent: number, fits?: PlacementFit, partial = false) {
+  startPlacement(w: number, h: number, adjacent: number, fits?: PlacementFit, partial = false, link?: WallLink) {
     this.cancelPlacement()
     const preview = new THREE.Group()
     const geometry = new THREE.PlaneGeometry(0.92, 0.92).rotateX(-Math.PI / 2)
-    const material = (color: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, depthWrite: false })
-    const materials = { free: material(0xffffff), blocked: material(0xff3a2a) }
+    const material = (color: number, opacity = 0.45) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })
+    const materials = { free: material(0xffffff), blocked: material(0xff3a2a), link: material(0xffffff, 0.2) }
     for (let i = 0; i < w; i++) {
       for (let j = 0; j < h; j++) {
         const cell = new THREE.Mesh(geometry, materials.free)
@@ -2058,8 +2062,9 @@ export class Battlefield {
       }
     }
     preview.visible = false
-    this.scene.add(preview)
-    this.placement = { w, h, adjacent, preview, materials, valid: false, fits, partial }
+    const links = new THREE.Group()
+    this.scene.add(preview, links)
+    this.placement = { w, h, adjacent, preview, materials, valid: false, fits, partial, link, links }
   }
 
   /**
@@ -2073,6 +2078,7 @@ export class Battlefield {
     const cell = this.cellAt(clientX, clientY, placement.w, placement.h)
     placement.cell = cell
     placement.preview.visible = !!cell
+    placement.links.visible = false
     if (!cell) return
     placement.preview.position.set(cell[0], this.heightAt(cell[0] + 0.5, cell[1] + 0.5), cell[1])
     // something put onto a building (a gun onto the component tower): white on top of
@@ -2102,6 +2108,18 @@ export class Battlefield {
       const ok = placement.valid || (anyBlocked && free[i])
       ;(child as THREE.Mesh).material = ok ? placement.materials.free : placement.materials.blocked
     })
+    // a wall: also the cells it walls up, fainter, like in the original
+    if (placement.valid && placement.link) {
+      const cells = this.linkedCells(placement.link, cell[0], cell[1])
+      const geometry = (placement.preview.children[0] as THREE.Mesh).geometry
+      while (placement.links.children.length < cells.length) placement.links.add(new THREE.Mesh(geometry, placement.materials.link))
+      placement.links.children.forEach((child, i) => {
+        const [x, z] = cells[i] ?? [0, 0]
+        child.visible = i < cells.length
+        child.position.set(x + 0.5, this.heightAt(x + 0.5, z + 0.5) + 0.02, z + 0.5)
+      })
+      placement.links.visible = true
+    }
   }
 
   /** Where the structure would be placed (its lower corner cell), if it may be placed there */
@@ -2111,12 +2129,25 @@ export class Battlefield {
 
   cancelPlacement() {
     if (!this.placement) return
-    this.scene.remove(this.placement.preview)
+    this.scene.remove(this.placement.preview, this.placement.links)
     const cell = this.placement.preview.children[0] as THREE.Mesh | undefined
     cell?.geometry.dispose()
-    this.placement.materials.free.dispose()
-    this.placement.materials.blocked.dispose()
+    for (const material of Object.values(this.placement.materials)) material.dispose()
     this.placement = undefined
+  }
+
+  /**
+   * The cells a wall piece put down on (x, z) walls up, up to the next own pieces of its
+   * kind (see wallLinks); none for anything else
+   */
+  linkedCells(link: WallLink, x: number, z: number, owner: Owner = 'player') {
+    return wallLinks(x, z, link.range, {
+      piece: (cx, cz) => {
+        const piece = this.structureOn(cx, cz)
+        return !!piece && piece.userData.id === link.id && piece.userData.owner === owner && !piece.userData.dead
+      },
+      free: (cx, cz) => this.cellFree(cx, cz),
+    })
   }
 
   /**
