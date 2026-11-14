@@ -740,12 +740,16 @@ function canDeploy(object: THREE.Object3D) {
   return !!into && !!battlefield!.deployCell(unit, into.w, into.h)
 }
 
-/** Digs a Tick Tank in where it stands, or out again; not on a slope or a ramp */
+/**
+ * Digs a Tick Tank in where it stands, or out again; not on a slope or a ramp. It drops
+ * its attack order (the artillery would set up again for it at once).
+ */
 function digIn(object: THREE.Object3D) {
   if (!battlefield!.toggleDigIn(object.userData.unit as Unit)) {
     sounds.play('evaCannotPlace')
     return
   }
+  combat?.stop([object])
   sounds.play('click')
 }
 

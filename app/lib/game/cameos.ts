@@ -237,6 +237,8 @@ export interface BuildInfo {
   cloakRadiusDeployed: boolean
   /** It sees cloaked enemies within its sight (Sensors=) */
   sensors: boolean
+  /** It fires only set up (DeployToFire=: the artillery, the Juggernaut) */
+  deployToFire: boolean
   /** Its weapon fires only as a special weapon the player aims (EMPulseCannon=: the EMP cannon) */
   manualOnly: boolean
   /** An aircraft's sounds taking off and landing (AuxSound1=, AuxSound2=) */
@@ -388,6 +390,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       crushSound: list(section?.get('CRUSHSOUND')),
       ...cloaking(section),
       sensors: yes(section?.get('SENSORS')),
+      deployToFire: yes(section?.get('DEPLOYTOFIRE')),
       manualOnly: yes(section?.get('EMPULSECANNON')),
       takeOffSound: list(section?.get('AUXSOUND1')),
       landSound: list(section?.get('AUXSOUND2')),

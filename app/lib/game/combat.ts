@@ -31,6 +31,12 @@ import type { Death, Unit } from './unit'
  * (GIVE_UP_SECONDS) and takes another, or walks up to one it was ordered to attack.
  * Idle units pick targets they can hit first.
  *
+ * The artillery and the Juggernaut fire only set up (DeployToFire=): folded they pick
+ * no targets of their own; ordered to attack, they go into range and set up there, on
+ * flat ground with a clear shot (set up, for one out of range they fold up and go).
+ * Set up, they turn their guns all round on their turret: the Juggernaut its head, the
+ * Nod artillery the mount of its raised barrel.
+ *
  * Crushers (Crusher=: the Titan, the harvester, the MCV) drive over the sandbags of
  * their enemies, which burst, and run enemy infantry down (Crushable=); their own
  * sandbags they drive round.
@@ -303,8 +309,11 @@ export class Combat {
       if (unit.changingPosture) continue
       /** Dug in (the Tick Tank): it turns its turret, but does not go after anything */
       const fixed = !!unit.posture
+      /** It fires only set up (DeployToFire=) and is not: it sets up only for a target it was ordered to attack */
+      const folded = info!.deployToFire && !fixed
 
-      if (fighter.target?.userData.dead || (fighter.target && !fighter.target.parent) || fighter.target?.userData.underground) {
+      if (fighter.target?.userData.dead || (fighter.target && !fighter.target.parent) || fighter.target?.userData.underground
+        || (folded && !fighter.ordered)) {
         fighter.target = undefined
         fighter.spot = undefined
       }
@@ -318,7 +327,7 @@ export class Combat {
       }
       // attack-move: stop for every enemy in range, go on when it is down
       if (fighter.attackMove && !fighter.target) {
-        const enemy = this.nearestEnemy(object, weapon, fighter, other => this.range(object.position, weapon, other))
+        const enemy = folded ? undefined : this.nearestEnemy(object, weapon, fighter, other => this.range(object.position, weapon, other))
         if (enemy) {
           fighter.target = enemy
           fighter.ordered = false
@@ -332,7 +341,7 @@ export class Combat {
       }
       // standing idle: guard, attack the nearest enemy within sight
       const sight = Math.max(weapon.range, info!.sight)
-      if (!fighter.target && !unit.walking && !this.battlefield.flight.grounded(unit)) {
+      if (!fighter.target && !folded && !unit.walking && !this.battlefield.flight.grounded(unit)) {
         fighter.target = this.nearestEnemy(object, weapon, fighter, other => Math.max(sight, this.range(object.position, weapon, other)))
         fighter.ordered = false
       }
@@ -359,7 +368,11 @@ export class Combat {
       const range = this.range(object.position, weapon, target)
       if (distance > range) {
         // a target it picked itself is let go once out of sight; an ordered one is chased
-        // (dug in, it lets go of all it cannot reach)
+        // (dug in, it lets go of all it cannot reach; set up to fire, it folds up for an ordered one)
+        if (fixed && info!.deployToFire && fighter.ordered) {
+          this.battlefield.toggleDigIn(unit)
+          continue
+        }
         if (fixed || (!fighter.ordered && distance > sight + 1)) {
           fighter.target = undefined
           continue
@@ -382,7 +395,12 @@ export class Combat {
         continue
       }
       if (unit.walking) unit.stop()
-      // dug in, the Tick Tank turns its turret; set up without one (the artillery) it turns as a whole
+      if (folded) {
+        this.setUp(unit, fighter, weapon, target)
+        continue
+      }
+      // dug in or set up, it turns its turret (the Tick Tank, the Juggernaut its head, the
+      // artillery its gun's mount); without one it turns as a whole
       const faced = fixed && this.part(object, 'Turret')
         ? this.traverse(object, Battlefield.closestPoint(object.position, target), dt)
         : unit.face(Battlefield.closestPoint(object.position, target), dt)
@@ -394,8 +412,7 @@ export class Combat {
           // not into the rock: somewhere with a clear shot, or another target (dug in: only that)
           fighter.cooldown = BLOCKED_RETRY
           if (fixed) {
-            ;(fighter.ignore ??= new Map()).set(target, this.clock + GIVE_UP_SECONDS)
-            fighter.target = undefined
+            this.giveUp(fighter, target)
             continue
           }
           this.takePosition(unit, fighter, weapon, target, muzzle.y - object.position.y)
@@ -562,6 +579,27 @@ export class Combat {
     const step = TURRET_SPEED * seconds
     turret.rotation.y += THREE.MathUtils.clamp(turn, -step, step)
     return Math.abs(turn) < 0.1
+  }
+
+  /**
+   * A unit that fires only set up (DeployToFire=), folded in range of the target it was
+   * ordered to attack: it sets up where it stands if the ground lets it (flat) and the
+   * shot from there is clear, else it goes to the nearest place where both are so
+   */
+  private setUp(unit: Unit, fighter: Fighter, weapon: Weapon, target: THREE.Object3D) {
+    const object = unit.object
+    const muzzle = object.position.clone().setY(object.position.y + MUZZLE_HEIGHT)
+    if (!this.battlefield.canDig(object.position) || this.flightBlocked(weapon, muzzle, this.aimPoint(muzzle, target))) {
+      this.takePosition(unit, fighter, weapon, target, MUZZLE_HEIGHT, true)
+      return
+    }
+    this.battlefield.toggleDigIn(unit)
+  }
+
+  /** Leaves a target alone for a while (GIVE_UP_SECONDS) */
+  private giveUp(fighter: Fighter, target: THREE.Object3D) {
+    ;(fighter.ignore ??= new Map()).set(target, this.clock + GIVE_UP_SECONDS)
+    fighter.target = undefined
   }
 
   /** Moving crushers burst the enemy sandbags and run down the enemy soldiers they drive over. */
@@ -733,11 +771,12 @@ export class Combat {
 
   /**
    * Looks for the nearest place (along the ways the unit can walk) within range of the
-   * target with a clear shot, not taken by another unit, and sends the unit there; if
-   * there is none, a target it picked itself is left alone a while, one it was ordered
-   * to attack is walked up to.
+   * target with a clear shot, not taken by another unit (`flat`: on flat ground, to set
+   * up on), and sends the unit there; if there is none, a target it picked itself is
+   * left alone a while, one it was ordered to attack is walked up to (not to set up:
+   * that is left alone as well).
    */
-  private takePosition(unit: Unit, fighter: Fighter, weapon: Weapon, target: THREE.Object3D, muzzleHeight: number) {
+  private takePosition(unit: Unit, fighter: Fighter, weapon: Weapon, target: THREE.Object3D, muzzleHeight: number, flat = false) {
     const object = unit.object
     const nav = this.battlefield.navFor(object)
     const taken = [...this.fighters.values()].flatMap(f => f !== fighter && f.spot ? [f.spot] : [])
@@ -749,7 +788,7 @@ export class Combat {
       const [x, z] = queue[i]!
       const spot = new THREE.Vector3(x + 0.5, this.battlefield.heightAt(x + 0.5, z + 0.5), z + 0.5)
       const free = !taken.some(t => t.distanceTo(spot) < 0.7) && !others.some(o => Math.hypot(o.x - spot.x, o.z - spot.z) < 0.4)
-      if (i > 0 && free && Battlefield.reach(spot, target) <= this.range(spot, weapon, target) * 0.95) {
+      if (i > 0 && free && (!flat || this.battlefield.canDig(spot)) && Battlefield.reach(spot, target) <= this.range(spot, weapon, target) * 0.95) {
         const muzzle = spot.clone().setY(spot.y + muzzleHeight)
         if (!this.flightBlocked(weapon, muzzle, this.aimPoint(muzzle, target))) {
           fighter.spot = spot
@@ -767,15 +806,14 @@ export class Combat {
         queue.push([nx, nz])
       }
     }
-    if (fighter.ordered) {
+    if (fighter.ordered && !flat) {
       // ordered: up to it, on the way something better may turn up
       fighter.spot = Battlefield.closestPoint(object.position, target)
       fighter.toTarget = true
       this.battlefield.walk(unit, fighter.spot)
       return
     }
-    ;(fighter.ignore ??= new Map()).set(target, this.clock + GIVE_UP_SECONDS)
-    fighter.target = undefined
+    this.giveUp(fighter, target)
   }
 
   /** The target (where it is now) can still be hit from `spot`, with a clear shot */
