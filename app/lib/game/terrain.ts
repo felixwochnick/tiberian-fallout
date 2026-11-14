@@ -53,6 +53,33 @@ export interface TerrainOptions {
   hilliness?: number
   /** The cells units can go on (the map); only these have to be reached (default: all) */
   inside?: (x: number, z: number) => boolean
+  /**
+   * The hills alike round a point: `order` times round it, each one mirrored about the
+   * lines from the point at `angle` (radians from +x towards +z) and every 360°/order
+   * from there – a skirmish map whose starts lie on these lines gives each the same
+   * ground round it (the ramps still come where they come)
+   */
+  symmetry?: { x: number, z: number, order: number, angle: number }
+}
+
+/**
+ * Where the noise is read for a point, for a map alike round a point (see symmetry):
+ * turned into the first sector and mirrored into its first half; the point itself
+ * without symmetry
+ */
+function folding(symmetry: TerrainOptions['symmetry']) {
+  if (!symmetry || symmetry.order < 2) return (x: number, z: number) => [x, z] as const
+  const { x: cx, z: cz, order, angle } = symmetry
+  const sector = (2 * Math.PI) / order
+  return (x: number, z: number) => {
+    // the middle of the cell, so cells mirror onto cells
+    const dx = x + 0.5 - cx
+    const dz = z + 0.5 - cz
+    const r = Math.hypot(dx, dz)
+    const a = ((Math.atan2(dz, dx) - angle) % sector + sector) % sector
+    const folded = Math.min(a, sector - a) + angle
+    return [cx + r * Math.cos(folded) - 0.5, cz + r * Math.sin(folded) - 0.5] as const
+  }
 }
 
 export class Terrain {
@@ -269,6 +296,7 @@ export class Terrain {
     const { seed = 1, levels = 2, flat = [], margin = 3, scale = 16, hilliness = 0.45, inside = () => true } = options
     const random = mulberry32(seed)
     const noise = valueNoise(random)
+    const fold = folding(options.symmetry)
     const kept = (x: number, z: number) => flat.some(f =>
       x >= f.x - margin && x < f.x + f.w + margin && z >= f.z - margin && z < f.z + f.h + margin)
 
@@ -277,7 +305,8 @@ export class Terrain {
     for (let z = z0; z < z0 + depth; z++) {
       for (let x = x0; x < x0 + width; x++) {
         if (kept(x, z)) continue
-        const n = (noise(x / scale, z / scale) * 0.7 + noise(x / scale * 2.3 + 17, z / scale * 2.3 + 5) * 0.3)
+        const [fx, fz] = fold(x, z)
+        const n = (noise(fx / scale, fz / scale) * 0.7 + noise(fx / scale * 2.3 + 17, fz / scale * 2.3 + 5) * 0.3)
         const t = (n - (1 - hilliness)) / hilliness
         cells.set(x, z, t <= 0 ? 0 : Math.min(levels, 1 + Math.floor(t * levels)))
       }
@@ -299,7 +328,7 @@ export class Terrain {
     }
     terrain.limitCells()
     terrain.connect(random, kept)
-    terrain.addTerraces(noise, kept)
+    terrain.addTerraces(noise, kept, fold)
     return terrain
   }
 
@@ -312,7 +341,8 @@ export class Terrain {
    * cell wide that units cross. Worked out per cell, like the levels: no terraces too
    * small or too narrow.
    */
-  private addTerraces(noise: (x: number, z: number) => number, kept: (x: number, z: number) => boolean) {
+  private addTerraces(noise: (x: number, z: number) => number, kept: (x: number, z: number) => boolean,
+    fold: (x: number, z: number) => readonly [number, number]) {
     const nearRamp = (x: number, z: number) => {
       for (let j = z - 2; j <= z + 2; j++) for (let i = x - 2; i <= x + 2; i++) if (this.ramp(i, j)) return true
       return false
@@ -328,8 +358,9 @@ export class Terrain {
     for (let z = this.z0; z < this.z0 + this.depth; z++) {
       for (let x = this.x0; x < this.x0 + this.width; x++) {
         if (pinned(x, z)) continue
-        const n = noise(x / TERRACE_SCALE + 91.3, z / TERRACE_SCALE + 53.7) * 0.85
-          + noise(x / TERRACE_SCALE * 2.2 + 13.1, z / TERRACE_SCALE * 2.2 + 71.9) * 0.15
+        const [fx, fz] = fold(x, z)
+        const n = noise(fx / TERRACE_SCALE + 91.3, fz / TERRACE_SCALE + 53.7) * 0.85
+          + noise(fx / TERRACE_SCALE * 2.2 + 13.1, fz / TERRACE_SCALE * 2.2 + 71.9) * 0.15
         // -1 … 1 over the noise's middle range: down, on the level, up
         const t = Math.max(-1, Math.min(1, (n - 0.5) / (0.5 - TERRACE_FROM)))
         cells.set(x, z, Math.round(t * (STEPS - 1)))

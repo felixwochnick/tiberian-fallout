@@ -4,7 +4,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { SCROLL_DIRECTIONS, type CursorKind, type ScrollDirection } from '../input/cursor'
 import { Flight } from './flight'
 import { findPath, type NavMap } from './pathfinding'
-import { Cell, LEVEL_HEIGHT, Terrain, type TerrainOptions } from './terrain'
+import { Cell, type FlatZone, LEVEL_HEIGHT, Terrain, type TerrainOptions } from './terrain'
 import { terrainGeometry } from './terrain-mesh'
 import { groundCover, type Prop, scatterProps, type Theater } from './landscape'
 import { Unit } from './unit'
@@ -54,6 +54,11 @@ const TREE_SPREAD_CHANCE = 0.003
 const TREE_FRAMES_PER_SECOND = 15
 /** Seconds into the tree's Spread clip when its spores lie over the cells round it (see blender/TIBTRE.py) */
 const TREE_SPORES = 1.2
+
+/** Most times the ground of a skirmish is shaped until it is fair to every start (each takes a while) */
+const SHAPE_TRIES = 4
+/** Fair enough: the longest of the starts' ways to the same kind of goal is at most this share longer than the shortest */
+const FAIR_ENOUGH = 0.1
 
 /** Height (cells) of the placeholder buildings until they have models */
 const PLACEHOLDER_HEIGHT: Record<string, number> = {
@@ -654,13 +659,29 @@ export class Battlefield {
 
   /**
    * Shapes the ground with plateaus, cliffs and ramps (Terrain.generate); the flat
-   * zones (cells) stay level. Call it before anything is put on the map.
+   * zones (cells) stay level, and so do the `ways` (where the landscape's trees and rocks
+   * may still stand). With a `judge` (how unfair the ground is to the players' starts,
+   * see skirmish-map.ts) it is shaped anew from the next seeds while that is too much,
+   * and the fairest is kept. Call it before anything is put on the map.
    */
-  shapeTerrain(options: TerrainOptions & { theater?: Theater }) {
+  shapeTerrain(options: TerrainOptions & { theater?: Theater, ways?: FlatZone[], judge?: (terrain: Terrain, onMap: (x: number, z: number) => boolean) => number }) {
     const { x, z, w, h } = this.tiberiumGround
-    const { theater = 'temperate', seed = 1 } = options
+    const { theater = 'temperate', ways = [], judge } = options
     // only the ways on the map count: every part of it has to be reached on it
-    this.terrain = Terrain.generate(x, z, w, h, { inside: (cx, cz) => this.onMap(cx, cz), ...options })
+    const onMap = (cx: number, cz: number) => this.onMap(cx, cz)
+    const shape = (seed: number) => Terrain.generate(x, z, w, h, { inside: onMap, ...options, seed, flat: [...options.flat ?? [], ...ways] })
+    let seed = options.seed ?? 1
+    this.terrain = shape(seed)
+    if (judge) {
+      let best = { terrain: this.terrain, seed, unfair: judge(this.terrain, onMap) }
+      for (let i = 1; i < SHAPE_TRIES && best.unfair > FAIR_ENOUGH; i++) {
+        const terrain = shape(seed + i)
+        const unfair = judge(terrain, onMap)
+        if (unfair < best.unfair) best = { terrain, seed: seed + i, unfair }
+      }
+      this.terrain = best.terrain
+      seed = best.seed
+    }
     const geometry = this.groundGeometry()
     this.ground.geometry.dispose()
     this.ground.geometry = geometry
