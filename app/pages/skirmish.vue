@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { createSkirmish } from '~/composables/useSkirmish'
-import type { Field } from '~/lib/game/field'
+import type { Field, MatchPlayer } from '~/lib/game/field'
 import { MODELS } from '~/lib/game/models'
 import type * as THREE from 'three'
-import type { FlatZone } from '~/lib/game/terrain'
+import { type FlatZone, mulberry32 } from '~/lib/game/terrain'
 import { tiberiumField } from '~/lib/game/tiberium'
+import { type MapSpot, skirmishLayout, unfairness } from '~/lib/game/skirmish-map'
+import { ComputerPlayer } from '~/lib/game/ai/computer-player'
+import type { AiLevel } from '~/lib/game/ai/levels'
+import { LOCAL_PLAYER, type Owner } from '~/lib/game/players'
 
 /**
  * Gefecht: a free game against the computer players of the skirmish dialog. Every
- * player starts with nothing but an MCV; the base has to be built from there.
+ * player starts with nothing but an MCV, at a start as good as any other (see
+ * skirmish-map.ts); the base has to be built from there.
  */
 // skirmishes only while developing: otherwise back to the main menu
 if (!import.meta.dev) navigateTo('/menu', { replace: true })
@@ -23,66 +28,89 @@ const session = ref<{ restart: () => void }>()
 const human = computed(() => settings.players.find(p => p.ai === null) ?? settings.players[0])
 const houseColour = (player?: SkirmishPlayer) => HOUSE_COLOURS[player?.colour ?? 0]?.[1] ?? 0xd8b43a
 
-/**
- * Where the computer players start, as fractions of the map along the screen axes:
- * the corners first, then the middles of the edges (the player is in the middle).
- */
-const START_SPOTS: [number, number][] = [
-  [0.2, 0.2], [0.8, 0.8], [0.8, 0.2], [0.2, 0.8], [0.5, 0.15], [0.5, 0.85], [0.15, 0.5],
-]
+/** Cells kept flat round each start */
+const START_FLAT = 6
+/** … and round the middle of the map */
+const MIDDLE_FLAT = 4
 
-/** Where the Tiberium field lies: a few cells to the lower right of the player's start (screen axes) */
-const TIBERIUM_OFFSET: [number, number] = [6, 5]
-/** Its size: cells from the middle to the edge */
-const TIBERIUM_RADIUS = 4
-/** A smaller field of blue Tiberium a little farther, on the other side (screen axes) */
-const BLUE_TIBERIUM_OFFSET: [number, number] = [-7, 8]
-const BLUE_TIBERIUM_RADIUS = 2.5
-/**
- * Small, young fields elsewhere, each round a Tiberium tree that makes it grow (as
- * fractions of the map along the screen axes, away from the starts)
- */
-const TREE_FIELDS: [number, number][] = [[0.33, 0.64], [0.67, 0.36]]
-const TREE_FIELD_RADIUS = 1.5
+/** The running game, and its computer players (they start thinking once the rules are loaded) */
+let field: Field | undefined
+let computers: ComputerPlayer[] = []
+let joining: { id: Owner, level: AiLevel, player: MatchPlayer }[] = []
 
-/** A fresh map: a Tiberium field near the player, one MCV for each player, then battle control */
-function start({ battlefield, addUnit }: Field) {
-  const [mapW, mapH] = battlefield.mapSize
-  const field = battlefield.mapPoint(mapW / 2 + TIBERIUM_OFFSET[0], mapH / 2 + TIBERIUM_OFFSET[1])
-  const blueField = battlefield.mapPoint(mapW / 2 + BLUE_TIBERIUM_OFFSET[0], mapH / 2 + BLUE_TIBERIUM_OFFSET[1])
-  const spots = settings.players.filter(p => p.ai !== null).map((_, i) => {
-    const [fu, fv] = START_SPOTS[i % START_SPOTS.length]!
-    return battlefield.mapPoint(fu * mapW, fv * mapH).round()
-  })
-  const treeFields = TREE_FIELDS.map(([fu, fv]) => battlefield.mapPoint(fu * mapW, fv * mapH))
-  // a new landscape every game; level round every start and the Tiberium fields
+/** A fresh map: the starts, the Tiberium, one MCV for each player, then battle control */
+function start(fresh: Field) {
+  field = fresh
+  computers = []
+  joining = []
+  const { battlefield, addUnit } = fresh
+  const layout = skirmishLayout(settings.players.length, battlefield.mapSize)
+  const point = ({ u, v }: MapSpot) => battlefield.mapPoint(u, v)
+  const cell = (at: THREE.Vector3): [number, number] => [Math.floor(at.x), Math.floor(at.z)]
+  const starts = layout.starts.map(spot => point(spot).round())
+  const fields = layout.fields.map(f => ({ ...f, at: point(f) }))
+  const centre = battlefield.centre
+  // a new landscape every game, alike round the middle; flat round every start and every field
   const around = (at: THREE.Vector3, r: number): FlatZone => ({ x: Math.floor(at.x) - r, z: Math.floor(at.z) - r, w: 2 * r + 1, h: 2 * r + 1 })
   const theater = settings.theater === 'random' ? (Math.random() < 0.5 ? 'temperate' : 'snow') : settings.theater
+  // each start's way to the middle, to its own fields and to the next start is about as long as the others'
+  const goals = starts.map((_, i) => [
+    cell(centre),
+    ...fields.filter(f => f.start === i).map(f => cell(f.at)),
+    cell(starts[(i + 1) % starts.length]!),
+  ])
   battlefield.shapeTerrain({
     seed: Math.floor(Math.random() * 2 ** 31),
     theater,
-    flat: [around(battlefield.centre, 6), ...spots.map(spot => around(spot, 6)),
-      around(field, TIBERIUM_RADIUS + 1), around(blueField, Math.ceil(BLUE_TIBERIUM_RADIUS) + 1),
-      ...treeFields.map(at => around(at, Math.ceil(TREE_FIELD_RADIUS) + 1))],
+    flat: [around(centre, MIDDLE_FLAT), ...starts.map(at => around(at, START_FLAT)),
+      ...fields.map(f => around(f.at, Math.ceil(f.radius) + 1))],
+    ways: layout.ways.map(spot => around(point(spot), 0)),
+    symmetry: { x: centre.x, z: centre.z, order: starts.length, angle: Math.atan2(starts[0]!.z - centre.z, starts[0]!.x - centre.x) },
+    judge: (terrain, onMap) => unfairness(terrain, starts.map(cell), goals, onMap),
   })
-  const cell = (at: THREE.Vector3): [number, number] => [Math.floor(at.x), Math.floor(at.z)]
-  battlefield.addTiberium(MODELS.TIB!, [
-    ...tiberiumField(...cell(field), TIBERIUM_RADIUS),
-    ...tiberiumField(...cell(blueField), BLUE_TIBERIUM_RADIUS, 'blue'),
-    ...treeFields.flatMap(at => tiberiumField(...cell(at), TREE_FIELD_RADIUS).map(c => ({ ...c, stage: 1 }))),
-  ]).catch(error => console.error('Tiberium konnte nicht geladen werden', error))
-  // the green fields grow round their Tiberium trees, like the original's (the blue one has none)
-  battlefield.addTiberiumTrees(MODELS.TIBTRE!, [cell(field), ...treeFields.map(cell)])
+  // every start's fields look the same: the same crystals for each
+  const crystals = Math.floor(Math.random() * 2 ** 31)
+  battlefield.addTiberium(MODELS.TIB!, fields.flatMap(f => tiberiumField(...cell(f.at), f.radius, f.kind, mulberry32(crystals + f.radius * 10))
+    .map(c => f.young ? { ...c, stage: 1 } : c)))
+    .catch(error => console.error('Tiberium konnte nicht geladen werden', error))
+  // the green fields grow round their Tiberium trees, like the original's
+  battlefield.addTiberiumTrees(MODELS.TIBTRE!, fields.filter(f => f.tree).map(f => cell(f.at)))
     .catch(error => console.error('Tiberium-Bäume konnten nicht geladen werden', error))
-  addUnit('MCV', battlefield.centre.clone().round(), houseColour(human.value), 'player', human.value?.side)
-    .catch(error => console.error('MCV konnte nicht geladen werden', error))
-  settings.players.filter(p => p.ai !== null).forEach((player, i) => {
-    const spot = spots[i]!
-    addUnit('MCV', spot, houseColour(player), 'enemy', player.side)
+  // the players get the starts at random
+  const order = starts.map((_, i) => i).sort(() => Math.random() - 0.5)
+  settings.players.forEach((player, i) => {
+    const at = starts[order[i]!]!
+    const colour = houseColour(player)
+    if (player === human.value) {
+      fresh.setStart(at)
+      battlefield.lookAt(at)
+      addUnit('MCV', at, colour, LOCAL_PLAYER, player.side)
+        .catch(error => console.error('MCV konnte nicht geladen werden', error))
+      return
+    }
+    const id = `ai${i}`
+    const joined = fresh.join({ id, colour, side: player.side, credits: settings.credits, start: at })
+    joining.push({ id, level: (player.ai ?? 1) as AiLevel, player: joined })
+    addUnit('MCV', at, colour, id, player.side)
       .then((mcv) => { mcv.userData.player = player.name })
       .catch(error => console.error('MCV konnte nicht geladen werden', error))
   })
   control.establish()
+}
+
+/** The computer players look at the battlefield and give their orders, as the game runs */
+function onTick(seconds: number) {
+  if (!field) return
+  const rules = skirmish.rules?.ai
+  if (rules && joining.length) {
+    for (const { id, level, player } of joining.splice(0)) {
+      const computer = new ComputerPlayer(id, level, rules, Math.floor(Math.random() * 2 ** 31))
+      // its level's handicap ([Easy], [Normal], [Difficult] of RULES.INI)
+      player.handicap = computer.levelRules
+      computers.push(computer)
+    }
+  }
+  for (const computer of computers) computer.update(seconds, field)
 }
 </script>
 
@@ -95,6 +123,7 @@ function start({ battlefield, addUnit }: Field) {
     :colour="houseColour(human)"
     :side="human?.side"
     @start="start"
+    @tick="onTick"
     @restart="session?.restart()"
   />
 </template>

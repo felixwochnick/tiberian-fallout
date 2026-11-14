@@ -25,6 +25,43 @@ export function tiberiumField(cx: number, cz: number, radius: number, kind: Tibe
   return cells
 }
 
+/** A field of Tiberium as a player sees it: its middle, how many cells and growth stages (bales) it has */
+export interface TiberiumPatch { kind: TiberiumKind, x: number, z: number, cells: number, bales: number }
+
+/** The cells grouped by kind into fields of neighbours (up to two cells apart), with their middle */
+export function tiberiumPatches(cells: TiberiumCell[]): TiberiumPatch[] {
+  const seen = new Set<string>()
+  const byKey = new Map(cells.map(c => [`${c.x},${c.z}`, c]))
+  const patches: TiberiumPatch[] = []
+  for (const start of cells) {
+    if (seen.has(`${start.x},${start.z}`)) continue
+    const kind = start.kind ?? 'green'
+    const blob = [start]
+    seen.add(`${start.x},${start.z}`)
+    for (let i = 0; i < blob.length; i++) {
+      const c = blob[i]!
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dz = -2; dz <= 2; dz++) {
+          const key = `${c.x + dx},${c.z + dz}`
+          const n = byKey.get(key)
+          if (n && !seen.has(key) && (n.kind ?? 'green') === kind) {
+            seen.add(key)
+            blob.push(n)
+          }
+        }
+      }
+    }
+    patches.push({
+      kind,
+      x: blob.reduce((s, c) => s + c.x + 0.5, 0) / blob.length,
+      z: blob.reduce((s, c) => s + c.z + 0.5, 0) / blob.length,
+      cells: blob.length,
+      bales: blob.reduce((s, c) => s + c.stage, 0),
+    })
+  }
+  return patches
+}
+
 /** A harvester's load is shown as this many squares; it is full when they all are */
 export const CARGO_SLOTS = 5
 /** Growth stages that fill one square: a ripe cell fills one, a young (small) cell a third */

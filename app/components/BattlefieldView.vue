@@ -10,7 +10,11 @@ import { type BuildInfo, DEFAULT_SURVIVORS, DEFAULT_UPKEEP, type UnitVoice } fro
 import type { Unit } from '~/lib/game/unit'
 import type { WallLink } from '~/lib/game/walls'
 import { type SuperWeaponCharge, SuperWeapons } from '~/lib/game/superweapons'
-import type { Field } from '~/lib/game/field'
+import type { Field, MatchPlayer } from '~/lib/game/field'
+import { createEconomy, type Economy, forgetBuilding } from '~/lib/game/economy'
+import { Orders } from '~/lib/game/orders'
+import { observe } from '~/lib/game/ai/observe'
+import { LOCAL_PLAYER, NO_HANDICAP, type Owner, ownerOf } from '~/lib/game/players'
 import type { Dropship, DropshipSound } from '~/lib/game/dropship'
 import { spriteScale, type CursorKind } from '~/lib/input/cursor'
 import { loadSigns } from '~/lib/game/signs'
@@ -46,6 +50,17 @@ const skirmish = useSkirmish()
  */
 const emit = defineEmits<{ ready: [battlefield: Battlefield], start: [field: Field], tick: [seconds: number] }>()
 const settings = useSettings()
+
+/**
+ * The players with a base on the map: the human player (whose economy is the sidebar's)
+ * and the computer players that joined the match (Field.join)
+ */
+const players = new Map<Owner, MatchPlayer>()
+if (skirmish) players.set(LOCAL_PLAYER, { id: LOCAL_PLAYER, colour: props.colour, side: props.side, economy: skirmish, handicap: NO_HANDICAP })
+/** The player an object belongs to, if they have a base */
+const playerOf = (object: THREE.Object3D) => players.get(ownerOf(object))
+/** The human player at this screen */
+const human = () => players.get(LOCAL_PLAYER)
 /** Edge scroll speed for each step of the setting (Sehr langsam … Maximal) */
 const SCROLL_FACTORS = [0.35, 0.5, 0.7, 1, 1.3, 1.7, 2.2]
 
@@ -70,8 +85,10 @@ function frame(now: number) {
   if (active && skirmish) tickMissionDisplay(skirmish, gameSeconds)
   if (active) emit('tick', gameSeconds)
   if (active) clock += gameSeconds
+  if (active) {
+    for (const player of players.values()) tickEconomy(player, seconds, speed)
+  }
   if (active && skirmish) {
-    skirmish.production.tick(seconds, speed * powerFactor(skirmish), skirmish.credits)
     // out of money: EVA says so, at most every few seconds
     if (skirmish.production.starved) {
       skirmish.production.starved = false
@@ -80,7 +97,6 @@ function frame(now: number) {
         sounds.speak('evaInsufficientFunds')
       }
     }
-    for (const info of skirmish.arrivals.splice(0)) deliver(info)
     tickSpecials(gameSeconds)
     tickDepots(gameSeconds)
     tickTakers()
@@ -123,6 +139,19 @@ function frame(now: number) {
   escorted.splice(0, escorted.length, ...escorted.filter(ship => ship.arriving))
   battlefield.render(props.frozen, SPEED_FACTORS[settings.speed] ?? 1, AMBIENT_SPEED)
   requestAnimationFrame(frame)
+}
+
+/**
+ * A player's production runs (slower without enough power, at their handicap's build
+ * time) and what it finished comes out of the factories
+ */
+function tickEconomy(player: MatchPlayer, seconds: number, speed: number) {
+  const economy = player.economy
+  economy.rules ??= skirmish?.rules
+  economy.production.tick(seconds, speed * powerFactor(economy) / player.handicap.buildTime, economy.credits)
+  // only the human player hears EVA about it
+  if (player.id !== LOCAL_PLAYER) economy.production.starved = false
+  for (const info of economy.arrivals.splice(0)) deliver(info, player)
 }
 
 /**
@@ -385,17 +414,19 @@ const FACTORIES: Record<BuildInfo['category'], string[]> = {
   structure: [],
 }
 
-/** Puts a structure of the player's base on the map. */
-async function buildStructure(id: string, x: number, z: number, built = true) {
+/** Puts a structure of a player's base on the map (the human player's unless said). */
+async function buildStructure(id: string, x: number, z: number, built = true, owner: Owner = LOCAL_PLAYER) {
+  const player = players.get(owner)
   if (!battlefield) return
   const [w, h] = skirmish?.rules?.info.get(id)?.foundation ?? FOUNDATIONS[id] ?? [2, 2]
-  skirmish?.buildings.push(id)
+  player?.economy.buildings.push(id)
+  const colour = player?.colour ?? props.colour
   try {
-    const object = await battlefield.addStructure(id, x, z, w, h, MODELS[id], props.colour, 'player', props.side)
+    const object = await battlefield.addStructure(id, x, z, w, h, MODELS[id], colour, owner, player?.side ?? props.side)
     // factories can send what they produce to a rally point
     if (FACTORY_IDS.has(id)) object.userData.abilities = ['rally']
-    if (id === 'GAPOWR') await addTurbine(object, props.colour)
-    if (built) buildSound()
+    if (id === 'GAPOWR') await addTurbine(object, colour)
+    if (built && owner === LOCAL_PLAYER) buildSound()
     if (id === 'PROC') addHarvester(object, built)
     return object
   }
@@ -428,7 +459,8 @@ const REFINERY_BUILD_SECONDS = 3.4
 async function addHarvester(refinery: THREE.Object3D, built: boolean) {
   if (!battlefield || !harvesting) return
   const { at, forward } = Harvesting.dock(refinery)
-  const unit = await battlefield.addUnit(MODELS.HARV!, at, props.colour, 'player', props.side)
+  const player = playerOf(refinery)
+  const unit = await battlefield.addUnit(MODELS.HARV!, at, player?.colour ?? props.colour, ownerOf(refinery), player?.side ?? props.side)
   unit.object.userData.id = 'HARV'
   unit.object.rotation.y = Math.atan2(forward.x, forward.z)
   harvesting.add(unit, refinery, built ? REFINERY_BUILD_SECONDS : 0.5)
@@ -763,22 +795,28 @@ const DEPLOYS_INTO: Record<string, { id: string, w: number, h: number }> = {
 }
 
 function deployMcv(object: THREE.Object3D) {
-  const unit = object.userData.unit as Unit | undefined
-  const into = DEPLOYS_INTO[object.userData.id]
-  if (!battlefield || !unit || !into) return
-  if (!battlefield.deployCell(unit, into.w, into.h)) {
+  if (!unfold(object)) {
     sounds.play('evaCannotPlace')
     return
   }
   sounds.play('click')
-  battlefield.deploy(unit, MODELS[into.id]!, props.colour, into.id, into.w, into.h)
+}
+
+/** Unfolds a vehicle into its building where it stands (whoever it belongs to); false if there is no room */
+function unfold(object: THREE.Object3D) {
+  const unit = object.userData.unit as Unit | undefined
+  const into = DEPLOYS_INTO[object.userData.id]
+  if (!battlefield || !unit || !into || !battlefield.deployCell(unit, into.w, into.h)) return false
+  const player = playerOf(object)
+  battlefield.deploy(unit, MODELS[into.id]!, player?.colour ?? props.colour, into.id, into.w, into.h)
     .then((building) => {
       if (!building) return
-      skirmish?.buildings.push(into.id)
+      player?.economy.buildings.push(into.id)
       if (FACTORY_IDS.has(into.id)) building.userData.abilities = ['rally']
-      buildSound() // it unfolds now
+      if (player?.id === LOCAL_PLAYER) buildSound() // it unfolds now
     })
     .catch(error => console.error(`${into.id} konnte nicht aufgebaut werden`, error))
+  return true
 }
 
 /** Dropships on their way in: the camera follows them until they are down */
@@ -1002,9 +1040,9 @@ const DOOR_OPEN_SECONDS = 2
  * the factory's Exit node, through the war factory's opening door, and walks to the
  * rally point or a bit out. Aircraft rise from their helipad (see Aircraft).
  */
-async function deliver(info: BuildInfo) {
+async function deliver(info: BuildInfo, player: MatchPlayer) {
   if (!battlefield) return
-  const factory = battlefield.structureObjects.filter(o => FACTORIES[info.category].includes(o.userData.id) && Battlefield.own(o) && !o.userData.dead).at(-1)
+  const factory = battlefield.structureObjects.filter(o => FACTORIES[info.category].includes(o.userData.id) && ownerOf(o) === player.id && !o.userData.dead).at(-1)
   if (!factory) return
   factory.updateMatrixWorld(true)
   const exit = factory.getObjectByName('Exit')
@@ -1018,7 +1056,7 @@ async function deliver(info: BuildInfo) {
   // the vehicle appears once the door is open (else it would poke through the closed door)
   if (opens) await new Promise(resolve => later(opens, () => resolve(undefined)))
   if (!battlefield || factory.userData.dead) return
-  const unit = await battlefield.addUnit(MODELS[info.id] ?? UNIT_MODEL, door, props.colour, 'player', props.side)
+  const unit = await battlefield.addUnit(MODELS[info.id] ?? UNIT_MODEL, door, player.colour, player.id, player.side)
   unit.object.userData.id = info.id
   unit.object.rotation.y = Math.atan2(out.x, out.z)
   // an aircraft stands on its helipad, ready to take off; a jumpjet soldier flies where it is sent
@@ -1089,30 +1127,50 @@ function place() {
   placeAt(info, cell)
 }
 
-/** Puts a finished structure down with its lower corner on `cell` */
+/** Puts a finished structure of the human player down with its lower corner on `cell` */
 function placeAt(info: BuildInfo, cell: [number, number]) {
   if (!skirmish) return
   skirmish.placing = undefined
-  skirmish.production.placed()
   syncPlacement()
+  placeFor(LOCAL_PLAYER, info, cell)
+}
+
+/**
+ * Puts a finished structure of a player down with its lower corner on `cell` (an upgrade
+ * onto the building there, pavement on the free cells of the area); false if it does not fit
+ */
+function placeFor(owner: Owner, info: BuildInfo, cell: [number, number]) {
+  const player = players.get(owner)
+  if (!battlefield || !player) return false
+  const [x, z] = cell
+  const [w, h] = info.foundation
   if (PAVING.has(info.id)) {
-    battlefield!.pave(battlefield!.paveCells(cell[0], cell[1], info.foundation[0], info.foundation[1], info.adjacent))
-    buildSound()
-    return
+    const cells = battlefield.paveCells(x, z, w, h, info.adjacent, owner)
+    if (!cells.length) return false
+    player.economy.production.placed()
+    battlefield.pave(cells)
+    if (owner === LOCAL_PLAYER) buildSound()
+    return true
   }
   if (info.powersUp) {
-    const building = upgradeTarget(info, cell[0], cell[1])
-    if (building) mountGun(building, info.id)
-    return
+    const building = upgradeTarget(info, x, z, owner)
+    if (!building) return false
+    player.economy.production.placed()
+    mountGun(building, info.id)
+    return true
   }
+  // the human player's preview shows where it fits; anyone else's is checked here
+  if (owner !== LOCAL_PLAYER && !battlefield.canPlace(x, z, w, h, info.adjacent, { owner })) return false
+  player.economy.production.placed()
   // a wall walls up the cells to the next pieces of its kind for free, like in the original
   const link = wallLink(info)
-  const links = link ? battlefield!.linkedCells(link, cell[0], cell[1]) : []
-  buildStructure(info.id, cell[0], cell[1])
-  for (const [x, z] of links) buildStructure(info.id, x, z, false)
+  const links = link ? battlefield.linkedCells(link, x, z, owner) : []
+  buildStructure(info.id, x, z, true, owner)
+  for (const [lx, lz] of links) buildStructure(info.id, lx, lz, false, owner)
   // the construction yard's crane lets a crate down into its hatch
-  const yard = battlefield!.structuresOf('GACNST').filter(Battlefield.own).at(-1)
-  if (yard) battlefield!.playClip(yard, 'Deliver')
+  const yard = battlefield.structuresOf('GACNST').filter(o => ownerOf(o) === owner && !o.userData.dead).at(-1)
+  if (yard) battlefield.playClip(yard, 'Deliver')
+  return true
 }
 
 /** Structures that are laid on the ground instead of standing on it (ToTile= in ART.INI: pavement) */
@@ -1121,16 +1179,16 @@ const PAVING = new Set(['GAPAVE'])
 /** How a wall links up with the next pieces of its kind, if it does (see wallLinks) */
 const wallLink = (info: BuildInfo): WallLink | undefined => info.linkRange > 0 ? { id: info.id, range: info.linkRange } : undefined
 
-/** Whether a gun (the Vulcan, the SAM) can go onto this building: an own component tower without one */
-function towerFor(info: BuildInfo, object: THREE.Object3D) {
-  return object.userData.id === info.powersUp && Battlefield.own(object) && !object.userData.dead
+/** Whether a gun (the Vulcan, the SAM) can go onto this building: a component tower of `owner` without one */
+function towerFor(info: BuildInfo, object: THREE.Object3D, owner: Owner) {
+  return object.userData.id === info.powersUp && ownerOf(object) === owner && !object.userData.dead
     && !object.userData.gun && !!battlefield?.freeSlot(object)
 }
 
-/** The building on a cell an upgrade fits on (with a free place), if any */
-function upgradeTarget(info: BuildInfo, x: number, z: number) {
+/** The building of `owner` on a cell an upgrade fits on (with a free place), if any */
+function upgradeTarget(info: BuildInfo, x: number, z: number, owner: Owner = LOCAL_PLAYER) {
   const building = battlefield?.buildingOn(x, z)
-  return building && towerFor(info, building) ? building : undefined
+  return building && towerFor(info, building, owner) ? building : undefined
 }
 
 /** The height of the free place on the building on the cell the upgrade fits on, undefined if there is none */
@@ -1148,11 +1206,12 @@ function towerTop(info: BuildInfo, x: number, z: number) {
  * uplink and the others on the upgrade center
  */
 async function mountGun(building: THREE.Object3D, id: string) {
+  const player = playerOf(building)
   const armed = !!skirmish?.rules?.info.get(id)?.weapon
   if (armed) building.userData.gun = true // taken while the model loads
-  skirmish?.buildings.push(id)
-  buildSound()
-  const upgrade = await battlefield?.addUpgrade(building, MODELS[id]!, props.colour)
+  player?.economy.buildings.push(id)
+  if (player?.id === LOCAL_PLAYER) buildSound()
+  const upgrade = await battlefield?.addUpgrade(building, MODELS[id]!, player?.colour ?? props.colour)
     .catch(error => console.error(`${id} konnte nicht montiert werden`, error))
   if (!upgrade) return
   upgrade.userData.id = id
@@ -1167,14 +1226,14 @@ let repairs: Repairs | undefined
 /** What RULES.INI says about an object */
 const infoOf = (object: THREE.Object3D) => skirmish?.rules?.info.get(object.userData.id)
 
-/** An own building that still stands */
-function ownBuilding(object: THREE.Object3D | undefined) {
-  return object?.userData.footprint && Battlefield.own(object) && !object.userData.dead ? object : undefined
+/** A building of `owner` (the human player) that still stands */
+function ownBuilding(object: THREE.Object3D | undefined, owner: Owner = LOCAL_PLAYER) {
+  return object?.userData.footprint && ownerOf(object) === owner && !object.userData.dead ? object : undefined
 }
 
-const canSell = (object?: THREE.Object3D) => !!ownBuilding(object) && (infoOf(object!)?.sellable ?? true)
+const canSell = (object?: THREE.Object3D, owner?: Owner) => !!ownBuilding(object, owner) && (infoOf(object!)?.sellable ?? true)
 /** Damaged and repairable, or being repaired (a click stops it) */
-const canRepair = (object?: THREE.Object3D) => !!ownBuilding(object) && (infoOf(object!)?.repairable ?? true)
+const canRepair = (object?: THREE.Object3D, owner?: Owner) => !!ownBuilding(object, owner) && (infoOf(object!)?.repairable ?? true)
   && (!!object!.userData.repairing || !!repairs?.damaged(object!))
 /** Only buildings that use power can be switched off */
 const canSwitch = (object?: THREE.Object3D) => !!ownBuilding(object) && (infoOf(object!)?.power ?? 0) < 0
@@ -1219,20 +1278,24 @@ function useMode(mode: BaseMode, clientX: number, clientY: number) {
  */
 function sell(building: THREE.Object3D) {
   if (!battlefield) return
+  const player = playerOf(building)
   const cost = infoOf(building)?.cost ?? 0
   const refund = Math.round(cost * (skirmish?.rules?.upkeep ?? DEFAULT_UPKEEP).refund * (building.userData.health ?? 1))
   battlefield.unbuild(building)
   forget(building)
   releaseCrew(building)
-  if (skirmish) skirmish.credits.value += refund
+  if (player) player.economy.credits.value += refund
+  if (player?.id !== LOCAL_PLAYER) return
   sounds.effect(['CASHTURN'])
   sounds.speak('evaStructureSold')
 }
 
-/** Starts or stops repairing a building (EVA: "Repairing") */
+/** Starts or stops repairing a building (EVA: "Repairing", for the human player's) */
 function repair(building: THREE.Object3D) {
+  const repaired = repairs?.toggle(building)
+  if (!Battlefield.own(building)) return
   sounds.play('click')
-  if (repairs?.toggle(building)) sounds.speak('evaRepairing')
+  if (repaired) sounds.speak('evaRepairing')
 }
 
 /**
@@ -1259,21 +1322,22 @@ function switchPower(building: THREE.Object3D) {
 const MAX_SURVIVORS = 5
 
 /**
- * Soldiers come out of a building of the player that is sold or destroyed, like in the
+ * Soldiers come out of a building of a player that is sold or destroyed, like in the
  * original: Crewed= buildings let SurvivorRate= of their cost / SurvivorDivisor= of them
  * (Crew=, light infantry) out round their foundation.
  */
 function releaseCrew(building: THREE.Object3D) {
   const info = infoOf(building)
   const footprint = building.userData.footprint as { x: number, z: number, w: number, h: number } | undefined
-  if (!battlefield || !info?.crewed || !footprint || !Battlefield.own(building)) return
+  const player = playerOf(building)
+  if (!battlefield || !info?.crewed || !footprint || !player) return
   const survivors = skirmish?.rules?.survivors ?? DEFAULT_SURVIVORS
   const count = Math.min(MAX_SURVIVORS, Math.floor((info.cost * survivors.rate) / survivors.divisor))
   const centre = new THREE.Vector3(footprint.x + footprint.w / 2, 0, footprint.z + footprint.h / 2)
   for (let i = 0; i < count; i++) {
     const angle = (i / Math.max(1, count)) * Math.PI * 2
     const at = centre.clone().add(new THREE.Vector3(Math.cos(angle) * 0.3, 0, Math.sin(angle) * 0.3))
-    battlefield.addUnit(MODELS[survivors.crew] ?? UNIT_MODEL, at, props.colour, 'player', props.side).then((unit) => {
+    battlefield.addUnit(MODELS[survivors.crew] ?? UNIT_MODEL, at, player.colour, player.id, player.side).then((unit) => {
       unit.object.userData.id = survivors.crew
       // out of the ruin, to the nearest free spot beside it
       const out = centre.clone().add(new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(Math.max(footprint.w, footprint.h) / 2 + 0.8))
@@ -1282,18 +1346,14 @@ function releaseCrew(building: THREE.Object3D) {
   }
 }
 
-/** A building of the player is gone (destroyed, sold): it no longer counts for power and what can be built */
+/** A building of a player is gone (destroyed, sold): it no longer counts for power and what can be built */
 function forget(building: THREE.Object3D) {
-  if (!Battlefield.own(building) || !skirmish) return
-  const id = building.userData.id as string
-  const i = skirmish.buildings.indexOf(id)
-  if (i >= 0) skirmish.buildings.splice(i, 1)
-  const off = building.userData.poweredOff ? skirmish.offline.indexOf(id) : -1
-  if (off >= 0) skirmish.offline.splice(off, 1)
+  const economy: Economy | undefined = playerOf(building)?.economy
+  if (!economy) return
+  forgetBuilding(economy, building.userData.id as string, !!building.userData.poweredOff)
   // the gun on a component tower goes with it
   const gun = building.userData.gun as THREE.Object3D | true | undefined
-  const g = gun && gun !== true ? skirmish.buildings.indexOf(gun.userData.id) : -1
-  if (g >= 0) skirmish.buildings.splice(g, 1)
+  if (gun && gun !== true) forgetBuilding(economy, gun.userData.id as string)
 }
 
 /**
@@ -1317,7 +1377,7 @@ function updatePowerLabel() {
 onMounted(() => {
   battlefield = markRaw(new Battlefield(stage.value!, 128, 128))
   // dev only: reachable from the browser console (and automated tests)
-  if (import.meta.dev) Object.assign(window, { battlefield })
+  if (import.meta.dev) Object.assign(window, { battlefield, players })
   // the original signs over buildings (repair wrench, switched off)
   getAssetStore()
     .then(store => loadSigns(store))
@@ -1381,25 +1441,32 @@ onMounted(() => {
       },
     },
   ))
+  // what each player plays with: a computer player's level
+  combat.handicap = owner => players.get(owner)?.handicap ?? NO_HANDICAP
   // repairs with the sidebar's button: RepairPercent=, RepairRate=, RepairStep= from RULES.INI
   repairs = markRaw(new Repairs(battlefield, () => ({
     upkeep: skirmish?.rules?.upkeep ?? DEFAULT_UPKEEP,
     info: object => infoOf(object),
-    pay(credits) {
-      if (!skirmish || skirmish.credits.value < credits) return false
-      skirmish.credits.value -= credits
+    pay(credits, object) {
+      const economy = playerOf(object)?.economy
+      if (!economy || economy.credits.value < credits) return false
+      economy.credits.value -= credits
       return true
     },
-    broke: () => sounds.speak('evaInsufficientFunds'),
+    broke: (object) => {
+      if (Battlefield.own(object)) sounds.speak('evaInsufficientFunds')
+    },
   })))
   // the harvesters at work: Storage= and the Tiberium's Value= from RULES.INI
   harvesting = markRaw(new Harvesting(battlefield, () => ({
     capacity: unit => skirmish?.rules?.info.get(unit.object.userData.id)?.storage || HARVESTER_STORAGE,
     value: tiberiumValue,
     earn(owner, credits, kind) {
-      if (owner !== 'player' || !skirmish) return
-      skirmish.credits.value += credits
-      silos.bring(kind, credits, storageCapacity())
+      const economy = players.get(owner)?.economy
+      if (!economy) return
+      economy.credits.value += credits
+      // the human player's refineries and silos show what they hold
+      if (owner === LOCAL_PLAYER) silos.bring(kind, credits, storageCapacity())
     },
   })))
   emit('ready', battlefield)
@@ -1425,8 +1492,9 @@ onMounted(() => {
       sell: object => canSell(object) && (sell(object), true),
       // dev tests: put a unit or a finished structure down at once, charge the special weapons
       async spawn(id, at, owner) {
-        const unit = await battlefield!.addUnit(MODELS[id] ?? UNIT_MODEL, at, owner === 'player' ? props.colour : 0xb3241a, owner,
-          owner === 'player' ? props.side : props.side === 'gdi' ? 'nod' : 'gdi')
+        const player = players.get(owner)
+        const unit = await battlefield!.addUnit(MODELS[id] ?? UNIT_MODEL, at, player?.colour ?? 0xb3241a, owner,
+          player?.side ?? (props.side === 'gdi' ? 'nod' : 'gdi'))
         unit.object.userData.id = id
         const info = skirmish?.rules?.info.get(id)
         if (info?.category === 'aircraft') battlefield!.flight.addAircraft(unit, undefined, info.ammo)
@@ -1444,18 +1512,44 @@ onMounted(() => {
       switchPower: object => canSwitch(object) && (switchPower(object), true),
     }))
   }
+  // the players' orders (the computer players', see ComputerPlayer)
+  const orders = new Orders({
+    battlefield,
+    combat: combat!,
+    harvesting: harvesting!,
+    economy: owner => players.get(owner)?.economy,
+    techLevel: () => props.techLevel,
+    place: placeFor,
+    deploy: unfold,
+    sell: object => canSell(object, ownerOf(object)) && (sell(object), true),
+    repair: object => canRepair(object, ownerOf(object)) && (repair(object), true),
+  })
   emit('start', markRaw({
     battlefield,
     combat: combat!,
     colour: props.colour,
     buildStructure,
-    async addUnit(id, at, colour = props.colour, owner = 'player', side = props.side) {
+    async addUnit(id, at, colour = props.colour, owner = LOCAL_PLAYER, side = props.side) {
       const unit = await battlefield!.addUnit(MODELS[id] ?? UNIT_MODEL, at, colour, owner, side)
       unit.object.userData.id = id
       return unit.object
     },
     async dropship(ids, at, landed) {
       await dropship(ids, at, landed)
+    },
+    join({ id, colour, side, credits, start }) {
+      const player: MatchPlayer = { id, colour, side, economy: createEconomy(credits, side, skirmish?.rules), handicap: NO_HANDICAP, start }
+      players.set(id, player)
+      return player
+    },
+    setStart(at) {
+      const player = human()
+      if (player) player.start = at.clone()
+    },
+    order: (owner, order) => orders.issue(owner, order),
+    observe(owner) {
+      const player = players.get(owner)
+      return player && battlefield && combat ? observe(battlefield, combat, player, [...players.values()], props.techLevel) : undefined
     },
   }))
   resizeObserver.observe(stage.value!)

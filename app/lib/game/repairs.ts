@@ -13,8 +13,8 @@ export interface RepairRules {
   upkeep: Upkeep
   /** Strength= and Cost= of a building */
   info: (object: THREE.Object3D) => { strength: number, cost: number } | undefined
-  /** Takes whole credits; false if there are not that many */
-  pay: (credits: number) => boolean
+  /** Takes whole credits from the building's owner; false if there are not that many */
+  pay: (credits: number, object: THREE.Object3D) => boolean
   /** A repair stopped because the money ran out */
   broke: (object: THREE.Object3D) => void
 }
@@ -67,7 +67,7 @@ export class Repairs {
       const step = Math.min(rules.upkeep.repairStep, info.strength - hp)
       repair.owed += info.cost * rules.upkeep.repairCost * step / info.strength
       const credits = Math.floor(repair.owed)
-      if (credits > 0 && !rules.pay(credits)) {
+      if (credits > 0 && !rules.pay(credits, object)) {
         this.stop(object)
         rules.broke(object)
         continue

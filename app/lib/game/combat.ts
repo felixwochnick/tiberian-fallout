@@ -3,6 +3,7 @@ import { Battlefield } from './battlefield'
 import { LEVEL_HEIGHT } from './terrain'
 import type { BuildInfo, Weapon } from './cameos'
 import type { Death, Unit } from './unit'
+import { allied, type Handicap, NEUTRAL, NO_HANDICAP, type Owner, ownerOf } from './players'
 
 /**
  * Fighting, with the values of the game's RULES.INI: a unit walks up to its target
@@ -205,12 +206,26 @@ export class Combat {
     return object.userData.hp as number
   }
 
-  /** Whether `a` and `b` are on opposite sides */
+  /** Whether `a` and `b` are on opposite sides (different players, not allied) */
   static hostile(a: THREE.Object3D, b: THREE.Object3D) {
-    if (a.userData.owner === 'neutral' || b.userData.owner === 'neutral') return false
+    if (a.userData.owner === NEUTRAL || b.userData.owner === NEUTRAL) return false
     // under the ground (the subterranean APC on its way) nothing can hit it
     if (b.userData.underground) return false
-    return Battlefield.own(a) !== Battlefield.own(b)
+    return !allied(ownerOf(a), ownerOf(b))
+  }
+
+  /** Each player's handicap (see Handicap): what their units take, how fast they fire */
+  handicap: (owner: Owner) => Handicap = () => NO_HANDICAP
+
+  /** Seconds between two shots of a weapon (ROF= in frames, times the shooter's handicap) */
+  private reload(object: THREE.Object3D, weapon: Weapon) {
+    return (weapon.rof / FRAMES_PER_SECOND) * this.handicap(ownerOf(object)).rof
+  }
+
+  /** Whether a unit is fighting or on its way to: it has a target, or walks with an attack-move */
+  busy(object: THREE.Object3D) {
+    const fighter = this.fighters.get(object.userData.unit as Unit)
+    return !!fighter && (!!fighter.target || !!fighter.attackMove)
   }
 
   /**
@@ -420,7 +435,7 @@ export class Combat {
         }
         // a burst: its shots one after another, then the weapon's pause
         fighter.burst = (fighter.burst || weapon.burst) - 1
-        fighter.cooldown = fighter.burst > 0 ? BURST_GAP : weapon.rof / FRAMES_PER_SECOND
+        fighter.cooldown = fighter.burst > 0 ? BURST_GAP : this.reload(object, weapon)
         this.fire(object, target, info!)
         if (!fighter.burst) this.battlefield.flight.fired(unit)
       }
@@ -513,7 +528,7 @@ export class Combat {
       const elevated = this.elevate(object, fighter.target, dt)
       if (!faced || !elevated || fighter.cooldown > 0) continue
       fighter.burst = (fighter.burst || weapon.burst) - 1
-      fighter.cooldown = fighter.burst > 0 ? BURST_GAP : weapon.rof / FRAMES_PER_SECOND
+      fighter.cooldown = fighter.burst > 0 ? BURST_GAP : this.reload(object, weapon)
       this.fire(object, fighter.target, info)
     }
     for (const object of this.towers.keys()) if (object.userData.dead) this.towers.delete(object)
@@ -892,7 +907,7 @@ export class Combat {
     }
     const victims = [...this.battlefield.units.map(u => u.object), ...this.battlefield.structureObjects]
     for (const victim of victims) {
-      if (victim === attacker || victim.userData.dead || victim.userData.owner === 'neutral') continue
+      if (victim === attacker || victim.userData.dead || victim.userData.owner === NEUTRAL) continue
       const distance = Battlefield.reach(point, victim)
       if (distance > weapon.spread) continue
       this.damage(victim, weapon, 1 - (1 - weapon.percentAtMax) * (distance / weapon.spread))
@@ -909,7 +924,7 @@ export class Combat {
       spread: radius, percentAtMax, aa: true, ag: true, burst: 1,
     }
     for (const victim of [...this.battlefield.units.map(u => u.object), ...this.battlefield.structureObjects]) {
-      if (victim.userData.dead || victim.userData.owner === 'neutral' || (spare && victim.userData.owner === spare)) continue
+      if (victim.userData.dead || victim.userData.owner === NEUTRAL || (spare && victim.userData.owner === spare)) continue
       const distance = Battlefield.reach(point, victim)
       if (distance > radius) continue
       this.damage(victim, weapon, 1 - (1 - percentAtMax) * (distance / radius))
@@ -945,8 +960,10 @@ export class Combat {
     const healing = weapon.damage < 0
     const cover = victim?.prone && !healing ? PRONE_DAMAGE : 1
     if (!healing && !targetInfo?.fearless) victim?.takeFire()
+    // the owner's handicap: armour that takes more or less (healing is not affected)
+    const armor = healing ? 1 : this.handicap(ownerOf(target)).armor
     // healed up to its full strength, no more
-    const hp = Math.min(targetInfo?.strength ?? Infinity, this.hp(target) - weapon.damage * verses * cover * share)
+    const hp = Math.min(targetInfo?.strength ?? Infinity, this.hp(target) - weapon.damage * verses * cover * share / armor)
     target.userData.hp = hp
     target.userData.health = Math.max(0, hp / (targetInfo?.strength ?? 100))
     if (weapon.damage * verses > 0) this.effects.hit?.(target)

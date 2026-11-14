@@ -5,6 +5,8 @@ import type { Harvesting } from '../game/harvesting'
 import { BUILD_OPTIONS, type BuildInfo, canBuild } from '../game/cameos'
 import { MODELS } from '../game/models'
 import type { Unit } from '../game/unit'
+import { tiberiumPatches } from '../game/tiberium'
+import { ownerOf, type Owner } from '../game/players'
 import { basePower, type Skirmish } from '~/composables/useSkirmish'
 import type { AgentCommands } from './link'
 
@@ -30,8 +32,8 @@ export interface AgentContext {
   /** Like a click on the selected MCV, Tick Tank or transport; false if it cannot here */
   deploy: (object: THREE.Object3D) => boolean
   sell: (object: THREE.Object3D) => boolean
-  /** Dev test: puts a unit down at once (`owner`: player or enemy) */
-  spawn: (id: string, at: THREE.Vector3, owner: 'player' | 'enemy') => Promise<THREE.Object3D>
+  /** Dev test: puts a unit down at once (`owner`: player, enemy or a computer player's id) */
+  spawn: (id: string, at: THREE.Vector3, owner: Owner) => Promise<THREE.Object3D>
   /** Dev test: a structure (or upgrade, pavement) of the player at once, without building it */
   instant: (info: BuildInfo, cell: [number, number]) => Promise<void>
   /** Dev test: the special weapons are charged */
@@ -99,7 +101,7 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
     return {
       ref: refOf(object),
       id: data.id as string,
-      owner: Battlefield.own(object) ? 'player' : 'enemy',
+      owner: ownerOf(object),
       ...(data.player ? { player: data.player as string } : {}),
       kind: unit ? 'unit' : 'structure',
       x: round(object.position.x),
@@ -118,36 +120,7 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
 
   /** Tiberium fields: the cells grouped by kind into blobs of neighbours, with their middle */
   function tiberiumFields() {
-    const cells = battlefield.tiberiumCells
-    const seen = new Set<string>()
-    const byKey = new Map(cells.map(c => [`${c.x},${c.z}`, c]))
-    const fields: { kind: string, x: number, z: number, cells: number, bales: number }[] = []
-    for (const start of cells) {
-      if (seen.has(`${start.x},${start.z}`)) continue
-      const blob = [start]
-      seen.add(`${start.x},${start.z}`)
-      for (let i = 0; i < blob.length; i++) {
-        const c = blob[i]!
-        for (let dx = -2; dx <= 2; dx++) {
-          for (let dz = -2; dz <= 2; dz++) {
-            const key = `${c.x + dx},${c.z + dz}`
-            const n = byKey.get(key)
-            if (n && !seen.has(key) && n.kind === start.kind) {
-              seen.add(key)
-              blob.push(n)
-            }
-          }
-        }
-      }
-      fields.push({
-        kind: start.kind ?? 'green',
-        x: round(blob.reduce((s, c) => s + c.x + 0.5, 0) / blob.length),
-        z: round(blob.reduce((s, c) => s + c.z + 0.5, 0) / blob.length),
-        cells: blob.length,
-        bales: blob.reduce((s, c) => s + c.stage, 0),
-      })
-    }
-    return fields
+    return tiberiumPatches(battlefield.tiberiumCells).map(f => ({ ...f, x: round(f.x), z: round(f.z) }))
   }
 
   function state() {
@@ -389,8 +362,8 @@ export function agentCommands(ctx: AgentContext): AgentCommands {
       return { sold: Number(ref) }
     },
 
-    /** Test: a unit put down at once (owner player or enemy) */
-    async spawn(id: string, x: number, z: number, owner: 'player' | 'enemy' = 'player') {
+    /** Test: a unit put down at once (owner player, enemy or a computer player's id) */
+    async spawn(id: string, x: number, z: number, owner: Owner = 'player') {
       if (!MODELS[String(id).toUpperCase()]) throw new Error(`Kein Modell für ${id}`)
       const object = await ctx.spawn(String(id).toUpperCase(), ground(x, z), owner)
       return { spawned: refOf(object) }
