@@ -33,6 +33,8 @@ const UI_SOUNDS: Record<string, readonly [mix: string | number, file: number | s
   open: ['SOUNDS.MIX', 0xd2c3a513],
   /** Click of a menu button: CLICKY1.AUD (confirmed) */
   click: ['SOUNDS.MIX', 0x526404e5],
+  /** That does not go: e.g. a build column cannot scroll further (ScoldSound= in RULES.INI) */
+  scold: ['SOUNDS.MIX', 'SCOLD8.AUD'],
   /** Radar comes online (RadarOn= in RULES.INI) */
   radarOn: ['SOUNDS.MIX', 'COMMUP1.AUD'],
   /** Radar goes offline (RadarOff= in RULES.INI) */
@@ -102,7 +104,7 @@ export type EvaSound = 'evaBuilding' | 'evaTraining' | 'evaConstructionComplete'
   | 'evaStartGame' | 'evaBaseAttack' | 'evaMissionAccomplished' | 'evaMissionFailed'
   | 'evaTimerStopped' | 'evaUnitLost' | 'evaHarvesterAttack' | 'evaLowPower' | 'evaIncomingTransmission'
   | 'evaRepairing' | 'evaStructureSold' | 'evaBuildingOffline' | 'evaBuildingOnline'
-export type UiSound = 'open' | 'click' | 'radarOn' | 'radarOff' | 'message' | 'mapOverlay' | 'mapTarget' | 'mapEnter' | 'mapClick' | EvaSound
+export type UiSound = 'open' | 'click' | 'scold' | 'radarOn' | 'radarOff' | 'message' | 'mapOverlay' | 'mapTarget' | 'mapEnter' | 'mapClick' | EvaSound
 
 export async function loadUiSounds(ctx: BaseAudioContext, store: AssetStore) {
   const sounds: Partial<Record<UiSound, AudioBuffer>> = {}

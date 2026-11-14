@@ -66,7 +66,7 @@ def send(cmd: str, args: list):
     'help; state; wait(sekunden≤120); map(x?, z?, radius=16); build(id, anzahl=1); cancel(id); '
     'place(x?, z?, near?) – fertiges Gebäude mit unterer Ecke auf (x,z) oder neben der Basis; '
     'deploy(ref); move(refs, x, z); attackMove(refs, x, z); attack(refs, zielRef); stop(refs); '
-    'harvest(refs, x?, z?); unload(refs, raffinerieRef); rally(fabrikRef, x, z); sell(ref); repair(ref); '
+    'harvest(refs, x?, z?); unload(refs, raffinerieRef); dock(refs, landeplattformRef); rally(fabrikRef, x, z); sell(ref); repair(ref); '
     'power(ref); look(x, z) oder look(ref); screenshot. refs: Zahl, "1,2,3" oder Liste.'
 ), {
     'cmd': {'type': 'string', 'description': 'Befehlsname, z. B. "build"'},

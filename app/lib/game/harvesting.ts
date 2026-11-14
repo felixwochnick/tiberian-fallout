@@ -88,8 +88,8 @@ export interface HarvestingRules {
   capacity: (unit: Unit) => number
   /** Credits a bale of the kind is worth (Value= of [Riparius], [Vinifera]) */
   value: (kind: TiberiumKind) => number
-  /** The load of a harvester of `owner` comes in */
-  earn: (owner: string, credits: number) => void
+  /** The load of a harvester of `owner` comes in (some credits' worth of one kind) */
+  earn: (owner: string, credits: number, kind: TiberiumKind) => void
 }
 
 export class Harvesting {
@@ -334,7 +334,7 @@ export class Harvesting {
           const last = h.cargo.at(-1)
           if (last) {
             const credits = this.worth(h, [{ kind: last.kind, stages: 1 }])
-            if (credits > 0) this.rules().earn(unit.object.userData.owner ?? 'player', credits)
+            if (credits > 0) this.rules().earn(unit.object.userData.owner ?? 'player', credits, last.kind)
             if (--last.stages <= 0) h.cargo.pop()
             return
           }

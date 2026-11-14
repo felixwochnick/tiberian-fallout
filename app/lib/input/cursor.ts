@@ -77,8 +77,8 @@ function cursorFrames() {
   return frames
 }
 
-/** Pixel-doubled on large screens, the original was made for 640×480. */
-export const cursorScale = () => (window.innerHeight >= 900 ? 2 : 1)
+/** The original's sprites (the signs over buildings) pixel-doubled on large screens, it was made for 640×480. */
+export const spriteScale = () => (window.innerHeight >= 900 ? 2 : 1)
 
 /**
  * Hot spot: the tip of the arrow for the normal cursor; for scroll cursors the side
@@ -91,14 +91,27 @@ function hotSpot(kind: CursorKind, width: number, height: number) {
   return [Math.round((dx + 1) / 2 * (width - 1)), Math.round((dy + 1) / 2 * (height - 1))]
 }
 
-function finish(kind: CursorKind, source: HTMLCanvasElement): CursorImage {
-  const scale = cursorScale()
+/** Scaled by `scale` (1 = the original's pixels) */
+function finish(kind: CursorKind, source: HTMLCanvasElement, scale: number): CursorImage {
   const canvas = document.createElement('canvas')
-  canvas.width = source.width * scale
-  canvas.height = source.height * scale
+  canvas.width = Math.round(source.width * scale)
+  canvas.height = Math.round(source.height * scale)
   const ctx = canvas.getContext('2d')!
   ctx.imageSmoothingEnabled = false
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
+  if (Number.isInteger(scale)) ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
+  else {
+    // between whole steps (1.5×): blown up to the next whole step and smoothed down from
+    // there, so the pixels come out even instead of alternately one and two wide
+    const whole = document.createElement('canvas')
+    whole.width = source.width * Math.ceil(scale)
+    whole.height = source.height * Math.ceil(scale)
+    const wholeCtx = whole.getContext('2d')!
+    wholeCtx.imageSmoothingEnabled = false
+    wholeCtx.drawImage(source, 0, 0, whole.width, whole.height)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(whole, 0, 0, canvas.width, canvas.height)
+  }
   const [hotX, hotY] = hotSpot(kind, canvas.width, canvas.height)
   return { canvas, url: canvas.toDataURL(), hotX: hotX!, hotY: hotY! }
 }
@@ -140,8 +153,8 @@ function cropFrame(shp: Shp, frame: number, palette: Uint8Array) {
   return cropped
 }
 
-/** The original cursors (MOUSE.SHP with MOUSEPAL.PAL from CACHE.MIX). */
-export async function loadCursors(store: AssetStore): Promise<Partial<Record<CursorKind, CursorImage>> | undefined> {
+/** The original cursors (MOUSE.SHP with MOUSEPAL.PAL from CACHE.MIX), `scale` times their size. */
+export async function loadCursors(store: AssetStore, scale: number): Promise<Partial<Record<CursorKind, CursorImage>> | undefined> {
   const tibsun = await store.get('TIBSUN.MIX')
   if (!tibsun) return undefined
   const archive = await MixArchive.open(tibsun, 'TIBSUN.MIX')
@@ -153,18 +166,18 @@ export async function loadCursors(store: AssetStore): Promise<Partial<Record<Cur
   const cursors: Partial<Record<CursorKind, CursorImage>> = {}
   for (const [kind, frame] of Object.entries(cursorFrames()) as [CursorKind, number][]) {
     const canvas = cropFrame(shp, frame, palette)
-    if (canvas) cursors[kind] = finish(kind, canvas)
+    if (canvas) cursors[kind] = finish(kind, canvas, scale)
   }
   // animated ones keep the full frame, so they stay centred while they change size
   for (const [kind, [first, count]] of Object.entries(ANIMATED) as [CursorKind, [number, number]][]) {
-    const frames = Array.from({ length: count }, (_, i) => finish(kind, fullFrame(shp, first + i, palette)))
+    const frames = Array.from({ length: count }, (_, i) => finish(kind, fullFrame(shp, first + i, palette), scale))
     cursors[kind] = { ...frames[0]!, frames }
   }
   return cursors
 }
 
 /** Plain green arrows while the game data is missing. */
-export function fallbackCursors(): Record<CursorKind, CursorImage> {
+export function fallbackCursors(scale: number): Record<CursorKind, CursorImage> {
   const draw = (width: number, height: number, paint: (ctx: CanvasRenderingContext2D) => void) => {
     const canvas = document.createElement('canvas')
     canvas.width = width
@@ -175,8 +188,9 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
     paint(ctx)
     return canvas
   }
+  const scaled = (kind: CursorKind, canvas: HTMLCanvasElement) => finish(kind, canvas, scale)
   const cursors = {
-    default: finish('default', draw(12, 19, (ctx) => {
+    default: scaled('default', draw(12, 19, (ctx) => {
       ctx.beginPath()
       ctx.moveTo(0.5, 0.5)
       ctx.lineTo(0.5, 16)
@@ -193,7 +207,7 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
   for (const [direction, [dx, dy]] of Object.entries(SCROLL_DIRECTIONS) as [ScrollDirection, readonly [number, number]][]) {
     for (const blocked of [false, true]) {
       const kind: CursorKind = `${blocked ? 'blocked' : 'scroll'}-${direction}`
-      cursors[kind] = finish(kind, draw(20, 20, (ctx) => {
+      cursors[kind] = scaled(kind, draw(20, 20, (ctx) => {
         // arrow pointing in the scroll direction, red when the map edge is reached
         ctx.translate(10, 10)
         ctx.rotate(Math.atan2(dy, dx))
@@ -213,7 +227,7 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
     }
   }
   // select: green corner brackets closing in
-  const frames = Array.from({ length: 6 }, (_, i) => finish('select', draw(40, 30, (ctx) => {
+  const frames = Array.from({ length: 6 }, (_, i) => scaled('select', draw(40, 30, (ctx) => {
     const inset = 3 + i * 2.5
     ctx.strokeStyle = '#7cff4a'
     ctx.lineWidth = 2
@@ -229,7 +243,7 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
   })))
   cursors.select = { ...frames[0]!, frames }
   // attack: a red ring
-  cursors.attack = finish('attack', draw(24, 16, (ctx) => {
+  cursors.attack = scaled('attack', draw(24, 16, (ctx) => {
     ctx.strokeStyle = '#ff3a1a'
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -237,7 +251,7 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
     ctx.stroke()
   }))
   // move: a small green target ring
-  cursors.move = finish('move', draw(20, 14, (ctx) => {
+  cursors.move = scaled('move', draw(20, 14, (ctx) => {
     ctx.strokeStyle = '#7cff4a'
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -245,7 +259,7 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
     ctx.stroke()
   }))
   // enter: a blue arrow down into a green ring
-  cursors.enter = finish('enter', draw(24, 28, (ctx) => {
+  cursors.enter = scaled('enter', draw(24, 28, (ctx) => {
     ctx.strokeStyle = '#7cff4a'
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -259,7 +273,7 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
     ctx.closePath()
     ctx.fill()
   }))
-  cursors.rally = finish('rally', draw(24, 28, (ctx) => {
+  cursors.rally = scaled('rally', draw(24, 28, (ctx) => {
     ctx.fillStyle = '#ffd21a'
     ctx.beginPath()
     ctx.moveTo(12, 3)
@@ -275,7 +289,7 @@ export function fallbackCursors(): Record<CursorKind, CursorImage> {
   }))
   // deploy: four arrows pointing outwards, red and crossed out where it cannot
   for (const kind of ['deploy', 'deploy-blocked'] as const) {
-    cursors[kind] = finish(kind, draw(24, 24, (ctx) => {
+    cursors[kind] = scaled(kind, draw(24, 24, (ctx) => {
       ctx.strokeStyle = kind === 'deploy' ? '#7cff4a' : '#ff5a3c'
       ctx.lineWidth = 2
       ctx.beginPath()

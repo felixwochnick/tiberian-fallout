@@ -14,6 +14,7 @@ import { applyHouseColour, MODELS, type Side } from './models'
 import { Effects } from './effects'
 import { SIGN_FPS, type SignFrames, type SignKind } from './signs'
 import { LOCAL_PLAYER, type Owner, ownerOf } from './players'
+import { type WallLink, wallLinks } from './walls'
 
 /**
  * The battlefield in Tiberian Sun's view: a 3D scene seen through an orthographic
@@ -68,6 +69,9 @@ const PLACEHOLDER_HEIGHT: Record<string, number> = {
 interface Footprint { x: number, z: number, w: number, h: number, owner: Owner, wall?: boolean, gate?: boolean }
 
 export type { Owner } from './players'
+
+/** A building or unit on the radar: its house colour and the corners of its cells (see radarMarks) */
+export interface RadarMark { colour: number, corners: [number, number][] }
 
 /**
  * Whether what is being placed fits on a cell, for things put onto a building: the
@@ -163,6 +167,9 @@ const GATE_REACH = 1.6
 const DEPLOY_HEADING = 0
 
 export const ZOOM = { min: 0.75, max: 2.5, step: 1.15 }
+
+/** Pixels beside a unit's frame on screen where a click still means the unit (see objectAt) */
+const PICK_MARGIN = 4
 
 /**
  * Towards the sun: in front of the map on the left of the screen, high up (55°), so the
@@ -465,8 +472,18 @@ const DIGGERS = new Set(['TTNK', 'ART2', 'LPST', 'JUGG', 'LIMPET', 'SGEN'])
 const TUNNELLERS = new Set(['SAPC', 'SUBTANK'])
 /** Farther than this (cells) the subterranean APC goes under the ground; nearer it drives */
 const TUNNEL_MIN = 8
+/** Colours of the pips: Tiberium (and passengers) */
+const PIP_COLOURS: Record<TiberiumKind, [number, number, number]> = { green: [0.2, 0.9, 0.2], blue: [0.25, 0.55, 1] }
+/** An empty cube of a building's health bar or pips */
+const CUBE_DARK: [number, number, number] = [0.12, 0.12, 0.12]
 /** How many soldiers the transports carry (Passengers=) */
 const TRANSPORTS: Record<string, number> = { SAPC: 5, APC: 5 }
+/** Where aircraft come from and reload (Helipad=) */
+const HELIPADS = new Set(['GAHPAD', 'NAHPAD'])
+/** How far round a point (cells) the ground must be flat and free for an aircraft to land there */
+const LANDING_ROOM = 0.55
+/** How near (cells) to a vehicle or soldier an aircraft does not land */
+const LANDING_CLEARANCE = 0.6
 /** A soldier this near (cells) to its transport gets in */
 const BOARD_REACH = 0.8
 /** How far from the transport (cells) the soldiers get out */
@@ -502,6 +519,8 @@ export class Battlefield {
   private readonly disposables: { dispose(): void }[] = []
   /** Animations of the buildings (construction, flags, lights) */
   private readonly mixers: THREE.AnimationMixer[] = []
+  /** Their loops that show nothing of the game's progress (Idle: lights, flags …), see render */
+  private readonly ambient: THREE.AnimationAction[] = []
   private lastFrame = performance.now()
   readonly units: Unit[] = []
   /** Dropships in the air or on the ground */
@@ -544,10 +563,13 @@ export class Battlefield {
   /** Preview of a structure being placed: its cells, green where it may go, red otherwise */
   private placement?: {
     w: number, h: number, adjacent: number, preview: THREE.Group,
-    materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial },
+    materials: { free: THREE.MeshBasicMaterial, blocked: THREE.MeshBasicMaterial, link: THREE.MeshBasicMaterial },
     cell?: [number, number], valid: boolean, fits?: PlacementFit,
     /** Laid where it can be, the other cells left out (pavement) */
     partial?: boolean
+    /** A wall: it walls up the cells to the next pieces of its kind (see linkedCells), shown fainter in `links` */
+    link?: WallLink
+    links: THREE.Group
   }
 
   /** Aircraft and jumpjets in the air (see Flight) */
@@ -1003,12 +1025,18 @@ export class Battlefield {
   /**
    * Draws a frame; `frozen` (the game is paused): everything stands still, only the
    * picture is drawn. `speed` is the game speed: units, animations and effects run
-   * that much faster or slower.
+   * that much faster or slower. Only the loops that show nothing of the game's progress
+   * (the buildings' and Tiberium trees' Idle, units standing still, the dropship's
+   * lights, the glow of the Tiberium) run at `ambientSpeed`, whatever the game speed.
    */
-  render(frozen = false, speed = 1) {
+  render(frozen = false, speed = 1, ambientSpeed = speed) {
     const now = performance.now()
-    const seconds = frozen ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000) * speed // no jump after a stall
+    const real = frozen ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000) // no jump after a stall
+    const seconds = real * speed
     this.lastFrame = now
+    // the loops run on game seconds like everything else, slowed down or sped up to their own pace
+    const ambient = ambientSpeed / speed
+    for (const action of this.ambient) action.timeScale = ambient
     for (const mixer of this.mixers) mixer.update(seconds)
     for (const item of this.rising) {
       item.time = Math.min(1, item.time + seconds / RISE_SECONDS)
@@ -1019,7 +1047,7 @@ export class Battlefield {
     for (const unit of this.units) {
       const speed = this.speedOf(unit.object)
       if (speed && speed !== unit.speed) unit.speed = speed
-      unit.update(seconds)
+      unit.update(seconds, ambient)
       // on the ground, up and down the ramps (unless it is up on a refinery's pad)
       const at = unit.object.position
       if (!unit.object.userData.offGround) at.y = this.heightAt(at.x, at.z)
@@ -1031,7 +1059,7 @@ export class Battlefield {
     }
     this.flight.update(seconds)
     for (const ship of [...this.aircraft]) {
-      ship.update(seconds)
+      ship.update(seconds, ambient)
       if (seconds > 0) this.engineEffects(ship.object, seconds)
     }
     this.updateDeploying(seconds)
@@ -1041,7 +1069,7 @@ export class Battlefield {
     this.updateDeliveries()
     this.growTiberium(seconds)
     this.growTiberiumTrees(seconds)
-    this.groundTime.value = (this.groundTime.value + seconds) % 1000
+    this.groundTime.value = (this.groundTime.value + real * ambientSpeed) % 1000
     this.effects.update(seconds, this.renderer.getDrawingBufferSize(new THREE.Vector2()).y / (this.camera.top - this.camera.bottom))
     this.renderer.render(this.scene, this.camera)
     this.drawSelection()
@@ -1096,7 +1124,8 @@ export class Battlefield {
 
   /**
    * The whole scrollable area seen through the game camera, shrunk to `width` × `height`
-   * pixels (keep areaAspect), for the radar. Rendered once into an image.
+   * pixels (keep areaAspect), for the radar. Rendered once into an image: the land
+   * only, the buildings and units are drawn over it in their house colours (radarMarks).
    */
   renderMinimap(width: number, height: number) {
     const [u0, u1] = this.bounds.u
@@ -1108,6 +1137,15 @@ export class Battlefield {
     camera.position.copy(centre).add(this.offset)
     camera.lookAt(centre)
 
+    // buildings, units (also those being sold or dying), the dropships, the placement
+    // preview, and smoke and fire (sized in the game camera's pixels, they would cover the map)
+    const hidden = [
+      ...this.scene.children.filter(object => object.userData.owner),
+      ...this.aircraft.map(ship => ship.object),
+      ...(this.placement ? [this.placement.preview] : []),
+      ...this.effects.particles.objects,
+    ].filter(object => object.visible)
+    for (const object of hidden) object.visible = false
     const target = new THREE.WebGLRenderTarget(width, height)
     this.renderer.setRenderTarget(target)
     this.renderer.render(this.scene, camera)
@@ -1115,6 +1153,7 @@ export class Battlefield {
     this.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels)
     this.renderer.setRenderTarget(null)
     target.dispose()
+    for (const object of hidden) object.visible = true
 
     // WebGL rows run bottom-up
     const image = new ImageData(width, height)
@@ -1126,6 +1165,38 @@ export class Battlefield {
     canvas.height = height
     canvas.getContext('2d')!.putImageData(image, 0, 0)
     return canvas
+  }
+
+  /**
+   * The buildings and units on the radar, like in the original in their house colours:
+   * a building's foundation and a unit's cell, as their corners in fractions of the
+   * scrollable area (as viewRect; raised ground shows higher up, as in renderMinimap).
+   * Not what the player cannot see: cloaked enemies, units under the ground or in a transport.
+   */
+  radarMarks(): RadarMark[] {
+    const [u0, u1] = this.bounds.u
+    const [v0, v1] = this.bounds.v
+    const lift = 1 / Math.tan(ELEVATION)
+    const point = new THREE.Vector3()
+    const corner = (x: number, y: number, z: number): [number, number] => {
+      point.set(x, y, z)
+      return [(point.dot(this.screenRight) - u0) / (u1 - u0), (point.dot(this.screenDown) - y * lift - v0) / (v1 - v0)]
+    }
+    const cells = (x: number, y: number, z: number, w: number, h: number) =>
+      [corner(x, y, z), corner(x + w, y, z), corner(x + w, y, z + h), corner(x, y, z + h)]
+    const seen = (object: THREE.Object3D) => object.visible && !object.userData.dead && object.userData.cloakLook !== 'gone'
+    const marks: RadarMark[] = []
+    for (const object of this.structureObjects) {
+      const f = object.userData.footprint as Footprint | undefined
+      if (f && seen(object)) marks.push({ colour: object.userData.houseColour, corners: cells(f.x, object.position.y, f.z, f.w, f.h) })
+    }
+    for (const { object } of this.units) {
+      if (!object.parent || !seen(object)) continue
+      // aircraft and jumpjets over the cell they are above
+      const { x, z } = object.position
+      marks.push({ colour: object.userData.houseColour, corners: cells(x - 0.5, this.heightAt(x, z), z - 0.5, 1, 1) })
+    }
+    return marks
   }
 
   /** Makes a building or unit selectable with the mouse. */
@@ -1158,18 +1229,68 @@ export class Battlefield {
     if (x < -1 || x > 1 || y < -1 || y > 1) return undefined
     this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera)
     const hit = this.raycaster.intersectObjects(this.selectables, true)[0]
-    if (!hit) {
-      // between a building's parts (its pad's edge, a gap under a pipe) the ray misses
-      // the model: a click on its foundation still means the building, not the ground
-      const ground = this.pickGround(this.raycaster.ray)
-      return ground ? this.selectables.find((object) => {
-        const f = object.userData.footprint as Footprint | undefined
-        return f && ground.x >= f.x && ground.x < f.x + f.w && ground.z >= f.z && ground.z < f.z + f.h
-      }) : undefined
-    }
-    let node: THREE.Object3D | null = hit.object
+    let node: THREE.Object3D | null = hit?.object ?? null
     while (node && !this.selectables.includes(node)) node = node.parent
-    return node ?? undefined
+    if (node?.userData.kind === 'unit') return node
+    // small units are hard to hit on the model: a click in a unit's frame still means it,
+    // like in the original, if it stands in front of what the ray hit
+    const unit = this.unitInFrame(clientX, clientY, hit?.distance)
+    if (unit) return unit
+    if (node) return node
+    // between a building's parts (its pad's edge, a gap under a pipe) the ray misses
+    // the model: a click on its foundation still means the building, not the ground
+    const ground = this.pickGround(this.raycaster.ray)
+    return ground ? this.selectables.find((object) => {
+      const f = object.userData.footprint as Footprint | undefined
+      return f && ground.x >= f.x && ground.x < f.x + f.w && ground.z >= f.z && ground.z < f.z + f.h
+    }) : undefined
+  }
+
+  /**
+   * The unit whose frame on screen holds a point of the screen (client pixels), the one
+   * whose middle is nearest if several do. The frame is the outline of an upright
+   * cylinder of the unit's frame size (see unitBounds), so it doesn't change with the
+   * unit's heading. Only units nearer the camera than `distance` along the ray of
+   * objectAt; with nothing hit (no distance) the frame reaches a few pixels further.
+   */
+  private unitInFrame(clientX: number, clientY: number, distance = Infinity) {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const margin = distance === Infinity ? PICK_MARGIN : 0
+    const { origin, direction } = this.raycaster.ray
+    const point = new THREE.Vector3()
+    const toScreen = (at: THREE.Vector3) => {
+      at.project(this.camera)
+      return [rect.left + (at.x + 1) / 2 * rect.width, rect.top + (1 - at.y) / 2 * rect.height] as const
+    }
+    let nearest: THREE.Object3D | undefined
+    let nearestOff = Infinity
+    for (const object of this.selectables) {
+      if (object.userData.kind !== 'unit' || !object.userData.frameSize || object.userData.dead || !Battlefield.shown(object)) continue
+      const { radius, height } = object.userData.frameSize as { radius: number, height: number }
+      if (point.copy(object.position).setY(object.position.y + height / 2).sub(origin).dot(direction) >= distance) continue
+      const [x, bottom] = toScreen(point.copy(object.position))
+      const [, top] = toScreen(point.copy(object.position).setY(object.position.y + height))
+      // the round base and top, seen at a slant
+      const across = radius * PIXELS_PER_CELL * this.zoom + margin
+      const deep = radius * PIXELS_PER_CELL * this.zoom * Math.sin(ELEVATION) + margin
+      if (Math.abs(clientX - x) > across || clientY < top - deep || clientY > bottom + deep) continue
+      const off = Math.hypot(clientX - x, clientY - (top + bottom) / 2)
+      if (off < nearestOff) {
+        nearest = object
+        nearestOff = off
+      }
+    }
+    return nearest
+  }
+
+  /** Whether an object is on the map and drawn (not underground, not hidden with a parent) */
+  private static shown(object: THREE.Object3D) {
+    let node = object
+    while (node.parent) {
+      if (!node.visible) return false
+      node = node.parent
+    }
+    return (node as THREE.Scene).isScene === true
   }
 
   /**
@@ -1282,6 +1403,7 @@ export class Battlefield {
       const mixer = item.object.userData.mixer as THREE.AnimationMixer | undefined
       const i = mixer ? this.mixers.indexOf(mixer) : -1
       if (i >= 0) this.mixers.splice(i, 1)
+      if (mixer) this.ambient.splice(0, this.ambient.length, ...this.ambient.filter(action => action.getMixer() !== mixer))
     }
     this.unbuilding.splice(0, this.unbuilding.length, ...this.unbuilding.filter(item => item.time < item.seconds))
   }
@@ -1507,8 +1629,13 @@ export class Battlefield {
     const white: [number, number, number] = [0.95, 0.95, 0.95]
     const health = THREE.MathUtils.clamp(object.userData.health ?? 1, 0, 1)
     const colour: [number, number, number] = health > 0.5 ? [0.1, 0.95, 0.15] : health > 0.25 ? [1, 0.85, 0.1] : [1, 0.15, 0.1]
-    // a building's health bar lies inside its frame, under the frame's strokes
-    if (object.userData.kind !== 'unit') this.drawBuildingHealth(bounds, w, h, health, colour, quad)
+    // a building's health bar lies inside its frame, under the frame's strokes; along its
+    // lower edge the Tiberium it keeps
+    if (object.userData.kind !== 'unit') {
+      this.drawBuildingHealth(bounds, w, h, health, colour, quad)
+      const stored = this.storedTiberium(object)
+      if (stored) this.drawStorage(bounds, w, h, stored, quad)
+    }
     if (object.userData.kind === 'unit') {
       // units: a flat frame facing the camera, only its corners: two strokes each, a
       // sixth of the shorter side long, 2 px thick
@@ -1558,35 +1685,79 @@ export class Battlefield {
       const x = left + gap + i * (cell + gap)
       rect(x, barTop + gap, x + cell, barTop + gap + cell, colour)
     }
+    // in the lower left corner of the frame its pips, like in the original (PipScale=):
+    // a harvester's load, a transport's passengers, an aircraft's shots
     const cargo = object.userData.cargo as CargoSlot[] | undefined
-    if (cargo) this.drawCargo(cargo, left, bottom, rect)
-
+    const unit = object.userData.unit as Unit | undefined
+    const ammo = unit && Battlefield.own(object) ? this.flight.ammoOf(unit) : undefined
+    const capacity = Battlefield.own(object) ? Battlefield.capacity(object) : 0
+    if (cargo) {
+      this.drawSquares(Array.from({ length: CARGO_SLOTS }, (_, i) => {
+        const slot = cargo[i]
+        return slot && { colour: PIP_COLOURS[slot.kind], share: slot.stages / SLOT_STAGES }
+      }), left, bottom, rect)
+    }
+    else if (capacity) {
+      const aboard = Battlefield.passengers(object).length
+      this.drawSquares(Array.from({ length: capacity }, (_, i) => i < aboard ? { colour: PIP_COLOURS.green, share: 1 } : undefined), left, bottom, rect)
+    }
+    else if (ammo) this.drawShells(ammo.shots, ammo.ammo, left, bottom, rect)
   }
 
   /**
-   * A harvester's load in the lower left corner of its frame, like in the original:
-   * five squares, filled green or blue by the Tiberium in them (a part-filled one from
-   * the bottom up, a third per small cell), empty ones dark.
+   * Pips in the lower left corner of a unit's frame: a row of squares, filled from the
+   * bottom up with their colour by their share (a harvester's part-filled square), empty
+   * ones dark.
    */
-  private drawCargo(
-    cargo: CargoSlot[],
+  private drawSquares(
+    slots: ({ colour: [number, number, number], share: number } | undefined)[],
     left: number,
     bottom: number,
     rect: (x0: number, y0: number, x1: number, y1: number, colour: [number, number, number]) => void,
   ) {
     const size = 6
     const gap = 1
-    const colours: Record<TiberiumKind, [number, number, number]> = { green: [0.2, 0.9, 0.2], blue: [0.25, 0.55, 1] }
     const x0 = left + 4
     const y1 = bottom - 4
-    rect(x0 - gap, y1 - size - gap, x0 + CARGO_SLOTS * (size + gap), y1 + gap, [0.02, 0.02, 0.02])
-    for (let i = 0; i < CARGO_SLOTS; i++) {
+    rect(x0 - gap, y1 - size - gap, x0 + slots.length * (size + gap), y1 + gap, [0.02, 0.02, 0.02])
+    slots.forEach((slot, i) => {
       const x = x0 + i * (size + gap)
       rect(x, y1 - size, x + size, y1, [0.16, 0.16, 0.14])
-      const slot = cargo[i]
-      if (!slot) continue
-      const filled = Math.round(size * slot.stages / SLOT_STAGES)
-      rect(x, y1 - filled, x + size, y1, colours[slot.kind])
+      if (!slot) return
+      const filled = Math.round(size * slot.share)
+      rect(x, y1 - filled, x + size, y1, slot.colour)
+    })
+  }
+
+  /**
+   * An aircraft's shots in the lower left corner of its frame, like the original's
+   * ammunition pips (PIPS2.SHP): a row of upright brass shells, one for each it carries,
+   * the spent ones dark.
+   */
+  private drawShells(
+    shots: number,
+    ammo: number,
+    left: number,
+    bottom: number,
+    rect: (x0: number, y0: number, x1: number, y1: number, colour: [number, number, number]) => void,
+  ) {
+    const width = 3
+    const height = 9
+    const gap = 1
+    const x0 = left + 4
+    const y1 = bottom - 4
+    type Colour = [number, number, number]
+    rect(x0 - gap, y1 - height - gap, x0 + ammo * (width + gap), y1 + gap, [0.02, 0.02, 0.02])
+    for (let i = 0; i < ammo; i++) {
+      const x = x0 + i * (width + gap)
+      const [body, light, tip]: [Colour, Colour, Colour] = i < shots
+        ? [[0.77, 0.69, 0.38], [0.89, 0.78, 0.44], [0.55, 0.55, 0.55]]
+        : [[0.16, 0.16, 0.14], [0.2, 0.2, 0.18], [0.12, 0.12, 0.12]]
+      // the case, lit on its left, and the round tip on top
+      rect(x, y1 - height + 3, x + width, y1, body)
+      rect(x, y1 - height + 3, x + 1, y1 - 1, light)
+      rect(x, y1 - height + 1, x + width, y1 - height + 3, tip)
+      rect(x + 1, y1 - height, x + 2, y1 - height + 1, tip)
     }
   }
 
@@ -1594,7 +1765,7 @@ export class Battlefield {
    * A building's health bar runs along the top of its frame like in the original: a row
    * of small cubes from the left corner of the box's top face to its back corner (top
    * middle on screen), just inside the box under that edge. Lost health shows as dark
-   * cubes. The cubes are about 4 px on screen whatever the zoom.
+   * cubes.
    */
   private drawBuildingHealth(
     bounds: THREE.Box3,
@@ -1604,15 +1775,58 @@ export class Battlefield {
     colour: [number, number, number],
     quad: (corners: [number, number][], colour: [number, number, number]) => void,
   ) {
+    this.drawCubes(bounds, w, h, 'top', (cells) => {
+      const full = Math.ceil(cells * health)
+      return Array.from({ length: cells }, (_, i) => i < full ? colour : CUBE_DARK)
+    }, quad)
+  }
+
+  /**
+   * The Tiberium a refinery or silo keeps, like the original's pips (PIPS.SHP): a row of
+   * cubes along the lower left edge of its frame, from its left corner to the front one,
+   * green and then blue by the share of each kind, the empty rest dark.
+   */
+  private drawStorage(
+    bounds: THREE.Box3,
+    w: number,
+    h: number,
+    stored: Record<TiberiumKind, number>,
+    quad: (corners: [number, number][], colour: [number, number, number]) => void,
+  ) {
+    this.drawCubes(bounds, w, h, 'bottom', (cells) => {
+      // whole cubes, rounded so that a little Tiberium shows and only a full store fills all
+      const filled = (share: number) => share <= 0 ? 0 : share >= 1 ? cells : Math.min(cells - 1, Math.max(1, Math.round(cells * share)))
+      const all = filled(stored.green + stored.blue)
+      const blue = Math.min(all, filled(stored.blue))
+      return Array.from({ length: cells }, (_, i) => i < all - blue ? PIP_COLOURS.green : i < all ? PIP_COLOURS.blue : CUBE_DARK)
+    }, quad)
+  }
+
+  /**
+   * A row of small cubes just inside a building's box (its health bar, its pips): along
+   * the edge from the left corner of its top face to the back one (`top`, under that
+   * edge), or of its bottom face to the front one (`bottom`, on it). The cubes are about
+   * 4 px on screen whatever the zoom; `colours` gives each its colour, for as many as fit.
+   */
+  private drawCubes(
+    bounds: THREE.Box3,
+    w: number,
+    h: number,
+    edge: 'top' | 'bottom',
+    colours: (cells: number) => [number, number, number][],
+    quad: (corners: [number, number][], colour: [number, number, number]) => void,
+  ) {
     const toScreen = (p: THREE.Vector3): [number, number] => {
       const at = p.clone().project(this.camera)
       return [(at.x + 1) / 2 * w, (1 - at.y) / 2 * h]
     }
-    const corners = [0, 1, 2, 3].map(i => new THREE.Vector3(i & 1 ? bounds.max.x : bounds.min.x, bounds.max.y, i & 2 ? bounds.max.z : bounds.min.z))
+    const y = edge === 'top' ? bounds.max.y : bounds.min.y
+    const corners = [0, 1, 2, 3].map(i => new THREE.Vector3(i & 1 ? bounds.max.x : bounds.min.x, y, i & 2 ? bounds.max.z : bounds.min.z))
     const screen = corners.map(toScreen)
     const left = corners[screen.indexOf(screen.reduce((a, b) => (b[0] < a[0] ? b : a)))]!
-    const back = corners[screen.indexOf(screen.reduce((a, b) => (b[1] < a[1] ? b : a)))]!
-    const along = back.clone().sub(left)
+    // the back corner (highest on screen) or the front one (lowest)
+    const end = corners[screen.indexOf(screen.reduce((a, b) => ((edge === 'top' ? b[1] < a[1] : b[1] > a[1]) ? b : a)))]!
+    const along = end.clone().sub(left)
     const length = along.length()
     if (length <= 0) return
     along.divideScalar(length)
@@ -1624,23 +1838,24 @@ export class Battlefield {
 
     // world units per screen pixel along the edge
     const [lx, ly] = toScreen(left)
-    const [bx, by] = toScreen(back)
-    const perPixel = length / (Math.hypot(bx - lx, by - ly) || 1)
+    const [ex, ey] = toScreen(end)
+    const perPixel = length / (Math.hypot(ex - lx, ey - ly) || 1)
     const size = 4 * perPixel
     const gap = 1.2 * perPixel
     const cells = Math.max(1, Math.floor((length - gap) / (size + gap)))
-    const full = Math.ceil(cells * health)
-    const dark: [number, number, number] = [0.12, 0.12, 0.12]
+    const colour = colours(cells)
     const view = this.camera.getWorldDirection(new THREE.Vector3())
     const shade = (c: [number, number, number], f: number): [number, number, number] => [c[0] * f, c[1] * f, c[2] * f]
 
-    // the back cubes first, the front ones are drawn over them
-    for (let i = cells - 1; i >= 0; i--) {
+    // the far cubes first, the near ones are drawn over them
+    const order = Array.from({ length: cells }, (_, i) => i)
+    if (along.dot(view) > 0) order.reverse()
+    for (const i of order) {
       const base = left.clone()
         .addScaledVector(along, gap + i * (size + gap))
         .addScaledVector(across, gap)
-        .addScaledVector(up, -size - gap)
-      const c = i < full ? colour : dark
+        .addScaledVector(up, edge === 'top' ? -size - gap : gap)
+      const c = colour[i] ?? CUBE_DARK
       // the faces that look at the camera: the sides first, the top over them
       const faces: [THREE.Vector3, THREE.Vector3, THREE.Vector3, number][] = [
         [along, across, up, 0.55],
@@ -1823,9 +2038,11 @@ export class Battlefield {
     if (this.terrain.flatLevel(cx, cz, 1, 1) === undefined || this.obstacles.has(`${cx},${cz}`)) return false
     if (this.footprints.some(f => cx >= f.x && cx < f.x + f.w && cz >= f.z && cz < f.z + f.h)) return false
     if (this.tiberium.has(`${cx},${cz}`)) return false
-    // a unit standing on it, own or enemy (not one in the air): as far round as it is big
-    return !this.units.some(({ object }) => {
-      if (object === except || object.userData.dead || object.userData.offGround) return false
+    // a unit standing on it, own or enemy (not one in the air, but a landed aircraft): as far round as it is big
+    return !this.units.some((unit) => {
+      const object = unit.object
+      if (object === except || object.userData.dead) return false
+      if (this.flight.has(unit) ? this.flight.airborne(unit) : object.userData.offGround) return false
       const radius = ((object.userData.frameSize?.radius as number | undefined) ?? 0) * UNIT_BLOCK_SHARE
       const at = object.position
       const dx = Math.max(cx - at.x, 0, at.x - (cx + 1))
@@ -1906,12 +2123,12 @@ export class Battlefield {
   }
 
   /** Starts placing a structure of w × h cells: its cells follow the cursor (see updatePlacement). */
-  startPlacement(w: number, h: number, adjacent: number, fits?: PlacementFit, partial = false) {
+  startPlacement(w: number, h: number, adjacent: number, fits?: PlacementFit, partial = false, link?: WallLink) {
     this.cancelPlacement()
     const preview = new THREE.Group()
     const geometry = new THREE.PlaneGeometry(0.92, 0.92).rotateX(-Math.PI / 2)
-    const material = (color: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, depthWrite: false })
-    const materials = { free: material(0xffffff), blocked: material(0xff3a2a) }
+    const material = (color: number, opacity = 0.45) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })
+    const materials = { free: material(0xffffff), blocked: material(0xff3a2a), link: material(0xffffff, 0.2) }
     for (let i = 0; i < w; i++) {
       for (let j = 0; j < h; j++) {
         const cell = new THREE.Mesh(geometry, materials.free)
@@ -1920,8 +2137,9 @@ export class Battlefield {
       }
     }
     preview.visible = false
-    this.scene.add(preview)
-    this.placement = { w, h, adjacent, preview, materials, valid: false, fits, partial }
+    const links = new THREE.Group()
+    this.scene.add(preview, links)
+    this.placement = { w, h, adjacent, preview, materials, valid: false, fits, partial, link, links }
   }
 
   /**
@@ -1935,6 +2153,7 @@ export class Battlefield {
     const cell = this.cellAt(clientX, clientY, placement.w, placement.h)
     placement.cell = cell
     placement.preview.visible = !!cell
+    placement.links.visible = false
     if (!cell) return
     placement.preview.position.set(cell[0], this.heightAt(cell[0] + 0.5, cell[1] + 0.5), cell[1])
     // something put onto a building (a gun onto the component tower): white on top of
@@ -1964,6 +2183,18 @@ export class Battlefield {
       const ok = placement.valid || (anyBlocked && free[i])
       ;(child as THREE.Mesh).material = ok ? placement.materials.free : placement.materials.blocked
     })
+    // a wall: also the cells it walls up, fainter, like in the original
+    if (placement.valid && placement.link) {
+      const cells = this.linkedCells(placement.link, cell[0], cell[1])
+      const geometry = (placement.preview.children[0] as THREE.Mesh).geometry
+      while (placement.links.children.length < cells.length) placement.links.add(new THREE.Mesh(geometry, placement.materials.link))
+      placement.links.children.forEach((child, i) => {
+        const [x, z] = cells[i] ?? [0, 0]
+        child.visible = i < cells.length
+        child.position.set(x + 0.5, this.heightAt(x + 0.5, z + 0.5) + 0.02, z + 0.5)
+      })
+      placement.links.visible = true
+    }
   }
 
   /** Where the structure would be placed (its lower corner cell), if it may be placed there */
@@ -1973,12 +2204,25 @@ export class Battlefield {
 
   cancelPlacement() {
     if (!this.placement) return
-    this.scene.remove(this.placement.preview)
+    this.scene.remove(this.placement.preview, this.placement.links)
     const cell = this.placement.preview.children[0] as THREE.Mesh | undefined
     cell?.geometry.dispose()
-    this.placement.materials.free.dispose()
-    this.placement.materials.blocked.dispose()
+    for (const material of Object.values(this.placement.materials)) material.dispose()
     this.placement = undefined
+  }
+
+  /**
+   * The cells a wall piece put down on (x, z) walls up, up to the next own pieces of its
+   * kind (see wallLinks); none for anything else
+   */
+  linkedCells(link: WallLink, x: number, z: number, owner: Owner = 'player') {
+    return wallLinks(x, z, link.range, {
+      piece: (cx, cz) => {
+        const piece = this.structureOn(cx, cz)
+        return !!piece && piece.userData.id === link.id && piece.userData.owner === owner && !piece.userData.dead
+      },
+      free: (cx, cz) => this.cellFree(cx, cz),
+    })
   }
 
   /**
@@ -1995,6 +2239,7 @@ export class Battlefield {
     object.userData.id = id
     object.userData.owner = owner
     object.userData.side = side
+    object.userData.houseColour = houseColour
     object.userData.footprint = footprint
     object.userData.netId = ++this.lastNetId
     this.structures.set(id, [...(this.structures.get(id) ?? []), object])
@@ -2530,7 +2775,7 @@ export class Battlefield {
       const own = clipsOf(variant, object)
       const idle = own.find(clip => clip.name === 'Idle')
       // each tree breathes out of step with the others
-      if (idle) mixer.clipAction(idle).startAt(-Math.random() * idle.duration).play()
+      if (idle) this.ambient.push(mixer.clipAction(idle).startAt(-Math.random() * idle.duration).play())
       this.mixers.push(mixer)
       // the spores only show while they fly (inside the pod they would only cost drawing)
       const spores = object.getObjectByName(variant.replace('Tree', 'Spores'))
@@ -2647,6 +2892,7 @@ export class Battlefield {
       for (const clip of gltf.animations) {
         if (clip.name !== 'Build' && clip.name !== 'Idle') continue
         const action = mixer.clipAction(clip).play()
+        if (clip.name === 'Idle') this.ambient.push(action)
         if (clip.name === 'Build') {
           action.setLoop(THREE.LoopOnce, 1).clampWhenFinished = true
           // the model's own pose is not the finished building: show the clip's last frame
@@ -2729,6 +2975,7 @@ export class Battlefield {
     object.position.copy(at).setY(this.heightAt(at.x, at.z))
     object.userData.kind = 'unit' // can be picked with the selection box
     object.userData.side = side
+    object.userData.houseColour = houseColour
     const unit = new Unit(object, gltf.animations)
     // In its first pose (a new skeleton's bone matrices are all zero, the body would
     // shrink to a point): measured so, the frame came out far too small, and a bounding
@@ -2773,6 +3020,9 @@ export class Battlefield {
   /** A unit's speed in cells per second (Speed=, see Combat); undefined: the model's own */
   speedOf: (object: THREE.Object3D) => number | undefined = () => undefined
 
+  /** How full a refinery or silo of the player is, by kind (0 … 1, see TiberiumStore); undefined: it keeps none */
+  storedTiberium: (object: THREE.Object3D) => Record<TiberiumKind, number> | undefined = () => undefined
+
   /**
    * Whether a cell is on the map and not under a building; for a crusher of `crusher`'s
    * side the walls (sandbags) of its enemies are no obstacle, it drives over them
@@ -2805,6 +3055,31 @@ export class Battlefield {
       if (best) return best
     }
     return at.clone()
+  }
+
+  /** The helipads of a side that still stand (see Flight) */
+  helipads(owner: string) {
+    return [...HELIPADS].flatMap(id => this.structuresOf(id)).filter(o => !o.userData.dead && (o.userData.owner ?? 'player') === owner)
+  }
+
+  /** Whether an object is a helipad */
+  static isHelipad(object: THREE.Object3D) {
+    return HELIPADS.has(object.userData.id)
+  }
+
+  /**
+   * Whether an aircraft can come down at a point: on flat ground round it (not on a
+   * slope, a ramp or a cliff), on the map, not on a building, wall or tree, and with no
+   * vehicle or soldier standing there (other aircraft: see Flight)
+   */
+  landable(at: THREE.Vector3) {
+    for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+      const x = Math.floor(at.x + dx * LANDING_ROOM)
+      const z = Math.floor(at.z + dz * LANDING_ROOM)
+      if (!this.free(x, z) || this.terrain.cell(x, z) !== Cell.Flat) return false
+    }
+    return !this.units.some(({ object }) => !object.userData.dead && !object.userData.offGround && object.parent === this.scene
+      && Math.hypot(object.position.x - at.x, object.position.z - at.z) < LANDING_CLEARANCE)
   }
 
   /** Whether a cell's middle is on the map */

@@ -320,7 +320,11 @@ export class Unit {
     }
   }
 
-  update(seconds: number) {
+  /**
+   * Moves it on by `seconds` (game seconds); `ambient` scales the pace of its loop while
+   * it stands still (Idle, lying, a posture): see Battlefield.render.
+   */
+  update(seconds: number, ambient = 1) {
     if (this.stance === 'dead') {
       this.mixer.update(seconds)
       return
@@ -350,6 +354,8 @@ export class Unit {
         this.face(this.target, seconds)
       }
     }
+    const resting = this.target ? undefined : this.loop
+    if (resting) resting.timeScale = ambient
     this.mixer.update(seconds)
   }
 

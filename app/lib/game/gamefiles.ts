@@ -47,14 +47,19 @@ export async function expansionArchive(store: AssetStore) {
   return blob ? MixArchive.open(blob, 'EXPAND01.MIX') : undefined
 }
 
-/** RULES.INI or ART.INI from LOCAL.MIX, with Firestorm's changes if there are any */
+/**
+ * RULES.INI or ART.INI, with Firestorm's changes if there are any. Like the original,
+ * Firestorm's archive takes precedence over LOCAL.MIX: it has updated copies of both
+ * (in RULES.INI the walls' GuardRange=, how far they link up when placed).
+ */
 export async function gameIni(store: AssetStore, name: 'RULES.INI' | 'ART.INI'): Promise<Ini | undefined> {
   const tibsun = await store.get('TIBSUN.MIX')
   if (!tibsun) return undefined
+  const expansion = await expansionArchive(store)
   const local = await (await MixArchive.open(tibsun, 'TIBSUN.MIX')).openNested('LOCAL.MIX')
-  const bytes = await local?.read(name)
+  const bytes = await expansion?.read(name) ?? await local?.read(name)
   if (!bytes) return undefined
   const ini = parseIni(decode(bytes))
-  const patch = await (await expansionArchive(store))?.read(EXPANSION[name]!)
+  const patch = await expansion?.read(EXPANSION[name]!)
   return patch ? mergeIni(ini, parseIni(decode(patch))) : ini
 }

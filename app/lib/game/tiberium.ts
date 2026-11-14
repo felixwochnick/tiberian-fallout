@@ -102,3 +102,62 @@ export function cargoNeeds(cargo: CargoSlot[]): TiberiumKind | undefined {
   const last = cargo.at(-1)
   return cargo.length >= CARGO_SLOTS && last && last.stages < SLOT_STAGES ? last.kind : undefined
 }
+
+/**
+ * The Tiberium a side keeps in its refineries and silos (Storage= bales each), like in
+ * the original: what the harvesters bring in is stored there as far as there is room,
+ * and money is spent from it first. It is part of the side's credits (what does not
+ * fit stays plain money; the original loses it). By kind, for the green and blue pips.
+ */
+export class TiberiumStore {
+  /** Bales stored, by kind */
+  readonly bales: Record<TiberiumKind, number> = { green: 0, blue: 0 }
+  /** The credits as last seen (see follow) */
+  private seen?: number
+
+  /** `value`: credits a bale of the kind is worth (Value=) */
+  constructor(private readonly value: (kind: TiberiumKind) => number) {}
+
+  get total() {
+    return this.bales.green + this.bales.blue
+  }
+
+  /** Credits' worth of Tiberium a harvester brought in (and added to the credits): stored as far as `capacity` bales allow */
+  bring(kind: TiberiumKind, credits: number, capacity: number) {
+    const room = Math.max(0, capacity - this.total)
+    this.bales[kind] += Math.min(credits / this.value(kind), room)
+    if (this.seen !== undefined) this.seen += credits
+  }
+
+  /**
+   * The side's credits, once a frame: what has been spent since (they went down) comes
+   * out of the store first; with the refineries and silos now holding `capacity` bales,
+   * what no longer fits is plain money
+   */
+  follow(credits: number, capacity: number) {
+    if (this.seen !== undefined && credits < this.seen) this.take(this.worth(), this.seen - credits)
+    this.seen = credits
+    if (this.total > capacity) this.scale(capacity / this.total)
+  }
+
+  /** Share of `capacity` bales filled, by kind */
+  fill(capacity: number): Record<TiberiumKind, number> {
+    if (capacity <= 0) return { green: 0, blue: 0 }
+    return { green: Math.min(1, this.bales.green / capacity), blue: Math.min(1, this.bales.blue / capacity) }
+  }
+
+  /** Credits the stored Tiberium is worth */
+  worth() {
+    return this.bales.green * this.value('green') + this.bales.blue * this.value('blue')
+  }
+
+  /** Credits spent out of the store: of both kinds alike */
+  private take(worth: number, credits: number) {
+    this.scale(worth > credits ? 1 - credits / worth : 0)
+  }
+
+  private scale(factor: number) {
+    this.bales.green *= factor
+    this.bales.blue *= factor
+  }
+}

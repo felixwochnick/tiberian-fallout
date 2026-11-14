@@ -3,10 +3,12 @@ import * as THREE from 'three'
 import { Battlefield } from '~/lib/game/battlefield'
 import { Combat } from '~/lib/game/combat'
 import { Harvesting } from '~/lib/game/harvesting'
+import { type TiberiumKind, TiberiumStore } from '~/lib/game/tiberium'
 import { Repairs } from '~/lib/game/repairs'
 import { applyHouseColour, MODELS, UNIT_FALLBACK, type Side } from '~/lib/game/models'
 import { type BuildInfo, DEFAULT_SURVIVORS, DEFAULT_UPKEEP, type UnitVoice } from '~/lib/game/cameos'
 import type { Unit } from '~/lib/game/unit'
+import type { WallLink } from '~/lib/game/walls'
 import { type SuperWeaponCharge, SuperWeapons } from '~/lib/game/superweapons'
 import type { Field, MatchPlayer } from '~/lib/game/field'
 import { createEconomy, type Economy, forgetBuilding } from '~/lib/game/economy'
@@ -14,7 +16,7 @@ import { Orders } from '~/lib/game/orders'
 import { observe } from '~/lib/game/ai/observe'
 import { LOCAL_PLAYER, NO_HANDICAP, type Owner, ownerOf } from '~/lib/game/players'
 import type { Dropship, DropshipSound } from '~/lib/game/dropship'
-import { cursorScale, type CursorKind } from '~/lib/input/cursor'
+import { spriteScale, type CursorKind } from '~/lib/input/cursor'
 import { loadSigns } from '~/lib/game/signs'
 import { getAssetStore } from '~/lib/storage/asset-store'
 import type { BaseMode } from '~/composables/useSkirmish'
@@ -98,6 +100,8 @@ function frame(now: number) {
     tickSpecials(gameSeconds)
     tickDepots(gameSeconds)
     tickTakers()
+    // what was spent came out of the refineries and silos first
+    silos.follow(skirmish.credits.value, storageCapacity())
   }
   syncPlacement()
   updatePowerLabel()
@@ -133,7 +137,7 @@ function frame(now: number) {
   const arriving = escorted.find(ship => ship.arriving)
   if (arriving) battlefield.lookAt(arriving.object.position)
   escorted.splice(0, escorted.length, ...escorted.filter(ship => ship.arriving))
-  battlefield.render(props.frozen, SPEED_FACTORS[settings.speed] ?? 1)
+  battlefield.render(props.frozen, SPEED_FACTORS[settings.speed] ?? 1, AMBIENT_SPEED)
   requestAnimationFrame(frame)
 }
 
@@ -435,6 +439,16 @@ const FACTORY_IDS = new Set(Object.values(FACTORIES).flat())
 const HARVESTER_STORAGE = 28
 const TIBERIUM_VALUE = 25
 const BLUE_TIBERIUM_VALUE = 50
+/** Credits a bale of the kind is worth: Value= of [Riparius], [Vinifera] */
+const tiberiumValue = (kind: TiberiumKind) => kind === 'blue'
+  ? skirmish?.rules?.blueTiberiumValue ?? BLUE_TIBERIUM_VALUE
+  : skirmish?.rules?.tiberiumValue ?? TIBERIUM_VALUE
+/** The Tiberium in the player's refineries and silos (their pips) */
+const silos = new TiberiumStore(tiberiumValue)
+/** Bales the player's refineries and silos hold (Storage=) */
+function storageCapacity() {
+  return battlefield?.structureObjects.reduce((sum, o) => sum + (Battlefield.own(o) && !o.userData.dead ? infoOf(o)?.storage ?? 0 : 0), 0) ?? 0
+}
 /** Seconds the refinery takes to build up (its Build clip, see blender/PROC.py) */
 const REFINERY_BUILD_SECONDS = 3.4
 
@@ -551,7 +565,7 @@ function boarders(transport: THREE.Object3D) {
 
 /** Whether the selected soldiers can get into this (an own transport with room): the enter cursor */
 function canEnter(object: THREE.Object3D) {
-  if (depotVehicles(object).length || hijackers(object).length || carryalls(object).length) return true
+  if (depotVehicles(object).length || hijackers(object).length || carryalls(object).length || pilots(object).length) return true
   return !!battlefield && Battlefield.capacity(object) > 0 && Battlefield.own(object) && boarders(object).length > 0
 }
 
@@ -565,6 +579,12 @@ function hijackers(object: THREE.Object3D) {
 function carryalls(object: THREE.Object3D) {
   if (!battlefield || !Battlefield.own(object) || object.userData.dead || infoOf(object)?.category !== 'vehicle' || object.userData.flyer) return []
   return battlefield.selection.filter(o => o.userData.id === 'TRNSPORT' && Battlefield.own(o) && !o.userData.dead && !o.userData.carrying)
+}
+
+/** The selected own aircraft that could reload on this helipad (an own one) */
+function pilots(object: THREE.Object3D) {
+  if (!battlefield || !Battlefield.isHelipad(object) || !Battlefield.own(object) || object.userData.dead) return []
+  return battlefield.selection.filter(o => Battlefield.own(o) && !o.userData.dead && o.userData.unit && battlefield!.flight.reloads(o.userData.unit))
 }
 
 /** A hijacker this near (cells) to the vehicle gets into it */
@@ -601,6 +621,7 @@ function tickTakers() {
       else if (!unit.walking) battlefield.walk(unit, prize.position)
     }
     const load = object.userData.lift as THREE.Object3D | undefined
+    if (load?.userData.dead) object.userData.lift = undefined
     if (load && !load.userData.dead && Math.hypot(object.position.x - load.position.x, object.position.z - load.position.z) < 0.25) {
       // hooked on: it hangs under the carryall from now on
       object.userData.lift = undefined
@@ -627,6 +648,8 @@ function tickTakers() {
       }
       else carried.position.copy(object.position).setY(object.position.y - CARRY_DROP)
     }
+    // a carryall with nothing to carry (or to fetch) lands where it is, like the other aircraft
+    if (object.userData.id === 'TRNSPORT' && !object.userData.lift && !object.userData.carrying) battlefield.flight.done(unit)
   }
 }
 
@@ -678,7 +701,10 @@ function tickDepots(seconds: number) {
   }
 }
 
-/** Sends the selected soldiers into a transport (vehicles onto a service depot); returns false if it is none they can get into */
+/**
+ * Sends the selected soldiers into a transport (vehicles onto a service depot, aircraft
+ * onto a helipad); returns false if it is none they can get into
+ */
 function enter(transport: THREE.Object3D) {
   // mutant hijackers go for an enemy vehicle, a carryall for an own one
   const thieves = hijackers(transport)
@@ -694,6 +720,16 @@ function enter(transport: THREE.Object3D) {
       object.userData.carrying = undefined
       battlefield.flight.flyTo(object.userData.unit as Unit, transport.position)
     }
+    respond('move')
+    sounds.play('click')
+    return true
+  }
+  // aircraft onto a helipad to reload: one onto each free pad, the others land by it and wait
+  const aircraft = pilots(transport)
+  if (battlefield && aircraft.length) {
+    combat?.stop(aircraft)
+    battlefield.clearWaypoints(aircraft)
+    battlefield.flight.dock(aircraft.map(object => object.userData.unit as Unit), transport)
     respond('move')
     sounds.play('click')
     return true
@@ -737,12 +773,16 @@ function canDeploy(object: THREE.Object3D) {
   return !!into && !!battlefield!.deployCell(unit, into.w, into.h)
 }
 
-/** Digs a Tick Tank in where it stands, or out again; not on a slope or a ramp */
+/**
+ * Digs a Tick Tank in where it stands, or out again; not on a slope or a ramp. It drops
+ * its attack order (the artillery would set up again for it at once).
+ */
 function digIn(object: THREE.Object3D) {
   if (!battlefield!.toggleDigIn(object.userData.unit as Unit)) {
     sounds.play('evaCannotPlace')
     return
   }
+  combat?.stop([object])
   sounds.play('click')
 }
 
@@ -1070,7 +1110,8 @@ function syncPlacement() {
   if (info?.powersUp) battlefield.startPlacement(1, 1, 0, (x, z) => towerTop(info, x, z))
   // pavement is laid on the free cells of its 4 × 4, the others are left out
   else if (info && PAVING.has(info.id)) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent, undefined, true)
-  else if (info) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent)
+  // a wall shows the cells it walls up to the next pieces of its kind
+  else if (info) battlefield.startPlacement(info.foundation[0], info.foundation[1], info.adjacent, undefined, false, wallLink(info))
   else battlefield.cancelPlacement()
 }
 
@@ -1121,7 +1162,11 @@ function placeFor(owner: Owner, info: BuildInfo, cell: [number, number]) {
   // the human player's preview shows where it fits; anyone else's is checked here
   if (owner !== LOCAL_PLAYER && !battlefield.canPlace(x, z, w, h, info.adjacent, { owner })) return false
   player.economy.production.placed()
+  // a wall walls up the cells to the next pieces of its kind for free, like in the original
+  const link = wallLink(info)
+  const links = link ? battlefield.linkedCells(link, x, z, owner) : []
   buildStructure(info.id, x, z, true, owner)
+  for (const [lx, lz] of links) buildStructure(info.id, lx, lz, false, owner)
   // the construction yard's crane lets a crate down into its hatch
   const yard = battlefield.structuresOf('GACNST').filter(o => ownerOf(o) === owner && !o.userData.dead).at(-1)
   if (yard) battlefield.playClip(yard, 'Deliver')
@@ -1130,6 +1175,9 @@ function placeFor(owner: Owner, info: BuildInfo, cell: [number, number]) {
 
 /** Structures that are laid on the ground instead of standing on it (ToTile= in ART.INI: pavement) */
 const PAVING = new Set(['GAPAVE'])
+
+/** How a wall links up with the next pieces of its kind, if it does (see wallLinks) */
+const wallLink = (info: BuildInfo): WallLink | undefined => info.linkRange > 0 ? { id: info.id, range: info.linkRange } : undefined
 
 /** Whether a gun (the Vulcan, the SAM) can go onto this building: a component tower of `owner` without one */
 function towerFor(info: BuildInfo, object: THREE.Object3D, owner: Owner) {
@@ -1333,10 +1381,12 @@ onMounted(() => {
   // the original signs over buildings (repair wrench, switched off)
   getAssetStore()
     .then(store => loadSigns(store))
-    .then(frames => frames && battlefield?.setSigns(frames, cursorScale()))
+    .then(frames => frames && battlefield?.setSigns(frames, spriteScale()))
     .catch(error => console.error('Gebäude-Symbole konnten nicht geladen werden', error))
   // fighting with the values of RULES.INI; shots and death cries from SOUNDS.MIX
   // aircraft taking off and landing (AuxSound1=, AuxSound2=)
+  // how full the player's refineries and silos are
+  battlefield.storedTiberium = object => Battlefield.own(object) && infoOf(object)?.storage ? silos.fill(storageCapacity()) : undefined
   battlefield.flight.sound = (unit, event) => {
     const info = skirmish?.rules?.info.get(unit.object.userData.id)
     sounds.effect((event === 'takeOff' ? info?.takeOffSound : info?.landSound) ?? [])
@@ -1410,12 +1460,13 @@ onMounted(() => {
   // the harvesters at work: Storage= and the Tiberium's Value= from RULES.INI
   harvesting = markRaw(new Harvesting(battlefield, () => ({
     capacity: unit => skirmish?.rules?.info.get(unit.object.userData.id)?.storage || HARVESTER_STORAGE,
-    value: kind => kind === 'blue'
-      ? skirmish?.rules?.blueTiberiumValue ?? BLUE_TIBERIUM_VALUE
-      : skirmish?.rules?.tiberiumValue ?? TIBERIUM_VALUE,
-    earn(owner, credits) {
+    value: tiberiumValue,
+    earn(owner, credits, kind) {
       const economy = players.get(owner)?.economy
-      if (economy) economy.credits.value += credits
+      if (!economy) return
+      economy.credits.value += credits
+      // the human player's refineries and silos show what they hold
+      if (owner === LOCAL_PLAYER) silos.bring(kind, credits, storageCapacity())
     },
   })))
   emit('ready', battlefield)

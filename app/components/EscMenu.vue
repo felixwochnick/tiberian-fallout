@@ -194,6 +194,7 @@ onBeforeUnmount(() => {
         <MetalSlider v-model="settings.voices" label="Stimmen" :display="`${settings.voices} %`" />
         <MetalSlider v-model="settings.speed" label="Spieltempo" :min="0" :max="6" :display="SPEEDS[settings.speed]" @change="sound('click')" />
         <MetalSlider v-model="settings.scrollSpeed" label="Scrolltempo" :min="0" :max="6" :display="SPEEDS[settings.scrollSpeed]" @change="sound('click')" />
+        <MetalSlider v-model="settings.cursorSize" label="Mauszeiger" :min="0" :max="CURSOR_SIZES.length - 1" :display="CURSOR_SIZES[settings.cursorSize]?.[0]" @change="sound('click')" />
         <div class="toggle">
           <span title="Vollbild, die Maus bleibt im Spiel">Mausfang</span>
           <button class="metal-btn" @click="toggleMouseCapture($event)">

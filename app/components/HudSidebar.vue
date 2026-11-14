@@ -160,6 +160,40 @@ function scrollColumn(column: 'structures' | 'units', by: number) {
   scroll[column] = Math.min(max, Math.max(0, scroll[column] + by))
 }
 
+/** Scolds at most this often (seconds): a fast spin of the wheel would pile them up */
+const SCOLD_GAP = 0.15
+let lastScold = -Infinity
+/** A scroll button or the wheel: a row up or down; at the top or bottom the original's scold */
+function step(column: 'structures' | 'units', by: number) {
+  const before = scroll[column]
+  scrollColumn(column, by)
+  const now = performance.now() / 1000
+  if (scroll[column] !== before || now - lastScold < SCOLD_GAP) return
+  lastScold = now
+  sounds.play('scold')
+}
+
+/** A mouse wheel's notch (at least this many pixels) is a row; a touchpad's small steps add up to WHEEL_ROW */
+const WHEEL_NOTCH = 40
+const WHEEL_ROW = 100
+const wheeled = { structures: 0, units: 0 }
+/** The wheel over a column scrolls it */
+function onWheel(column: 'structures' | 'units', event: WheelEvent) {
+  if (!event.deltaY) return
+  const direction = Math.sign(event.deltaY)
+  if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL || Math.abs(event.deltaY) >= WHEEL_NOTCH) {
+    wheeled[column] = 0
+    step(column, direction)
+    return
+  }
+  // turned back: start counting anew
+  if (Math.sign(wheeled[column]) === -direction) wheeled[column] = 0
+  wheeled[column] += event.deltaY
+  if (Math.abs(wheeled[column]) < WHEEL_ROW) return
+  wheeled[column] = 0
+  step(column, direction)
+}
+
 /**
  * Black steel brackets over the corners of the radar frame: each covers the frame
  * there completely (arms as wide as the frame on that side) and reaches a little over
@@ -335,7 +369,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="columns">
-        <div v-for="column in (['structures', 'units'] as const)" :key="column" class="column">
+        <div v-for="column in (['structures', 'units'] as const)" :key="column" class="column" @wheel.prevent="onWheel(column, $event)">
           <button
             v-for="(option, i) in slots(column)"
             :key="option?.id ?? `empty-${i}`"
@@ -381,10 +415,10 @@ onBeforeUnmount(() => {
     </div>
 
     <section class="scroll">
-      <button class="arrow up" title="Gebäude hoch" @click="scrollColumn('structures', -1)" />
-      <button class="arrow down" title="Gebäude runter" @click="scrollColumn('structures', 1)" />
-      <button class="arrow up" title="Einheiten hoch" @click="scrollColumn('units', -1)" />
-      <button class="arrow down" title="Einheiten runter" @click="scrollColumn('units', 1)" />
+      <button class="arrow up" title="Gebäude hoch" @click="step('structures', -1)" @wheel.prevent="onWheel('structures', $event)" />
+      <button class="arrow down" title="Gebäude runter" @click="step('structures', 1)" @wheel.prevent="onWheel('structures', $event)" />
+      <button class="arrow up" title="Einheiten hoch" @click="step('units', -1)" @wheel.prevent="onWheel('units', $event)" />
+      <button class="arrow down" title="Einheiten runter" @click="step('units', 1)" @wheel.prevent="onWheel('units', $event)" />
     </section>
     <!-- what is left below the last full row: stone under the scroll buttons -->
     <div class="foot" />

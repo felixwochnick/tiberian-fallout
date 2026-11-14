@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { attach, capture, detach, mouseCapture, needsResume, stayWindowed } from '~/lib/input/mouse-capture'
+import { attach, capture, detach, mouseCapture, needsResume, setCursorScale, stayWindowed } from '~/lib/input/mouse-capture'
 
 /**
  * Game pages: draws the game cursor, captures the mouse on the first click (if the
@@ -8,6 +8,8 @@ import { attach, capture, detach, mouseCapture, needsResume, stayWindowed } from
  */
 const props = withDefaults(defineProps<{ prompt?: boolean }>(), { prompt: true })
 const settings = useSettings()
+// the cursor in the size of the options
+watch(() => settings.cursorSize, size => setCursorScale(CURSOR_SIZES[size]?.[1] ?? 1.5), { immediate: true })
 
 /** First click on the page (e.g. when it was opened directly) starts the capture. */
 function onFirstClick(event: PointerEvent) {
