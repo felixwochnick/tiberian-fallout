@@ -8,6 +8,8 @@ const SETTINGS_KEY = 'tiberian-fallout:settings'
 
 export const AI_LEVELS = ['Leicht', 'Normal', 'Schwer']
 export const SPEEDS = ['Sehr langsam', 'Langsam', 'Gemächlich', 'Normal', 'Schnell', 'Sehr schnell', 'Maximal']
+/** The game speed a new player starts with (index into SPEEDS): "Schnell", like the original */
+export const DEFAULT_SPEED = 4
 /** Sizes of the mouse cursor: name and scale of the original's pixels */
 export const CURSOR_SIZES = [['Klein', 1], ['Mittel', 1.5], ['Groß', 2]] as const
 
@@ -57,7 +59,7 @@ const settings = reactive({
   /** Skirmish: the landscape (theater) */
   theater: 'random' as TheaterChoice,
   /** Game speed, index into SPEEDS */
-  speed: 4,
+  speed: DEFAULT_SPEED,
   /** Edge scroll speed, index into SPEEDS */
   scrollSpeed: 3,
   /** Size of the mouse cursor, index into CURSOR_SIZES */

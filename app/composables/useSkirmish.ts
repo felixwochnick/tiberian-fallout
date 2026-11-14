@@ -97,6 +97,13 @@ const KEY: InjectionKey<Skirmish> = Symbol('skirmish')
  */
 export const SPEED_FACTORS = [10, 12, 15, 20, 30, 45, 60].map(fps => fps / 15)
 
+/**
+ * The pace of the loops that show nothing of the game's progress (blinking lights,
+ * waving flags, the radar dish, the Tiberium trees): the default game speed's, whatever
+ * the setting, so a faster game makes the units faster, not the scenery
+ */
+export const AMBIENT_SPEED = SPEED_FACTORS[DEFAULT_SPEED]!
+
 export function createSkirmish(startCredits: number, side: Side = 'gdi') {
   const sounds = useUiSounds()
   const state: Skirmish = {

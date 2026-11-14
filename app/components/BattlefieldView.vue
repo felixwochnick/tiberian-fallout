@@ -120,7 +120,7 @@ function frame(now: number) {
   const arriving = escorted.find(ship => ship.arriving)
   if (arriving) battlefield.lookAt(arriving.object.position)
   escorted.splice(0, escorted.length, ...escorted.filter(ship => ship.arriving))
-  battlefield.render(props.frozen, SPEED_FACTORS[settings.speed] ?? 1)
+  battlefield.render(props.frozen, SPEED_FACTORS[settings.speed] ?? 1, AMBIENT_SPEED)
   requestAnimationFrame(frame)
 }
 

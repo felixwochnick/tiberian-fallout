@@ -509,6 +509,8 @@ export class Battlefield {
   private readonly disposables: { dispose(): void }[] = []
   /** Animations of the buildings (construction, flags, lights) */
   private readonly mixers: THREE.AnimationMixer[] = []
+  /** Their loops that show nothing of the game's progress (Idle: lights, flags …), see render */
+  private readonly ambient: THREE.AnimationAction[] = []
   private lastFrame = performance.now()
   readonly units: Unit[] = []
   /** Dropships in the air or on the ground */
@@ -994,12 +996,18 @@ export class Battlefield {
   /**
    * Draws a frame; `frozen` (the game is paused): everything stands still, only the
    * picture is drawn. `speed` is the game speed: units, animations and effects run
-   * that much faster or slower.
+   * that much faster or slower. Only the loops that show nothing of the game's progress
+   * (the buildings' and Tiberium trees' Idle, units standing still, the dropship's
+   * lights, the glow of the Tiberium) run at `ambientSpeed`, whatever the game speed.
    */
-  render(frozen = false, speed = 1) {
+  render(frozen = false, speed = 1, ambientSpeed = speed) {
     const now = performance.now()
-    const seconds = frozen ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000) * speed // no jump after a stall
+    const real = frozen ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000) // no jump after a stall
+    const seconds = real * speed
     this.lastFrame = now
+    // the loops run on game seconds like everything else, slowed down or sped up to their own pace
+    const ambient = ambientSpeed / speed
+    for (const action of this.ambient) action.timeScale = ambient
     for (const mixer of this.mixers) mixer.update(seconds)
     for (const item of this.rising) {
       item.time = Math.min(1, item.time + seconds / RISE_SECONDS)
@@ -1010,7 +1018,7 @@ export class Battlefield {
     for (const unit of this.units) {
       const speed = this.speedOf(unit.object)
       if (speed && speed !== unit.speed) unit.speed = speed
-      unit.update(seconds)
+      unit.update(seconds, ambient)
       // on the ground, up and down the ramps (unless it is up on a refinery's pad)
       const at = unit.object.position
       if (!unit.object.userData.offGround) at.y = this.heightAt(at.x, at.z)
@@ -1022,7 +1030,7 @@ export class Battlefield {
     }
     this.flight.update(seconds)
     for (const ship of [...this.aircraft]) {
-      ship.update(seconds)
+      ship.update(seconds, ambient)
       if (seconds > 0) this.engineEffects(ship.object, seconds)
     }
     this.updateDeploying(seconds)
@@ -1032,7 +1040,7 @@ export class Battlefield {
     this.updateDeliveries()
     this.growTiberium(seconds)
     this.growTiberiumTrees(seconds)
-    this.groundTime.value = (this.groundTime.value + seconds) % 1000
+    this.groundTime.value = (this.groundTime.value + real * ambientSpeed) % 1000
     this.effects.update(seconds, this.renderer.getDrawingBufferSize(new THREE.Vector2()).y / (this.camera.top - this.camera.bottom))
     this.renderer.render(this.scene, this.camera)
     this.drawSelection()
@@ -1316,6 +1324,7 @@ export class Battlefield {
       const mixer = item.object.userData.mixer as THREE.AnimationMixer | undefined
       const i = mixer ? this.mixers.indexOf(mixer) : -1
       if (i >= 0) this.mixers.splice(i, 1)
+      if (mixer) this.ambient.splice(0, this.ambient.length, ...this.ambient.filter(action => action.getMixer() !== mixer))
     }
     this.unbuilding.splice(0, this.unbuilding.length, ...this.unbuilding.filter(item => item.time < item.seconds))
   }
@@ -2658,7 +2667,7 @@ export class Battlefield {
       const own = clipsOf(variant, object)
       const idle = own.find(clip => clip.name === 'Idle')
       // each tree breathes out of step with the others
-      if (idle) mixer.clipAction(idle).startAt(-Math.random() * idle.duration).play()
+      if (idle) this.ambient.push(mixer.clipAction(idle).startAt(-Math.random() * idle.duration).play())
       this.mixers.push(mixer)
       // the spores only show while they fly (inside the pod they would only cost drawing)
       const spores = object.getObjectByName(variant.replace('Tree', 'Spores'))
@@ -2775,6 +2784,7 @@ export class Battlefield {
       for (const clip of gltf.animations) {
         if (clip.name !== 'Build' && clip.name !== 'Idle') continue
         const action = mixer.clipAction(clip).play()
+        if (clip.name === 'Idle') this.ambient.push(action)
         if (clip.name === 'Build') {
           action.setLoop(THREE.LoopOnce, 1).clampWhenFinished = true
           // the model's own pose is not the finished building: show the clip's last frame
