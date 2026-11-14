@@ -12,7 +12,8 @@ import { Emblem } from '~/lib/menu/emblem'
  * behind it, first sliding sideways, then the upper part (with the emblem) slides off
  * to the top left and the lower one to the bottom right, the screen is full of
  * static and goes dark, then the map appears: the whole scrollable area with a frame
- * around the visible part. A click there scrolls. Going offline closes the cover again.
+ * around the visible part, the buildings and units on it in their house colours. A
+ * click there scrolls. Going offline closes the cover again.
  */
 const props = defineProps<{
   online: boolean
@@ -28,6 +29,8 @@ const screen = ref<HTMLDivElement>()
 const logo = ref<HTMLDivElement>()
 const noise = ref<HTMLCanvasElement>()
 const minimap = ref<string>()
+/** The buildings and units over the map, redrawn a few times a second */
+const marks = ref<HTMLCanvasElement>()
 /** Map picture inside the screen, letterboxed to the area's aspect */
 const mapBox = ref({ left: 0, top: 0, width: 0, height: 0 })
 const viewStyle = ref<Record<string, string>>({})
@@ -103,6 +106,47 @@ function drawMap() {
   if (width < 2 || height < 2) return
   const dpr = Math.min(window.devicePixelRatio, 2)
   minimap.value = props.battlefield.renderMinimap(Math.round(width * dpr), Math.round(height * dpr)).toDataURL()
+  drawMarks()
+}
+
+const MARKS_SECONDS = 0.15
+/** Narrowest mark (CSS pixels): a unit's cell is smaller than that on a big map */
+const MARK_MIN_WIDTH = 3
+let marksTime = -Infinity
+/**
+ * The buildings and units in their house colours, like in the original: a building
+ * fills its foundation, a unit its cell (at least MARK_MIN_WIDTH wide, so it can be seen)
+ */
+function drawMarks() {
+  const canvas = marks.value
+  if (!canvas || !props.battlefield) return
+  const { width, height } = mapBox.value
+  const dpr = Math.min(window.devicePixelRatio, 2)
+  const w = Math.round(width * dpr)
+  const h = Math.round(height * dpr)
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w
+    canvas.height = h
+  }
+  const ctx = canvas.getContext('2d')!
+  ctx.clearRect(0, 0, w, h)
+  ctx.lineJoin = 'round'
+  ctx.lineWidth = dpr
+  for (const { colour, corners } of props.battlefield.radarMarks()) {
+    const style = `#${colour.toString(16).padStart(6, '0')}`
+    ctx.fillStyle = ctx.strokeStyle = style
+    const xs = corners.map(([x]) => x * w)
+    const ys = corners.map(([, y]) => y * h)
+    const [left, right] = [Math.min(...xs), Math.max(...xs)]
+    const cx = (left + right) / 2
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+    const grow = Math.max(1, (MARK_MIN_WIDTH * dpr) / (right - left))
+    ctx.beginPath()
+    xs.forEach((x, i) => ctx.lineTo(cx + (x - cx) * grow, cy + (ys[i]! - cy) * grow))
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+  }
 }
 
 let last = performance.now()
@@ -119,6 +163,10 @@ function frame(now: number) {
   // closing: the halves slide back together, faster
   if (!open.value && opening.value > 0) opening.value = opening.value > OPENING.split[1] ? OPENING.split[1] : Math.max(0, opening.value - dt * 1.4)
   if (staticOpacity.value > 0) drawStatic(now)
+  if (mapOpacity.value > 0 && !props.movie && now - marksTime > MARKS_SECONDS * 1000) {
+    marksTime = now
+    drawMarks()
+  }
   const view = props.battlefield?.viewRect()
   if (view) {
     const { left, top, width, height } = mapBox.value
@@ -243,6 +291,12 @@ onBeforeUnmount(() => {
       alt=""
       :style="{ left: `${mapBox.left}px`, top: `${mapBox.top}px`, width: `${mapBox.width}px`, height: `${mapBox.height}px`, opacity: movie ? 0 : mapOpacity }"
     >
+    <canvas
+      v-show="minimap"
+      ref="marks"
+      class="marks"
+      :style="{ left: `${mapBox.left}px`, top: `${mapBox.top}px`, width: `${mapBox.width}px`, height: `${mapBox.height}px`, opacity: movie ? 0 : mapOpacity }"
+    />
     <div class="view" :style="{ ...viewStyle, opacity: movie ? 0 : mapOpacity }" />
     <canvas v-show="movie" ref="movieCanvas" class="movie" :style="{ opacity: mapOpacity }" />
     <canvas ref="noise" class="static" :style="{ opacity: staticOpacity }" />
@@ -303,8 +357,12 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 .map,
+.marks,
 .view {
   position: absolute;
+}
+.marks {
+  pointer-events: none;
 }
 .view {
   border: max(1px, calc(var(--u, 1px) * 0.8)) solid #f2f2f2;

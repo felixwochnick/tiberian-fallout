@@ -59,7 +59,9 @@ function restart() {
   skirmish.hints = []
   skirmish.timer = undefined
   skirmish.radarMovie = undefined
-  radar.value = false
+  radarWanted.value = true
+  // the new round establishes battle control anew
+  controlled.value = false
   startMusic()
 }
 defineExpose({ restart })
@@ -125,21 +127,26 @@ watch(credits, (now, before) => {
 
 /**
  * The radar works with a radar building (GDI or Nod) on enough power, or always if
- * the match is set up that way. R opens and closes it, but not while a transmission
- * is still running; without power it shuts down by itself.
+ * the match is set up that way. Like in the original it comes on by itself once it
+ * works (but not before battle control has been established) and shuts down without
+ * power. R switches a working radar off and on again, but not while a transmission is
+ * still running; switched off, it stays off until R is pressed again.
  */
 const RADAR_BUILDINGS = ['GARADR', 'NARADR']
-const radar = ref(false)
+const radarWanted = ref(true)
 const radarBusy = ref(false)
+/** Battle control has been established this round (a briefing later does not close the radar) */
+const controlled = ref(false)
+watch(() => skirmish.control, (on) => {
+  if (on) controlled.value = true
+}, { immediate: true })
 const radarAvailable = computed(() => props.radarAlways
   || (onlineBuildings(skirmish).some(id => RADAR_BUILDINGS.includes(id)) && power.value.output >= power.value.drain))
-watch(radarAvailable, (available) => {
-  if (!available) radar.value = false
-})
+const radar = computed(() => controlled.value && radarAvailable.value && radarWanted.value)
 const keys = useKeys()
 function onKey(event: KeyboardEvent) {
-  if (!keys.matches(event, 'radar') || halted.value || radarBusy.value) return
-  if (radar.value || radarAvailable.value) radar.value = !radar.value
+  if (!keys.matches(event, 'radar') || halted.value || radarBusy.value || !radarAvailable.value) return
+  radarWanted.value = !radarWanted.value
 }
 
 async function startMusic() {

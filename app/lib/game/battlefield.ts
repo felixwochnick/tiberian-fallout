@@ -64,6 +64,9 @@ interface Footprint { x: number, z: number, w: number, h: number, owner: Owner, 
 
 export type Owner = 'player' | 'enemy'
 
+/** A building or unit on the radar: its house colour and the corners of its cells (see radarMarks) */
+export interface RadarMark { colour: number, corners: [number, number][] }
+
 /**
  * Whether what is being placed fits on a cell, for things put onto a building: the
  * height above the ground where the preview shows (the building's top), undefined if not
@@ -1099,7 +1102,8 @@ export class Battlefield {
 
   /**
    * The whole scrollable area seen through the game camera, shrunk to `width` × `height`
-   * pixels (keep areaAspect), for the radar. Rendered once into an image.
+   * pixels (keep areaAspect), for the radar. Rendered once into an image: the land
+   * only, the buildings and units are drawn over it in their house colours (radarMarks).
    */
   renderMinimap(width: number, height: number) {
     const [u0, u1] = this.bounds.u
@@ -1111,6 +1115,15 @@ export class Battlefield {
     camera.position.copy(centre).add(this.offset)
     camera.lookAt(centre)
 
+    // buildings, units (also those being sold or dying), the dropships, the placement
+    // preview, and smoke and fire (sized in the game camera's pixels, they would cover the map)
+    const hidden = [
+      ...this.scene.children.filter(object => object.userData.owner),
+      ...this.aircraft.map(ship => ship.object),
+      ...(this.placement ? [this.placement.preview] : []),
+      ...this.effects.particles.objects,
+    ].filter(object => object.visible)
+    for (const object of hidden) object.visible = false
     const target = new THREE.WebGLRenderTarget(width, height)
     this.renderer.setRenderTarget(target)
     this.renderer.render(this.scene, camera)
@@ -1118,6 +1131,7 @@ export class Battlefield {
     this.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels)
     this.renderer.setRenderTarget(null)
     target.dispose()
+    for (const object of hidden) object.visible = true
 
     // WebGL rows run bottom-up
     const image = new ImageData(width, height)
@@ -1129,6 +1143,38 @@ export class Battlefield {
     canvas.height = height
     canvas.getContext('2d')!.putImageData(image, 0, 0)
     return canvas
+  }
+
+  /**
+   * The buildings and units on the radar, like in the original in their house colours:
+   * a building's foundation and a unit's cell, as their corners in fractions of the
+   * scrollable area (as viewRect; raised ground shows higher up, as in renderMinimap).
+   * Not what the player cannot see: cloaked enemies, units under the ground or in a transport.
+   */
+  radarMarks(): RadarMark[] {
+    const [u0, u1] = this.bounds.u
+    const [v0, v1] = this.bounds.v
+    const lift = 1 / Math.tan(ELEVATION)
+    const point = new THREE.Vector3()
+    const corner = (x: number, y: number, z: number): [number, number] => {
+      point.set(x, y, z)
+      return [(point.dot(this.screenRight) - u0) / (u1 - u0), (point.dot(this.screenDown) - y * lift - v0) / (v1 - v0)]
+    }
+    const cells = (x: number, y: number, z: number, w: number, h: number) =>
+      [corner(x, y, z), corner(x + w, y, z), corner(x + w, y, z + h), corner(x, y, z + h)]
+    const seen = (object: THREE.Object3D) => object.visible && !object.userData.dead && object.userData.cloakLook !== 'gone'
+    const marks: RadarMark[] = []
+    for (const object of this.structureObjects) {
+      const f = object.userData.footprint as Footprint | undefined
+      if (f && seen(object)) marks.push({ colour: object.userData.houseColour, corners: cells(f.x, object.position.y, f.z, f.w, f.h) })
+    }
+    for (const { object } of this.units) {
+      if (!object.parent || !seen(object)) continue
+      // aircraft and jumpjets over the cell they are above
+      const { x, z } = object.position
+      marks.push({ colour: object.userData.houseColour, corners: cells(x - 0.5, this.heightAt(x, z), z - 0.5, 1, 1) })
+    }
+    return marks
   }
 
   /** Makes a building or unit selectable with the mouse. */
@@ -2164,6 +2210,7 @@ export class Battlefield {
     object.userData.id = id
     object.userData.owner = owner
     object.userData.side = side
+    object.userData.houseColour = houseColour
     object.userData.footprint = footprint
     this.structures.set(id, [...(this.structures.get(id) ?? []), object])
     // a firestorm wall's fields show only while the firestorm is on
@@ -2898,6 +2945,7 @@ export class Battlefield {
     object.position.copy(at).setY(this.heightAt(at.x, at.z))
     object.userData.kind = 'unit' // can be picked with the selection box
     object.userData.side = side
+    object.userData.houseColour = houseColour
     const unit = new Unit(object, gltf.animations)
     // In its first pose (a new skeleton's bone matrices are all zero, the body would
     // shrink to a point): measured so, the frame came out far too small, and a bounding

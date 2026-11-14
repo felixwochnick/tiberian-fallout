@@ -280,6 +280,11 @@ export class Particles {
     })
   }
 
+  /** Their point clouds in the scene (sized for the game camera: other views leave them out) */
+  get objects(): THREE.Object3D[] {
+    return [this.covering.points, this.glowing.points]
+  }
+
   /** Moves them on; `pixelsPerCell`: drawing-buffer pixels per cell on screen */
   update(seconds: number, pixelsPerCell: number) {
     this.uniforms.pixelsPerCell.value = pixelsPerCell
