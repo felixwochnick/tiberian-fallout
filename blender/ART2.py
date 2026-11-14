@@ -10,11 +10,16 @@ each side of the tail, exhausts and an antenna.
 
 Like the original it digs in to fire at long range: the travel lock folds down, the
 two spades at the back swing down into the ground, jacks in the prongs press down,
-and the cradle raises the barrel.
+and the cradle raises the barrel; set up, the gun's mount turns on a ring in the hull's
+roof towards the target, all round, the barrel staying raised (like the original's
+deployed artillery, a turret without a pitching barrel).
 
-Nodes the game uses: "Cannon" (the gun, tipped towards the target; it sits on
-"Cradle", which the clips raise when deployed), "Flash" (its muzzle flash). Clips (see
-nodvehicle.py for Idle, Walk, Fire):
+Rig: Body → hull, spades, jacks, travel lock, Turret (the mount: the cradle's block
+with its cheeks, the exhausts and the antenna on it) → Cradle (raised when deployed)
+→ barrel and flash.
+
+Nodes the game uses: "Turret" (turns about the vertical when deployed), "Flash" (the
+muzzle flash). Clips (see nodvehicle.py for Idle, Walk, Fire):
     Deploy         once, 2 s: travel lock down, spades and jacks down, barrel up
     Deployed       loop: dug in, the barrel raised
     FireDeployed   once: a shot, dug in, with a heavy recoil
@@ -53,6 +58,8 @@ WALK_FRAMES = 26
 WALK_SPEED = 2 * math.pi * WHEEL_RADIUS / (WALK_FRAMES / kit.FPS)
 FIRE_FRAMES = 24
 GUN = Vector((0, 0.27, 0.34))      # the barrel's trunnion in the cradle, behind the middle
+TURRET = Vector((0, GUN.y, 0.24))  # the mount turns on the hull's roof, under the trunnion
+RING = 0.15                        # radius of the ring it turns on
 BARREL = 0.92                      # from the trunnion to the muzzle
 DEPLOY_FRAMES = 60
 RAISE = math.radians(-32)          # the cradle when deployed: the barrel up
@@ -70,21 +77,13 @@ def hull(m):
         kit.hexahedron('Hull', m['armour_dark'], (
             (-0.16, -0.42, 0.07), (0.16, -0.42, 0.07), (0.16, 0.46, 0.07), (-0.16, 0.46, 0.07),
             (-0.15, -0.36, 0.24), (0.15, -0.36, 0.24), (0.15, 0.46, 0.25), (-0.15, 0.46, 0.25)), bevel=0.01),
-        # the cradle's block behind the middle, its cheeks red
-        kit.hexahedron('CradleBase', m['armour'], (
-            (-0.14, 0.12, 0.24), (0.14, 0.12, 0.24), (0.14, 0.44, 0.24), (-0.14, 0.44, 0.24),
-            (-0.12, 0.16, 0.3), (0.12, 0.16, 0.3), (0.12, 0.42, 0.3), (-0.12, 0.42, 0.3)), bevel=0.01),
+        # the ring the gun's mount turns on
+        cylinder('TurretRing', m['steel'], RING, 0.012, (TURRET.x, TURRET.y, TURRET.z + 0.004), segments=32),
         box('Hatch', m['armour'], (0.08, 0.08, 0.016), (-0.08, -0.2, 0.245), bevel=0.004),
         box('Hatch2', m['armour'], (0.06, 0.06, 0.016), (0.08, -0.1, 0.25), bevel=0.004),
         *detail.grille('Vent', m['steel'], m['dark'], (0.0, 0.0, 0.252), 0.14, 0.1, 'Z', 5, 0.008),
         box('BackPlate', m['armour_dark'], (0.3, 0.012, 0.15), (0, 0.464, 0.16), bevel=0.003),
         *detail.lamp('TailLight', m['dark'], m['lamp_red'], (0.0, 0.472, 0.2), (0, 1, 0), 0.011),
-        beam('Antenna', m['steel'], (-0.11, 0.4, 0.3), (-0.13, 0.46, 0.62), 0.006),
-        *[cylinder(f'Exhaust{k}', m['steel_light'], 0.018, 0.12, (0.06 + 0.045 * k, 0.4, 0.33), rotation=(math.pi / 2, 0, 0), segments=10)
-          for k in range(2)],
-        *[cylinder(f'ExhaustTip{k}', m['dark'], 0.016, 0.01, (0.06 + 0.045 * k, 0.462, 0.33), rotation=(math.pi / 2, 0, 0), segments=10, bevel=0)
-          for k in range(2)],
-        box('ExhaustClamp', m['steel'], (0.1, 0.02, 0.03), (0.08, 0.38, 0.315), bevel=0.003),
     ]
     for s in (-1, 1):
         x0, x1 = s * 0.16, s * 0.3
@@ -107,7 +106,6 @@ def hull(m):
             *[box(f'SkirtBolt{s}{k}', m['steel'], (0.008, 0.014, 0.014), (x1 + s * 0.008, -0.38 + k * 0.11, 0.17), bevel=0.002) for k in range(8)],
             *detail.lamp(f'ProngLight{s}', m['dark'], m['lamp_red'], ((x0 + x1) / 2, -0.605, 0.15), (0, -1, 0), 0.016),
             *detail.lamp(f'GuardLight{s}', m['dark'], m['lamp_white'], (s * 0.27, -0.42, 0.225), (0, -1, 0.5), 0.012),
-            box(f'CradleCheek{s}', m['remap'], (0.012, 0.22, 0.04), (s * 0.135, 0.29, 0.27), bevel=0.003),
             *detail.grille(f'SideVent{s}', m['steel'], m['dark'], (s * 0.13, 0.05, 0.25), 0.1, 0.03, 'Z', 3, 0.006),
             # the jacks' housings in the prongs and the spades' hinge blocks
             cylinder(f'JackHousing{s}', m['steel'], 0.026, 0.05, (s * 0.23, -0.53, 0.235), segments=12),
@@ -116,10 +114,28 @@ def hull(m):
     return kit.merge('Hull', parts)
 
 
-def gun(m, body):
-    """The cradle (raised when deployed), on it the Cannon with the barrel and the
-    flash; returns (cradle, barrel, flash)."""
-    cradle = kit.parent(kit.empty('Cradle', GUN), body)
+def mount(m):
+    """The gun's mount on its ring (it turns when deployed): the cradle's block behind
+    the middle with its red cheeks, the exhausts and the antenna on it; origin on the
+    turret's pivot."""
+    return kit.merge('Mount', [
+        kit.hexahedron('CradleBase', m['armour'], (
+            (-0.14, 0.12, 0.24), (0.14, 0.12, 0.24), (0.14, 0.44, 0.24), (-0.14, 0.44, 0.24),
+            (-0.12, 0.16, 0.3), (0.12, 0.16, 0.3), (0.12, 0.42, 0.3), (-0.12, 0.42, 0.3)), bevel=0.01),
+        *[box(f'CradleCheek{s}', m['remap'], (0.012, 0.22, 0.04), (s * 0.135, 0.29, 0.27), bevel=0.003) for s in (-1, 1)],
+        beam('Antenna', m['steel'], (-0.11, 0.4, 0.3), (-0.13, 0.46, 0.62), 0.006),
+        *[cylinder(f'Exhaust{k}', m['steel_light'], 0.018, 0.12, (0.06 + 0.045 * k, 0.4, 0.33), rotation=(math.pi / 2, 0, 0), segments=10)
+          for k in range(2)],
+        *[cylinder(f'ExhaustTip{k}', m['dark'], 0.016, 0.01, (0.06 + 0.045 * k, 0.462, 0.33), rotation=(math.pi / 2, 0, 0), segments=10, bevel=0)
+          for k in range(2)],
+        box('ExhaustClamp', m['steel'], (0.1, 0.02, 0.03), (0.08, 0.38, 0.315), bevel=0.003),
+    ], TURRET)
+
+
+def gun(m, turret):
+    """The cradle (raised when deployed), on it the barrel and the flash; returns
+    (cradle, barrel, flash)."""
+    cradle = kit.parent(kit.empty('Cradle', GUN), turret)
     kit.parent(kit.merge('CradleBody', [
         *[kit.hexahedron(f'Trunnion{s}', m['armour'], (
             (s * 0.06, GUN.y - 0.08, 0.28), (s * 0.11, GUN.y - 0.08, 0.28), (s * 0.11, GUN.y + 0.1, 0.28), (s * 0.06, GUN.y + 0.1, 0.28),
@@ -130,7 +146,6 @@ def gun(m, body):
         *[cylinder(f'Ram{s}', m['steel_light'], 0.012, 0.1, GUN + Vector((s * 0.04, -0.07, -0.05)), rotation=(math.radians(-60), 0, 0), segments=8)
           for s in (-1, 1)],
     ], GUN), cradle)
-    pivot = kit.parent(kit.empty('Cannon', GUN), cradle)
     tip = GUN - Vector((0, BARREL, 0))
     barrel = kit.merge('Barrel', [
         # the breech behind the trunnion, the mantlet, the long tube with its sleeves
@@ -146,8 +161,8 @@ def gun(m, body):
         *[box(f'BrakeSlot{s}', m['dark'], (0.004, 0.04, 0.03), tip + Vector((s * 0.04, 0.03, 0)), bevel=0) for s in (-1, 1)],
         cylinder('Bore', m['dark'], 0.016, 0.006, tip - Vector((0, 0.005, 0)), rotation=(math.pi / 2, 0, 0), segments=10, bevel=0),
     ], GUN)
-    kit.parent(barrel, pivot)
-    flash = kit.parent(nod.flash(m, 'Flash', tip - Vector((0, 0.06, 0)), 0.08), pivot)
+    kit.parent(barrel, cradle)
+    flash = kit.parent(nod.flash(m, 'Flash', tip - Vector((0, 0.06, 0)), 0.08), cradle)
     return cradle, barrel, flash
 
 
@@ -245,7 +260,9 @@ def build():
     root, body = nod.start('NodArtillery', 'Artillery', WALK_SPEED)
     m = nod.materials()
     kit.parent(hull(m), body)
-    cradle, barrel, flash = gun(m, body)
+    turret = kit.parent(kit.empty('Turret', TURRET), body)
+    kit.parent(mount(m), turret)
+    cradle, barrel, flash = gun(m, turret)
     lock = kit.parent(travel_lock(m), body)
     spades = []
     for x in SPADES_X:
