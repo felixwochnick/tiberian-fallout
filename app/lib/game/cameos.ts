@@ -4,6 +4,7 @@ import { decodePalette, decodeShp, frameToRgba } from '../formats/shp'
 import type { AssetStore } from '../storage/asset-store'
 import { expansionArchive, gameIni } from './gamefiles'
 import { superWeaponTypes, type SuperWeaponType } from './superweapons'
+import { type AiRules, parseAiRules } from './ai/levels'
 
 /**
  * Build options of the sidebar and their cameos (the 64 × 48 build pictures).
@@ -159,6 +160,8 @@ export interface BuildRules {
   superWeapons: SuperWeaponType[]
   /** Values of [General] and [CombatDamage] the special weapons need */
   specials: { ionDamage: number, dropPods: [number, number] }
+  /** How the computer players build and attack ([AI], the levels) */
+  ai: AiRules
 }
 
 export interface Survivors {
@@ -505,6 +508,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
   return { prerequisites, generic, info, tiberiumValue: Number(rules.get('RIPARIUS')?.get('VALUE') ?? 25),
     blueTiberiumValue: Number(rules.get('VINIFERA')?.get('VALUE') ?? 50), upkeep,
     superWeapons: superWeaponTypes(rules),
+    ai: parseAiRules(rules),
     specials: {
       ionDamage: Number(rules.get('COMBATDAMAGE')?.get('IONCANNONDAMAGE') ?? 751),
       dropPods: [Number(general?.get('DROPPODINFANTRYMINIMUM') ?? 5), Number(general?.get('DROPPODINFANTRYMAXIMUM') ?? 8)],

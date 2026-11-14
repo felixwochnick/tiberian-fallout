@@ -47,7 +47,7 @@ E2E_BASE=http://localhost:3000 pnpm test
 | `blender/TIB.py` | Tiberium (Riparius) auf einem Feld nach `help/tiberium/`: viele kleine, flache, sternförmige Büschel neongrüner Kristallsplitter (leuchtende Spitzen) über die ganze Zelle, dazwischen grauweiße Keime, aus denen in der nächsten Phase Büschel wachsen; drei Wachstumsphasen in je drei Varianten als Knoten `Stage1A` … `Stage3C` → `public/models/TIB.glb`. Den grünen Boden zeichnet das Spiel. Neu bauen: `Blender -b --factory-startup --python blender/TIB.py` |
 | `blender/TIBTRE.py` | Tiberiumbaum (TIBTRE01–03, 1 × 1) nach dem Original im Spiel: dünner, aus drei rostorangen Strängen gedrehter Stamm mit dunkelbraunen Furchen, orange-hellbraunen Graten und rotbraunen Flecken, oben ein hellbrauner Kopf mit dunkelbraunem Knauf, durch dessen Schlitze schwach grün die Glut leuchtet; ein Arm rollt sich seitlich hoch zu einer blassen grau-rosa Knolle, ein kurzer Stummel trägt eine zweite, dazu kahle Zweige, dunkle Wurzeln und kleine Tiberiumkristalle; etwa 0,7–0,8 Felder hoch und ein halbes breit. Drei Varianten `Tree1` … `Tree3` (eine wird gezeigt) mit `PodN` → `GlowN`, `BulbN1/2` und `SporesN` (36 Sporen); Clips `Idle` (4 s: Glut pulsiert schwach, Arme wiegen sich) und `Spread` (1,6 s: Knollen schwellen an, der Knauf platzt, eine schmale Säule winziger weißer, hellblauer und grüner Sporen steigt auf, verteilt sich nach etwa 1 s über die acht Nachbarfelder und verblasst) → `public/models/TIBTRE.glb`. Neu bauen: `Blender -b --factory-startup --python blender/TIBTRE.py` |
 | `blender/PROPS.py` | Landschaftsobjekte nach *Tiberian Sun* (Bäume TREE01 … TREE25, Felsen): je Variante ein statisches Low-Poly-Mesh mit dem gemeinsamen Material `Prop`, Farben als Vertexfarben (oben hell, unten und in den Lücken dunkel), damit das Spiel jede Variante als InstancedMesh zeichnen kann. Gemäßigt: Laubbäume `Oak1` … `Oak3` (knorriger Stamm, Krone aus Blattballen, oben khakifarben), Nadelbäume `Pine1`, `Pine2` (großer und kleiner), kahle Herbstbäume `Dead1`, `Dead2` (mit ockerfarbenem Laub), Büsche `Bush1` … `Bush3`, halb eingesunkene Felsbrocken `Rock1` … `Rock3`; Schnee: verschneite Nadelbäume `SnowPine1` … `SnowPine3`, `SnowDead1`, `SnowBush1`, `SnowRock1`, `SnowRock2`. Jeder Knoten steht im Ursprung auf Z = 0, Extras `radius`, `height` (Zellen) und `theater` → `public/models/PROPS.glb`. Neu bauen: `Blender -b --factory-startup --python blender/PROPS.py` (Vorschaubilder: `-- --preview <Ordner>`) |
-| `app/lib/game/tiberium.ts` | Tiberium-Felder: `tiberiumField()` erzeugt ein rundliches, lückenhaftes Feld (Mitte reif, Rand jung); `Battlefield.addTiberium` setzt es auf die Karte (je Zelle zufällige Variante und Drehung). Der Boden-Shader färbt den Boden bis 4 Felder um das Feld olivgrün ein (die Bodenstruktur bleibt sichtbar), unter den Kristallen grüner und leicht pulsierend; alle 15 s wächst eine zufällige Zelle eine Phase, Gebäude können nicht auf Tiberium gebaut werden. Im Gefecht liegt ein Feld rechts unterhalb des Startpunkts. Tiberium-Bäume (`Battlefield.addTiberiumTrees`, `TIBTRE.glb`) stehen mitten in den grünen Feldern und blockieren ihr Feld; wie im Original (`AnimationProbability=.003` von `[TIBTRE01]` je Frame, also im Schnitt etwa alle 22 s) stoßen sie eine Sporenwolke aus, danach sprießt auf einem der acht Nachbarfelder junges Tiberium oder vorhandenes wächst eine Stufe. Im Gefecht stehen zwei weitere Bäume mit kleinen jungen Feldern auf der Karte |
+| `app/lib/game/tiberium.ts` | Tiberium-Felder: `tiberiumField()` erzeugt ein rundliches, lückenhaftes Feld (Mitte reif, Rand jung); `Battlefield.addTiberium` setzt es auf die Karte (je Zelle zufällige Variante und Drehung). Der Boden-Shader färbt den Boden bis 4 Felder um das Feld olivgrün ein (die Bodenstruktur bleibt sichtbar), unter den Kristallen grüner und leicht pulsierend; alle 15 s wächst eine zufällige Zelle eine Phase, Gebäude können nicht auf Tiberium gebaut werden. Tiberium-Bäume (`Battlefield.addTiberiumTrees`, `TIBTRE.glb`) stehen mitten in den grünen Feldern und blockieren ihr Feld; wie im Original (`AnimationProbability=.003` von `[TIBTRE01]` je Frame, also im Schnitt etwa alle 22 s) stoßen sie eine Sporenwolke aus, danach sprießt auf einem der acht Nachbarfelder junges Tiberium oder vorhandenes wächst eine Stufe. Wo die Felder im Gefecht liegen, steht bei `skirmish-map.ts` |
 | `app/lib/game/landscape.ts` | Landschaft nach den zwei Theatern des Originals (`TEMPERAT.INI`, `SNOW.INI`): `groundCover()` legt je Zelle Sand, Gras und Geröll (gemäßigt) bzw. Eis und durchscheinenden Fels (Schnee) fest – Geröll an den Klippen und Hängen, Sand und Eis im Tiefland –, der Boden-Shader blendet sie mit ausgefransten Rändern wie die Übergangskacheln (LAT) des Originals; `scatterProps()` streut kleine Baumgruppen, Baumreihen am Fuß der Klippen, einzelne Bäume, Büsche und Felsen (`PROPS.glb`) aus dem Seed der Karte, nur auf ebenen Feldern abseits von Basen, Tiberium und Rampen. Bäume und große Felsen blockieren ihr Feld (wie die 1 × 1-TerrainTypes des Originals), aber nur wo die offenen Felder ringsum verbunden bleiben, so wird nie ein Weg abgeschnitten (`test/landscape.test.ts`). Im Gefecht wählt der Dialog das Gelände (Gemäßigt, Schnee, Zufall); auf Schnee ist das Licht kalt, der Schnee vom Wind gerippelt und die Klippen tragen Schnee. Rampen sind wie im Original ein gleichmäßiger, gefurchter Hang aus brauner Erde und Fels (keine Stufen mehr) |
 | `blender/CLIFF.py` | Klippenfels nach dem Original (`Battlefield.placeCliffs` setzt auf jede Felszelle ein Stück, instanziert und senkrecht auf die Stufen der Zelle skaliert): dunkelgraue, stellenweise olivfarbene Felswand aus unregelmäßigen, leicht geneigten Säulen und Platten verschiedener Breite und Höhe mit gefurchter Front und abgebrochenen Kanten, teils in Blöcke gebrochen, dazwischen fast schwarze Klüfte; oben ein zackiger Rand aus Felszähnen und Bruchblöcken mit hellgrauen Kanten und Erde dazwischen, am Fuß Geröll und Felsbrocken. Stücke nach den hochliegenden Ecken der Zelle: `Straight0…3` (zwei nebeneinander: gerade Kante), `Cut0…2` (drei: diagonale Kante), `Foot0…2` (eine: Fuß unter dem Ende einer diagonalen Kante); ein Material `Rock`, die Farben in den Vertexfarben (als sRGB geschrieben, Klüfte per Strahlen abgedunkelt); auf Schnee färbt das Spiel den Fels blaugrau und legt Schnee auf alles, was nach oben zeigt → `public/models/CLIFF.glb`. Neu bauen: `Blender -b --factory-startup --python blender/CLIFF.py` |
 | `blender/E1.py` | Leichte GDI-Infanterie: geriggter Soldat mit Gewehr, Clips `Idle` (stehen), `Walk` (laufen), `GoProne` (hinwerfen, rückwärts = aufstehen), `Prone` (liegen), `Crawl` (robben), alle auf der Stelle, Laufgeschwindigkeit als glTF-Extra `walkSpeed` → `public/models/E1.glb`. Neu bauen: `Blender -b --factory-startup --python blender/E1.py` |
@@ -128,12 +128,79 @@ E2E_BASE=http://localhost:3000 pnpm test
 | `blender/NAPOST.py` | Laserzaun-Pfosten (Nod, 1 × 1): Kuppel mit Säule, blauer Linsenring (`Emitter`, Höhe des Zauns) → `public/models/NAPOST.glb` |
 | `blender/NAGATE_B.py` | Nod-Tor um 90° gedreht (1 × 3), aus `NAGATE_A.py`; Arme `ArmZP/ZN` zur Mauer → `public/models/NAGATE_B.glb` |
 | `blender/PROC.py` | Tiberium-Raffinerie: flache, breite dunkle Metallschürze mit Rippen in Hausfarbe, Turm mit Abfackelung, Tank; Plattform nach unten rechts mit Andockbucht (`Dock`) → `public/models/PROC.glb` |
+| `app/lib/game/players.ts` | Spieler einer Partie: Alles auf der Karte gehört einem Spieler, `userData.owner` ist dessen Kennung (`player` der Mensch an diesem Bildschirm, `ai1` … die Computergegner, `enemy` der Feind der Missionen); Feind ist, wer nicht verbündet ist (`allied`, bisher jeder gegen jeden). `Handicap`: Faktoren auf Panzerung, Feuerpause und Bauzeit wie `[Easy]`/`[Normal]`/`[Difficult]` des Originals |
+| `app/lib/game/economy.ts` | Wirtschaft eines Spielers (Geld, Gebäude, Strom, Produktion), für den Menschen (die Seitenleiste zeigt sie) wie für jeden Computergegner; `BattlefieldView` lässt die Produktion aller Spieler laufen und bringt ihre Einheiten aus deren Fabriken |
+| `app/lib/game/orders.ts` | Befehle als reine Daten (JSON): bauen, abbrechen, platzieren, entfalten, bewegen, Angriffsbewegung, angreifen, stoppen, ernten, Sammelpunkt, reparieren, verkaufen. Einheiten und Gebäude werden über ihre Netz-ID (`userData.netId`, `Battlefield.objectById`) benannt; `Orders.issue(owner, order)` prüft, dass ein Spieler nur eigene Einheiten und Gebäude befiehlt, und führt den Befehl aus. Siehe „Computergegner“ unten |
+| `app/lib/game/ai/` | Computergegner: `view.ts` (was ein Spieler sieht, als reine Daten: `PlayerView`, dazu `WorldQuery` für Platzfragen), `observe.ts` (baut die Sicht aus dem Schlachtfeld), `levels.ts` (`[AI]` und die Stufen aus `RULES.INI`, eigene Profile Leicht/Mittel/Schwer), `computer-player.ts` (das Verhalten, `test/computer-player.test.ts`) |
+| `app/lib/game/skirmish-map.ts` | Faire Gefechtskarten: Startpunkte gleich weit von der Mitte und voneinander, je Start dieselben Felder, umkämpfte Felder dazwischen und in der Mitte, und ein Maß, wie unfair das Gelände den Starts ist (`unfairness`, `test/skirmish-map.test.ts`) |
 | `app/lib/game/superweapons.ts` | Superwaffen aus `[SuperWeaponTypes]`: kommen mit ihren Gebäuden, laden über `RechargeTime=` (bei genug Strom), stehen oben in der Gebäudespalte; Ionenkanone, EM-Puls, chemische Rakete, Hunter-Seeker, Landekapseln, Feuersturm |
 | `app/lib/game/gamefiles.ts` | Liest `RULES.INI`/`ART.INI` mit den Änderungen von Feuersturm (`FIRESTRM.INI`/`ARTFS.INI` aus `EXPAND01.MIX`) |
 | `app/composables/` | `useGameAssets` (Import/Status), `useMusicPlayer` (Web Audio) |
 | `app/components/` | Downloader, Importer, Musikplayer, Startanimation + Hauptmenü (`/menu`, im Dev-Modus mit `?t=2.5` einfrierbar) |
 
 Die Formatbeschreibungen orientieren sich an [OpenRA](https://github.com/OpenRA/OpenRA).
+
+## Gefecht: Karte und Computergegner
+
+### Faire Karten
+
+Im Gefecht stehen alle Spieler – auch der Mensch – auf einem Kreis um die Kartenmitte, in gleichen
+Winkeln: zwei in gegenüberliegenden Ecken, vier in allen Ecken, drei, fünf … reihum (`skirmishLayout`).
+Wer welchen Start bekommt, entscheidet der Zufall. Jeder Start bekommt dasselbe, von ihm aus gesehen an
+derselben Stelle und mit denselben Kristallen: ein großes grünes Feld mit Tiberium-Baum, ein blaues Feld,
+ein kleineres grünes Feld mit Baum (zusammen gut 15 000 Credits). Zwischen je zwei Nachbarn liegt ein
+junges Feld mit Baum, in der Mitte ein reiches blaues Feld – beide gleich weit von den Starts, um die
+wird gekämpft.
+
+Das Gelände ist um die Mitte gleich: Die Hügel entstehen aus Rauschen, das um die Mitte gedreht und an
+den Linien durch die Starts gespiegelt gelesen wird (`symmetry` in `Terrain.generate`). Rund um jeden
+Start, um jedes Feld und um die Mitte bleibt der Boden eben, dazu ein gerader ebener Weg von jedem Start
+zur Mitte. Was dann noch zufällig ist (wo die Rampen hinkommen), prüft `unfairness`: für jeden Start der
+kürzeste Weg (8 Richtungen, wie die Einheiten gehen) zur Mitte, zu seinen Feldern und zum nächsten Start,
+verglichen mit dem Weg über offenes Gelände. Ist der größte Umweg mehr als 10 % größer als der kleinste,
+formt `Battlefield.shapeTerrain` den Boden mit dem nächsten Seed neu (höchstens viermal, das Gelände zu
+erzeugen dauert jeweils etwa 2 s) und nimmt den fairsten. Bäume und Felsen stehen danach, versperren
+aber nie einen Weg.
+
+### Computergegner
+
+Jeder Computergegner (`ComputerPlayer`) spielt nach den Regeln des Menschen: Er beginnt mit einem MBF,
+hat eigenes Geld, eigene Produktion (eine Bauwerk- und eine Einheiten-Schlange wie die Seitenleiste) und
+eigenen Strom. Er baut nach `[AI]` aus `RULES.INI`: genug Strom (`PowerSurplus=`), Raffinerie, Kaserne,
+Waffenfabrik, zweite Raffinerie, Radar, dann mehr Raffinerien, Fabriken und Verteidigung nach ihrem
+Anteil an der Basis (`RefineryRatio=` … mit `…Limit=`); GDI baut Komponententürme und setzt Geschütze
+darauf. Die Gebäude stellt er mit einer Zelle Abstand (`AIBaseSpacing=`) – Raffinerien zum Tiberium hin,
+Verteidigung zwischen Basis und Feind, Kraftwerke nach hinten. Er hält seine Sammler am Laufen, baut eine
+Armee, verteidigt Basis und Sammler, repariert Gebäude und greift in immer größeren Trupps den nächsten
+Gegner an – den ersten nach `AttackDelay=`, dann alle `TeamDelays=`; ist ein Gegner besiegt, geht der
+Trupp zum nächsten.
+
+| | Leicht | Mittel | Schwer |
+| --- | --- | --- | --- |
+| Handicap (wie im Original umgekehrt: der schwere Gegner bekommt `[Easy]`) | `[Difficult]`: nimmt mehr Schaden, schießt langsamer | `[Normal]` | `[Easy]`: robuster, schießt schneller, baut 25 % schneller |
+| Bauentscheidungen (`BuildDelay=`) | alle 6 s | alle 1,8 s | alle 1,8 s |
+| Reaktion (eigene Wahl) | alle 2,5 s | alle 1,25 s | alle 0,6 s |
+| Erster Angriff (`AttackDelay=` 5 min ×) | nach 8 min | nach 5 min | nach 3 min |
+| Trupps (`TeamDelays=`) | alle 240 s, 4 Einheiten (+1) | alle 180 s, 5 (+2), sammeln sich | alle 150 s, 6 (+3), sammeln sich |
+| Bleiben daheim (`MinimumAIDefensiveTeams=`) | 2 | 3 | 4 |
+| Raffinerien, Sammler je Raffinerie, Verteidigung, Armee | 1, 1, 1, 12 | 2, 1, 4, 22 | 3, 2 (wenn Geld übrig ist), 8, 32 |
+| Einheiten, Trupp | beliebig, halb Infanterie; kämpft bis zuletzt | eher stärkere; Rückzug bei 25 % | die stärksten; greift Raffinerien und Fabriken zuerst an, Rückzug bei 30 % |
+| Repariert Gebäude unter, ersetzt den Bauhof | 35 %, nein | 60 %, ja | 80 %, ja |
+
+Erst wenn seine Armee für den nächsten Angriff reicht (oder 3000 Credits übrig sind), baut er über
+Raffinerien, Kaserne und Waffenfabrik hinaus (Mittel und Schwer vorher schon ein bzw. zwei
+Verteidigungsanlagen). Flugzeuge, Superwaffen, Ingenieure und Einheiten, die zum
+Schießen erst aufgebaut werden müssen (Artillerie, Juggernaut), nutzt er noch nicht.
+
+### Vorbereitet für Mehrspieler (Colyseus)
+
+Der Computergegner sieht das Spiel nur über eine `PlayerView` (reine Daten) und handelt nur über
+`Order`s (reine Daten, `Field.order(owner, order)`), genau wie ein Spieler übers Netz. Damit lässt sich
+eine Mehrspielerpartie mit Colyseus darauf aufbauen: Die Clients senden ihre Befehle als Nachrichten an
+den Raum, der prüft sie mit `Orders.issue` gegen den Absender und führt sie aus (oder verteilt sie im
+Gleichschritt an alle); Computergegner laufen dabei im Raum mit. Noch offen: die Eingaben des Menschen
+(Seitenleiste, Maus) über `Order`s statt direkt laufen zu lassen, die Kennung des lokalen Spielers je
+Client statt fest `player`, Teams in `allied`, und den Spielstand zu synchronisieren.
 
 ## Agent: das Spiel aus dem Terminal spielen
 

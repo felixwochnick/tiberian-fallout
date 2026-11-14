@@ -6,7 +6,8 @@ import { DEFAULT_KEYS, type KeyAction } from './useKeys'
 
 const SETTINGS_KEY = 'tiberian-fallout:settings'
 
-export const AI_LEVELS = ['Leicht', 'Normal', 'Schwer']
+/** The computer players' levels (see ComputerPlayer, levels.ts) */
+export const AI_LEVELS = ['Leicht', 'Mittel', 'Schwer']
 export const SPEEDS = ['Sehr langsam', 'Langsam', 'Gemächlich', 'Normal', 'Schnell', 'Sehr schnell', 'Maximal']
 
 /** House colours of a skirmish like in Tiberian Sun's multiplayer, as name and colour */

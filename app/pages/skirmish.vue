@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { createSkirmish } from '~/composables/useSkirmish'
-import type { Field } from '~/lib/game/field'
+import type { Field, MatchPlayer } from '~/lib/game/field'
 import { MODELS } from '~/lib/game/models'
 import type * as THREE from 'three'
 import { type FlatZone, mulberry32 } from '~/lib/game/terrain'
 import { tiberiumField } from '~/lib/game/tiberium'
 import { type MapSpot, skirmishLayout, unfairness } from '~/lib/game/skirmish-map'
-import { LOCAL_PLAYER, MISSION_ENEMY } from '~/lib/game/players'
+import { ComputerPlayer } from '~/lib/game/ai/computer-player'
+import type { AiLevel } from '~/lib/game/ai/levels'
+import { LOCAL_PLAYER, type Owner } from '~/lib/game/players'
 
 /**
  * Gefecht: a free game against the computer players of the skirmish dialog. Every
@@ -31,8 +33,16 @@ const START_FLAT = 6
 /** … and round the middle of the map */
 const MIDDLE_FLAT = 4
 
+/** The running game, and its computer players (they start thinking once the rules are loaded) */
+let field: Field | undefined
+let computers: ComputerPlayer[] = []
+let joining: { id: Owner, level: AiLevel, player: MatchPlayer }[] = []
+
 /** A fresh map: the starts, the Tiberium, one MCV for each player, then battle control */
 function start(fresh: Field) {
+  field = fresh
+  computers = []
+  joining = []
   const { battlefield, addUnit } = fresh
   const layout = skirmishLayout(settings.players.length, battlefield.mapSize)
   const point = ({ u, v }: MapSpot) => battlefield.mapPoint(u, v)
@@ -78,11 +88,29 @@ function start(fresh: Field) {
         .catch(error => console.error('MCV konnte nicht geladen werden', error))
       return
     }
-    addUnit('MCV', at, colour, MISSION_ENEMY, player.side)
+    const id = `ai${i}`
+    const joined = fresh.join({ id, colour, side: player.side, credits: settings.credits, start: at })
+    joining.push({ id, level: (player.ai ?? 1) as AiLevel, player: joined })
+    addUnit('MCV', at, colour, id, player.side)
       .then((mcv) => { mcv.userData.player = player.name })
       .catch(error => console.error('MCV konnte nicht geladen werden', error))
   })
   control.establish()
+}
+
+/** The computer players look at the battlefield and give their orders, as the game runs */
+function onTick(seconds: number) {
+  if (!field) return
+  const rules = skirmish.rules?.ai
+  if (rules && joining.length) {
+    for (const { id, level, player } of joining.splice(0)) {
+      const computer = new ComputerPlayer(id, level, rules, Math.floor(Math.random() * 2 ** 31))
+      // its level's handicap ([Easy], [Normal], [Difficult] of RULES.INI)
+      player.handicap = computer.levelRules
+      computers.push(computer)
+    }
+  }
+  for (const computer of computers) computer.update(seconds, field)
 }
 </script>
 
@@ -95,6 +123,7 @@ function start(fresh: Field) {
     :colour="houseColour(human)"
     :side="human?.side"
     @start="start"
+    @tick="onTick"
     @restart="session?.restart()"
   />
 </template>
