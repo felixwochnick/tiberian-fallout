@@ -340,6 +340,10 @@ const CRUSHABLE_WALLS = new Set(['GASAND'])
 
 const yes = (value?: string) => /^(yes|true|1)$/i.test(value ?? '')
 
+/** How far a wall or firestorm section links up when placed (GuardRange=, see wallLinks); 0 for anything else */
+const linkRangeOf = (section?: Map<string, string>) =>
+  yes(section?.get('WALL')) || yes(section?.get('FIRESTORMWALL')) ? Number(section?.get('GUARDRANGE') ?? 0) : 0
+
 export async function loadBuildRules(store: AssetStore): Promise<BuildRules | undefined> {
   // the balance of Firestorm (FIRESTRM.INI over RULES.INI) when its disc was imported
   const rules = await gameIni(store, 'RULES.INI')
@@ -391,7 +395,7 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       fearless: yes(section?.get('FEARLESS')),
       powersUp: section?.get('POWERSUPBUILDING')?.toUpperCase(),
       wall: yes(section?.get('WALL')),
-      linkRange: yes(section?.get('WALL')) || yes(section?.get('FIRESTORMWALL')) ? Number(section?.get('GUARDRANGE') ?? 0) : 0,
+      linkRange: linkRangeOf(section),
       gate: yes(section?.get('GATE')),
       crewed: yes(section?.get('CREWED')),
       crushSound: list(section?.get('CRUSHSOUND')),
@@ -448,7 +452,10 @@ export async function loadBuildRules(store: AssetStore): Promise<BuildRules | un
       id: option.id,
       name: option.name,
       structure,
-      cost,
+      // a wall that links up is paid for as many pieces as it reaches (the ones between
+      // come free): the concrete walls cost 250 in the original (Cost=50, GuardRange=5),
+      // but they build as fast as Cost= says
+      cost: cost * Math.max(1, linkRangeOf(section)),
       seconds: (cost / 1000) * buildSpeed * 60,
       power: Number(section?.get('POWER') ?? 0),
       foundation: [fw || 1, fh || 1],
